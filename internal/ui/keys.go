@@ -76,7 +76,8 @@ type PRListKeyMap struct {
 	Select  key.Binding
 	Filter  key.Binding
 	Refresh key.Binding
-	TabKey  key.Binding
+	PrevTab key.Binding
+	NextTab key.Binding
 }
 
 var PRListKeys = PRListKeyMap{
@@ -100,9 +101,13 @@ var PRListKeys = PRListKeyMap{
 		key.WithKeys("r"),
 		key.WithHelp("r", "refresh"),
 	),
-	TabKey: key.NewBinding(
-		key.WithKeys("tab"),
-		key.WithHelp("Tab", "switch tab"),
+	PrevTab: key.NewBinding(
+		key.WithKeys("h", "left"),
+		key.WithHelp("h", "prev tab"),
+	),
+	NextTab: key.NewBinding(
+		key.WithKeys("l", "right"),
+		key.WithHelp("l", "next tab"),
 	),
 }
 
@@ -155,11 +160,14 @@ var DiffViewerKeys = DiffViewerKeyMap{
 
 // ChatKeyMap defines keys for the chat panel.
 type ChatKeyMap struct {
-	Up         key.Binding
-	Down       key.Binding
-	InsertMode key.Binding
-	ExitInsert key.Binding
-	Send       key.Binding
+	Up              key.Binding
+	Down            key.Binding
+	InsertMode      key.Binding
+	ExitInsert      key.Binding
+	ExitInsertAlt   key.Binding
+	Send            key.Binding
+	PrevTab         key.Binding
+	NextTab         key.Binding
 }
 
 var ChatKeys = ChatKeyMap{
@@ -179,8 +187,20 @@ var ChatKeys = ChatKeyMap{
 		key.WithKeys("esc"),
 		key.WithHelp("Esc", "normal mode"),
 	),
+	ExitInsertAlt: key.NewBinding(
+		key.WithKeys("shift+tab"),
+		key.WithHelp("Shift+Tab", "exit input"),
+	),
 	Send: key.NewBinding(
 		key.WithKeys("enter"),
 		key.WithHelp("Enter", "send"),
+	),
+	PrevTab: key.NewBinding(
+		key.WithKeys("h", "left"),
+		key.WithHelp("h", "prev tab"),
+	),
+	NextTab: key.NewBinding(
+		key.WithKeys("l", "right"),
+		key.WithHelp("l", "next tab"),
 	),
 }

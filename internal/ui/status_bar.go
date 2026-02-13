@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -8,9 +9,10 @@ import (
 
 // StatusBarModel renders the bottom status bar.
 type StatusBarModel struct {
-	width   int
-	focused Panel
-	mode    AppMode
+	width      int
+	focused    Panel
+	mode       AppMode
+	selectedPR int
 }
 
 func NewStatusBarModel() StatusBarModel {
@@ -24,6 +26,10 @@ func (m *StatusBarModel) SetWidth(width int) {
 func (m *StatusBarModel) SetState(focused Panel, mode AppMode) {
 	m.focused = focused
 	m.mode = mode
+}
+
+func (m *StatusBarModel) SetSelectedPR(number int) {
+	m.selectedPR = number
 }
 
 func (m StatusBarModel) View() string {
@@ -49,16 +55,16 @@ func (m StatusBarModel) View() string {
 
 func (m StatusBarModel) keyHints() string {
 	if m.mode == ModeInsert {
-		return " [Enter]send [Esc]exit insert"
+		return " [Enter]send [Shift+Tab]exit input [Esc]exit input"
 	}
 
 	switch m.focused {
 	case PanelLeft:
-		return " [j/k]move [Enter]select [/]filter [Tab]panel [?]help [q]quit"
+		return " [h/l]tab [j/k]move [Enter]select [Tab]panel [z]zoom [?]help"
 	case PanelCenter:
-		return " [j/k]scroll [n/N]file [Ctrl+d/u]page [Tab]panel [?]help [q]quit"
+		return " [j/k]scroll [n/N]file [Ctrl+d/u]page [Tab]panel [z]zoom [?]help"
 	case PanelRight:
-		return " [j/k]scroll [i]insert [Tab]panel [?]help [q]quit"
+		return " [h/l]tab [j/k]scroll [Enter]insert [Tab]panel [z]zoom [?]help"
 	default:
 		return " [Tab]panel [?]help [q]quit"
 	}
@@ -75,5 +81,10 @@ func (m StatusBarModel) contextInfo() string {
 		modeStr = " NAV "
 	}
 
-	return modeStr + "PR #1234 main "
+	prInfo := ""
+	if m.selectedPR > 0 {
+		prInfo = fmt.Sprintf("PR #%d ", m.selectedPR)
+	}
+
+	return modeStr + prInfo
 }

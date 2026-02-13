@@ -75,7 +75,7 @@ func (m ChatPanelModel) Update(msg tea.Msg) (ChatPanelModel, tea.Cmd) {
 	case tea.KeyMsg:
 		if m.chatMode == ChatModeInsert {
 			switch {
-			case key.Matches(msg, ChatKeys.ExitInsert):
+			case key.Matches(msg, ChatKeys.ExitInsert), key.Matches(msg, ChatKeys.ExitInsertAlt):
 				m.chatMode = ChatModeNormal
 				m.textInput.Blur()
 				return m, func() tea.Msg { return ModeChangedMsg{Mode: ChatModeNormal} }
@@ -99,6 +99,18 @@ func (m ChatPanelModel) Update(msg tea.Msg) (ChatPanelModel, tea.Cmd) {
 
 		// Normal mode
 		switch {
+		case key.Matches(msg, ChatKeys.PrevTab):
+			if m.activeTab > ChatTabChat {
+				m.activeTab--
+			}
+			m.refreshViewport()
+			return m, nil
+		case key.Matches(msg, ChatKeys.NextTab):
+			if m.activeTab < ChatTabComments {
+				m.activeTab++
+			}
+			m.refreshViewport()
+			return m, nil
 		case key.Matches(msg, ChatKeys.InsertMode):
 			m.chatMode = ChatModeInsert
 			m.textInput.Focus()

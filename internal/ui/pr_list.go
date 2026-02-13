@@ -72,6 +72,16 @@ func (m PRListModel) Update(msg tea.Msg) (PRListModel, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch {
+		case key.Matches(msg, PRListKeys.PrevTab):
+			if m.activeTab == TabMyPRs {
+				m.activeTab = TabToReview
+			}
+			return m, nil
+		case key.Matches(msg, PRListKeys.NextTab):
+			if m.activeTab == TabToReview {
+				m.activeTab = TabMyPRs
+			}
+			return m, nil
 		case key.Matches(msg, PRListKeys.Select):
 			if item, ok := m.list.SelectedItem().(PRItem); ok {
 				return m, func() tea.Msg {

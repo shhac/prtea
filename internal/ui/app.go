@@ -14,6 +14,9 @@ type App struct {
 	chatPanel  ChatPanelModel
 	statusBar  StatusBarModel
 
+	// Overlays
+	helpOverlay HelpOverlayModel
+
 	// Layout state
 	focused        Panel
 	width          int
@@ -34,6 +37,7 @@ func NewApp() App {
 		diffViewer:   NewDiffViewerModel(),
 		chatPanel:    NewChatPanelModel(),
 		statusBar:    NewStatusBarModel(),
+		helpOverlay:  NewHelpOverlayModel(),
 		focused:      PanelLeft,
 		panelVisible: [3]bool{true, true, true},
 		mode:         ModeNavigation,
@@ -49,6 +53,7 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		m.helpOverlay.SetSize(m.width, m.height)
 		// Auto-collapse right panel on first render if terminal is narrow
 		if !m.initialized {
 			m.initialized = true
@@ -62,6 +67,11 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.recalcLayout()
 		return m, nil
 
+	case HelpClosedMsg:
+		m.mode = ModeNavigation
+		m.statusBar.SetState(m.focused, m.mode)
+		return m, nil
+
 	case ModeChangedMsg:
 		if msg.Mode == ChatModeInsert {
 			m.mode = ModeInsert
@@ -72,10 +82,18 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case PRSelectedMsg:
-		// Future: trigger diff loading
+		m.statusBar.SetSelectedPR(msg.Number)
+		// TODO: trigger diff loading for the selected PR
 		return m, nil
 
 	case tea.KeyMsg:
+		// Overlay mode captures all keys
+		if m.mode == ModeOverlay {
+			var cmd tea.Cmd
+			m.helpOverlay, cmd = m.helpOverlay.Update(msg)
+			return m, cmd
+		}
+
 		// In insert mode, only Esc is handled globally (via chat panel)
 		if m.mode == ModeInsert {
 			return m.updateChatPanel(msg)
@@ -83,6 +101,13 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Global key handling in navigation mode
 		switch {
+		case key.Matches(msg, GlobalKeys.Help):
+			m.mode = ModeOverlay
+			m.helpOverlay.SetSize(m.width, m.height)
+			m.helpOverlay.Show(m.focused)
+			m.statusBar.SetState(m.focused, m.mode)
+			return m, nil
+
 		case key.Matches(msg, GlobalKeys.Quit):
 			return m, tea.Quit
 
@@ -165,7 +190,14 @@ func (m App) View() string {
 	panels := lipgloss.JoinHorizontal(lipgloss.Top, panelViews...)
 	bar := m.statusBar.View()
 
-	return lipgloss.JoinVertical(lipgloss.Left, panels, bar)
+	base := lipgloss.JoinVertical(lipgloss.Left, panels, bar)
+
+	// Render help overlay on top if active
+	if m.helpOverlay.IsVisible() {
+		return m.helpOverlay.View()
+	}
+
+	return base
 }
 
 // focusPanel sets focus to the given panel. If the panel is hidden,
