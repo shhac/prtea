@@ -245,6 +245,7 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.chatService.ClearSession(msg.Owner, msg.Repo, msg.Number)
 		}
 		m.statusBar.SetSelectedPR(msg.Number)
+		m.prList.SetSelectedPR(msg.Number)
 		m.diffViewer.SetLoading(msg.Number)
 		if m.ghClient != nil {
 			m.chatPanel.SetCommentsLoading()

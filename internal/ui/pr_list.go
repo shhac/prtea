@@ -2,12 +2,14 @@ package ui
 
 import (
 	"fmt"
+	"io"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // PRListTab identifies which sub-tab is active.
@@ -55,6 +57,82 @@ type PRSelectedMsg struct {
 // PRRefreshMsg is sent when the user presses `r` to refresh PR data.
 type PRRefreshMsg struct{}
 
+// prItemDelegate renders PR list items with distinct cursor and selected states.
+// The cursor (Bubbletea's Index()) uses the stock left-border style.
+// The "selected" PR (loaded in diff/chat) gets a ▸ marker prefix.
+type prItemDelegate struct {
+	selectedPRNumber *int // points to PRListModel.selectedPRNumber
+}
+
+func (d prItemDelegate) Height() int                             { return 2 }
+func (d prItemDelegate) Spacing() int                            { return 1 }
+func (d prItemDelegate) Update(_ tea.Msg, _ *list.Model) tea.Cmd { return nil }
+
+func (d prItemDelegate) Render(w io.Writer, m list.Model, index int, item list.Item) {
+	i, ok := item.(PRItem)
+	if !ok {
+		return
+	}
+	if m.Width() <= 0 {
+		return
+	}
+
+	title := i.Title()
+	desc := i.Description()
+
+	isCursor := index == m.Index()
+	isActive := d.selectedPRNumber != nil && *d.selectedPRNumber != 0 && i.number == *d.selectedPRNumber
+
+	// Truncate text to fit — leave 2 chars for prefix (▸ or padding)
+	textWidth := m.Width() - 4
+	if textWidth < 1 {
+		textWidth = 1
+	}
+	title = ansi.Truncate(title, textWidth, "…")
+	desc = ansi.Truncate(desc, textWidth, "…")
+
+	switch {
+	case isCursor && isActive:
+		// Cursor on the active/loaded PR: left border + accent color
+		titleStyle := lipgloss.NewStyle().
+			Border(lipgloss.NormalBorder(), false, false, false, true).
+			BorderForeground(lipgloss.Color("62")).
+			Foreground(lipgloss.Color("62")).
+			Bold(true).
+			Padding(0, 0, 0, 1)
+		descStyle := titleStyle.Bold(false).Foreground(lipgloss.Color("99"))
+		title = titleStyle.Render(title)
+		desc = descStyle.Render(desc)
+	case isCursor:
+		// Cursor on a non-active PR: stock Bubbletea selected style
+		titleStyle := lipgloss.NewStyle().
+			Border(lipgloss.NormalBorder(), false, false, false, true).
+			BorderForeground(lipgloss.AdaptiveColor{Light: "#F793FF", Dark: "#AD58B4"}).
+			Foreground(lipgloss.AdaptiveColor{Light: "#EE6FF8", Dark: "#EE6FF8"}).
+			Padding(0, 0, 0, 1)
+		descStyle := titleStyle.Foreground(lipgloss.AdaptiveColor{Light: "#F793FF", Dark: "#AD58B4"})
+		title = titleStyle.Render(title)
+		desc = descStyle.Render(desc)
+	case isActive:
+		// Active/loaded PR without cursor: ▸ marker in accent color
+		marker := lipgloss.NewStyle().Foreground(lipgloss.Color("62")).Bold(true).Render("▸ ")
+		titleStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Bold(true)
+		descStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Padding(0, 0, 0, 2)
+		title = marker + titleStyle.Render(title)
+		desc = descStyle.Render(desc)
+	default:
+		// Normal item
+		titleStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.AdaptiveColor{Light: "#1a1a1a", Dark: "#dddddd"}).
+			Padding(0, 0, 0, 2)
+		descStyle := titleStyle.Foreground(lipgloss.AdaptiveColor{Light: "#A49FA5", Dark: "#777777"})
+		title = titleStyle.Render(title)
+		desc = descStyle.Render(desc)
+	}
+
+	fmt.Fprintf(w, "%s\n%s", title, desc)
+}
+
 // PRListModel manages the PR list panel.
 type PRListModel struct {
 	list      list.Model
@@ -62,6 +140,10 @@ type PRListModel struct {
 	width     int
 	height    int
 	focused   bool
+
+	// Tracks the PR currently loaded in diff/chat (0 = none).
+	// Heap-allocated so the delegate's pointer survives value copies.
+	selectedPRNumber *int
 
 	// Data state
 	state    loadState
@@ -71,8 +153,9 @@ type PRListModel struct {
 }
 
 func NewPRListModel() PRListModel {
-	delegate := list.NewDefaultDelegate()
-	delegate.ShowDescription = true
+	selected := new(int) // heap-allocated, shared with delegate
+
+	delegate := prItemDelegate{selectedPRNumber: selected}
 
 	l := list.New(nil, delegate, 0, 0)
 	l.Title = ""
@@ -83,10 +166,16 @@ func NewPRListModel() PRListModel {
 	l.DisableQuitKeybindings()
 
 	return PRListModel{
-		list:      l,
-		activeTab: TabToReview,
-		state:     stateLoading,
+		list:             l,
+		activeTab:        TabToReview,
+		state:            stateLoading,
+		selectedPRNumber: selected,
 	}
+}
+
+// SetSelectedPR marks which PR is currently loaded in the diff/chat panels.
+func (m *PRListModel) SetSelectedPR(number int) {
+	*m.selectedPRNumber = number
 }
 
 // SetLoading puts the panel into loading state.
