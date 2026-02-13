@@ -84,6 +84,9 @@ type DiffViewerModel struct {
 	prAuthor  string
 	prURL     string
 	prInfoErr string
+
+	// CI status data
+	ciStatus *github.CIStatus
 }
 
 func NewDiffViewerModel() DiffViewerModel {
@@ -298,6 +301,7 @@ func (m *DiffViewerModel) SetLoading(prNumber int) {
 	m.prAuthor = ""
 	m.prURL = ""
 	m.prInfoErr = ""
+	m.ciStatus = nil
 	m.refreshContent()
 }
 
@@ -335,6 +339,12 @@ func (m *DiffViewerModel) SetPRInfo(title, body, author, url string) {
 // SetPRInfoError sets an error message for the PR Info tab.
 func (m *DiffViewerModel) SetPRInfoError(err string) {
 	m.prInfoErr = err
+	m.refreshContent()
+}
+
+// SetCIStatus sets CI check status data for the PR Info tab.
+func (m *DiffViewerModel) SetCIStatus(status *github.CIStatus) {
+	m.ciStatus = status
 	m.refreshContent()
 }
 
@@ -485,6 +495,30 @@ func (m DiffViewerModel) renderPRInfo() string {
 		b.WriteString(dimStyle.Render("URL: "))
 		b.WriteString(m.prURL)
 		b.WriteString("\n")
+	}
+
+	// CI Status
+	if m.ciStatus != nil {
+		b.WriteString("\n")
+		b.WriteString(sectionStyle.Render("CI Status"))
+		b.WriteString("\n")
+		if m.ciStatus.TotalCount == 0 {
+			b.WriteString(dimStyle.Render("No CI checks configured"))
+			b.WriteString("\n")
+		} else {
+			icon, color := ciStatusIconColor(m.ciStatus.OverallStatus)
+			badge := lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Render(icon)
+			passCount := ciPassingCount(m.ciStatus.Checks)
+			label := ciStatusLabel(m.ciStatus.OverallStatus)
+			b.WriteString(fmt.Sprintf("%s %s (%d/%d checks)\n", badge, label, passCount, m.ciStatus.TotalCount))
+
+			// Individual checks
+			for _, check := range m.ciStatus.Checks {
+				ci, cc := ciCheckIconColor(check)
+				checkIcon := lipgloss.NewStyle().Foreground(lipgloss.Color(cc)).Render(ci)
+				b.WriteString(fmt.Sprintf("  %s %s\n", checkIcon, check.Name))
+			}
+		}
 	}
 
 	// Description
@@ -666,6 +700,65 @@ func (m *DiffViewerModel) scrollToFocusedHunk() {
 		target = 0
 	}
 	m.viewport.SetYOffset(target)
+}
+
+// ciStatusIconColor returns the icon and lipgloss color for an overall CI status.
+func ciStatusIconColor(status string) (string, string) {
+	switch status {
+	case "passing":
+		return "✓", "42"
+	case "failing":
+		return "✗", "196"
+	case "pending":
+		return "●", "226"
+	case "mixed":
+		return "⚠", "208"
+	default:
+		return "?", "244"
+	}
+}
+
+// ciStatusLabel returns a display label for the overall CI status.
+func ciStatusLabel(status string) string {
+	switch status {
+	case "passing":
+		return "Passing"
+	case "failing":
+		return "Failing"
+	case "pending":
+		return "Pending"
+	case "mixed":
+		return "Mixed"
+	default:
+		return status
+	}
+}
+
+// ciCheckIconColor returns the icon and color for an individual CI check.
+func ciCheckIconColor(check github.CICheck) (string, string) {
+	switch {
+	case check.Status == "completed" && check.Conclusion == "success":
+		return "✓", "42"
+	case check.Status == "completed" && (check.Conclusion == "skipped" || check.Conclusion == "neutral"):
+		return "−", "244"
+	case check.Status == "completed" && check.Conclusion == "failure":
+		return "✗", "196"
+	case check.Status == "queued" || check.Status == "in_progress":
+		return "●", "226"
+	default:
+		return "?", "244"
+	}
+}
+
+// ciPassingCount counts checks that completed successfully (including skipped/neutral).
+func ciPassingCount(checks []github.CICheck) int {
+	count := 0
+	for _, c := range checks {
+		if c.Status == "completed" && (c.Conclusion == "success" || c.Conclusion == "skipped" || c.Conclusion == "neutral") {
+			count++
+		}
+	}
+	return count
 }
 
 // GetSelectedHunkContent returns formatted diff content for only the selected hunks.

@@ -61,7 +61,8 @@ type PRRefreshMsg struct{}
 // The cursor (Bubbletea's Index()) uses the stock left-border style.
 // The "selected" PR (loaded in diff/chat) gets a ▸ marker prefix.
 type prItemDelegate struct {
-	selectedPRNumber *int // points to PRListModel.selectedPRNumber
+	selectedPRNumber *int    // points to PRListModel.selectedPRNumber
+	ciOverallStatus  *string // points to PRListModel.ciOverallStatus
 }
 
 func (d prItemDelegate) Height() int                             { return 2 }
@@ -83,13 +84,24 @@ func (d prItemDelegate) Render(w io.Writer, m list.Model, index int, item list.I
 	isCursor := index == m.Index()
 	isActive := d.selectedPRNumber != nil && *d.selectedPRNumber != 0 && i.number == *d.selectedPRNumber
 
+	// Compute CI badge for the active/selected PR
+	var ciBadge string
+	badgeWidth := 0
+	if isActive && d.ciOverallStatus != nil && *d.ciOverallStatus != "" {
+		ciBadge, badgeWidth = ciBadgeForList(*d.ciOverallStatus)
+	}
+
 	// Truncate text to fit — leave 2 chars for prefix (▸ or padding)
 	textWidth := m.Width() - 4
 	if textWidth < 1 {
 		textWidth = 1
 	}
+	descWidth := textWidth - badgeWidth
+	if descWidth < 1 {
+		descWidth = 1
+	}
 	title = ansi.Truncate(title, textWidth, "…")
-	desc = ansi.Truncate(desc, textWidth, "…")
+	desc = ansi.Truncate(desc, descWidth, "…")
 
 	switch {
 	case isCursor && isActive:
@@ -130,7 +142,7 @@ func (d prItemDelegate) Render(w io.Writer, m list.Model, index int, item list.I
 		desc = descStyle.Render(desc)
 	}
 
-	fmt.Fprintf(w, "%s\n%s", title, desc)
+	fmt.Fprintf(w, "%s\n%s%s", title, desc, ciBadge)
 }
 
 // PRListModel manages the PR list panel.
@@ -145,6 +157,9 @@ type PRListModel struct {
 	// Heap-allocated so the delegate's pointer survives value copies.
 	selectedPRNumber *int
 
+	// CI status for the selected PR (heap-allocated, shared with delegate).
+	ciOverallStatus *string
+
 	// Data state
 	state    loadState
 	errMsg   string
@@ -153,9 +168,13 @@ type PRListModel struct {
 }
 
 func NewPRListModel() PRListModel {
-	selected := new(int) // heap-allocated, shared with delegate
+	selected := new(int)    // heap-allocated, shared with delegate
+	ciStatus := new(string) // heap-allocated, shared with delegate
 
-	delegate := prItemDelegate{selectedPRNumber: selected}
+	delegate := prItemDelegate{
+		selectedPRNumber: selected,
+		ciOverallStatus:  ciStatus,
+	}
 
 	l := list.New(nil, delegate, 0, 0)
 	l.Title = ""
@@ -170,12 +189,37 @@ func NewPRListModel() PRListModel {
 		activeTab:        TabToReview,
 		state:            stateLoading,
 		selectedPRNumber: selected,
+		ciOverallStatus:  ciStatus,
 	}
 }
 
 // SetSelectedPR marks which PR is currently loaded in the diff/chat panels.
 func (m *PRListModel) SetSelectedPR(number int) {
 	*m.selectedPRNumber = number
+}
+
+// SetCIStatus updates the CI badge for the selected PR.
+func (m *PRListModel) SetCIStatus(status string) {
+	*m.ciOverallStatus = status
+}
+
+// ciBadgeForList returns a styled CI badge string and its visual width for the PR list.
+func ciBadgeForList(status string) (string, int) {
+	var icon, color string
+	switch status {
+	case "passing":
+		icon, color = "✓", "42"
+	case "failing":
+		icon, color = "✗", "196"
+	case "pending":
+		icon, color = "●", "226"
+	case "mixed":
+		icon, color = "⚠", "208"
+	default:
+		return "", 0
+	}
+	styled := " " + lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Render(icon)
+	return styled, 2
 }
 
 // SetLoading puts the panel into loading state.

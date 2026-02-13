@@ -71,6 +71,13 @@ type CommentsLoadedMsg struct {
 	Err            error
 }
 
+// CIStatusLoadedMsg is sent when CI check status has been fetched.
+type CIStatusLoadedMsg struct {
+	PRNumber int
+	Status   *github.CIStatus
+	Err      error
+}
+
 // AnalysisCompleteMsg is sent when Claude analysis finishes successfully.
 type AnalysisCompleteMsg struct {
 	PRNumber int
@@ -246,6 +253,7 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.statusBar.SetSelectedPR(msg.Number)
 		m.prList.SetSelectedPR(msg.Number)
+		m.prList.SetCIStatus("")
 		m.diffViewer.SetLoading(msg.Number)
 		if m.ghClient != nil {
 			m.chatPanel.SetCommentsLoading()
@@ -253,6 +261,7 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				fetchDiffCmd(m.ghClient, msg.Owner, msg.Repo, msg.Number),
 				fetchPRDetailCmd(m.ghClient, msg.Owner, msg.Repo, msg.Number),
 				fetchCommentsCmd(m.ghClient, msg.Owner, msg.Repo, msg.Number),
+				fetchCIStatusCmd(m.ghClient, msg.Owner, msg.Repo, msg.Number),
 			)
 		}
 		return m, nil
@@ -296,6 +305,17 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.chatPanel.SetCommentsError(msg.Err.Error())
 		} else {
 			m.chatPanel.SetComments(msg.Comments, msg.InlineComments)
+		}
+		return m, nil
+
+	case CIStatusLoadedMsg:
+		// Race guard: only apply if this is for the currently selected PR
+		if m.selectedPR == nil || msg.PRNumber != m.selectedPR.Number {
+			return m, nil
+		}
+		if msg.Err == nil && msg.Status != nil {
+			m.diffViewer.SetCIStatus(msg.Status)
+			m.prList.SetCIStatus(msg.Status.OverallStatus)
 		}
 		return m, nil
 
@@ -576,6 +596,15 @@ func fetchCommentsCmd(client *github.Client, owner, repo string, number int) tea
 			Comments:       comments,
 			InlineComments: inline,
 		}
+	}
+}
+
+// fetchCIStatusCmd returns a command that fetches CI check status for a PR.
+func fetchCIStatusCmd(client *github.Client, owner, repo string, number int) tea.Cmd {
+	return func() tea.Msg {
+		ctx := context.Background()
+		status, err := client.GetCIStatus(ctx, owner, repo, "", number)
+		return CIStatusLoadedMsg{PRNumber: number, Status: status, Err: err}
 	}
 }
 
