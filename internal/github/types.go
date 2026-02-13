@@ -87,11 +87,19 @@ type Review struct {
 	SubmittedAt time.Time
 }
 
+// ReviewRequest represents a pending review request (user or team).
+type ReviewRequest struct {
+	Login  string // user login or team name
+	IsTeam bool
+}
+
 // ReviewSummary categorizes reviews by state, deduplicated per user.
 type ReviewSummary struct {
-	Approved         []Review
-	ChangesRequested []Review
-	Commented        []Review
+	Approved          []Review
+	ChangesRequested  []Review
+	Commented         []Review
+	ReviewDecision    string // "APPROVED", "CHANGES_REQUESTED", "REVIEW_REQUIRED", ""
+	PendingReviewers  []ReviewRequest
 }
 
 // Comment represents an issue-level PR comment.

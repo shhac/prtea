@@ -87,6 +87,9 @@ type DiffViewerModel struct {
 
 	// CI status data
 	ciStatus *github.CIStatus
+
+	// Review status data
+	reviewSummary *github.ReviewSummary
 }
 
 func NewDiffViewerModel() DiffViewerModel {
@@ -302,6 +305,7 @@ func (m *DiffViewerModel) SetLoading(prNumber int) {
 	m.prURL = ""
 	m.prInfoErr = ""
 	m.ciStatus = nil
+	m.reviewSummary = nil
 	m.refreshContent()
 }
 
@@ -345,6 +349,12 @@ func (m *DiffViewerModel) SetPRInfoError(err string) {
 // SetCIStatus sets CI check status data for the PR Info tab.
 func (m *DiffViewerModel) SetCIStatus(status *github.CIStatus) {
 	m.ciStatus = status
+	m.refreshContent()
+}
+
+// SetReviewSummary sets review status data for the PR Info tab.
+func (m *DiffViewerModel) SetReviewSummary(summary *github.ReviewSummary) {
+	m.reviewSummary = summary
 	m.refreshContent()
 }
 
@@ -518,6 +528,47 @@ func (m DiffViewerModel) renderPRInfo() string {
 				checkIcon := lipgloss.NewStyle().Foreground(lipgloss.Color(cc)).Render(ci)
 				b.WriteString(fmt.Sprintf("  %s %s\n", checkIcon, check.Name))
 			}
+		}
+	}
+
+	// Reviews
+	if m.reviewSummary != nil {
+		b.WriteString("\n")
+		b.WriteString(sectionStyle.Render("Reviews"))
+		b.WriteString("\n")
+
+		// Overall decision badge
+		if m.reviewSummary.ReviewDecision != "" {
+			icon, color := reviewDecisionIconColor(m.reviewSummary.ReviewDecision)
+			badge := lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Render(icon)
+			label := reviewDecisionLabel(m.reviewSummary.ReviewDecision)
+			b.WriteString(fmt.Sprintf("%s %s\n", badge, label))
+		}
+
+		// Per-reviewer status
+		for _, r := range m.reviewSummary.Approved {
+			approvedIcon := lipgloss.NewStyle().Foreground(lipgloss.Color("76")).Render("✓")
+			b.WriteString(fmt.Sprintf("  %s %s approved\n", approvedIcon, r.Author.Login))
+		}
+		for _, r := range m.reviewSummary.ChangesRequested {
+			changesIcon := lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Render("✗")
+			b.WriteString(fmt.Sprintf("  %s %s requested changes\n", changesIcon, r.Author.Login))
+		}
+
+		// Pending reviewers
+		for _, rr := range m.reviewSummary.PendingReviewers {
+			pendingIcon := lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Render("○")
+			name := rr.Login
+			if rr.IsTeam {
+				name += " (team)"
+			}
+			b.WriteString(fmt.Sprintf("  %s %s pending\n", pendingIcon, name))
+		}
+
+		if len(m.reviewSummary.Approved) == 0 && len(m.reviewSummary.ChangesRequested) == 0 &&
+			len(m.reviewSummary.PendingReviewers) == 0 && m.reviewSummary.ReviewDecision == "" {
+			b.WriteString(dimStyle.Render("No reviews yet"))
+			b.WriteString("\n")
 		}
 	}
 
@@ -747,6 +798,34 @@ func ciCheckIconColor(check github.CICheck) (string, string) {
 		return "●", "226"
 	default:
 		return "?", "244"
+	}
+}
+
+// reviewDecisionIconColor returns the icon and lipgloss color for a review decision.
+func reviewDecisionIconColor(decision string) (string, string) {
+	switch decision {
+	case "APPROVED":
+		return "✓", "76"
+	case "CHANGES_REQUESTED":
+		return "✗", "196"
+	case "REVIEW_REQUIRED":
+		return "○", "214"
+	default:
+		return "?", "244"
+	}
+}
+
+// reviewDecisionLabel returns a display label for the review decision.
+func reviewDecisionLabel(decision string) string {
+	switch decision {
+	case "APPROVED":
+		return "Approved"
+	case "CHANGES_REQUESTED":
+		return "Changes Requested"
+	case "REVIEW_REQUIRED":
+		return "Review Required"
+	default:
+		return decision
 	}
 }
 

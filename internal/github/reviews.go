@@ -20,10 +20,19 @@ type ghReview struct {
 // ghLatestReview is used for the latestReviews field.
 type ghLatestReview = ghReview
 
-// ghPRReviews is the JSON shape from gh pr view --json reviews,latestReviews.
+// ghReviewRequest is the JSON shape for reviewRequests from gh pr view.
+type ghReviewRequest struct {
+	TypeName string `json:"__typename"` // "User" or "Team"
+	Login    string `json:"login"`      // for User
+	Name     string `json:"name"`       // for Team
+}
+
+// ghPRReviews is the JSON shape from gh pr view --json reviews,latestReviews,reviewDecision,reviewRequests.
 type ghPRReviews struct {
-	Reviews       []ghReview       `json:"reviews"`
-	LatestReviews []ghLatestReview `json:"latestReviews"`
+	Reviews        []ghReview        `json:"reviews"`
+	LatestReviews  []ghLatestReview  `json:"latestReviews"`
+	ReviewDecision string            `json:"reviewDecision"`
+	ReviewRequests []ghReviewRequest `json:"reviewRequests"`
 }
 
 // GetReviews fetches all reviews for a PR, deduplicates to the latest per reviewer,
@@ -35,7 +44,7 @@ func (c *Client) GetReviews(ctx context.Context, owner, repo string, number int)
 	err := ghJSON(ctx, &data,
 		"pr", "view", fmt.Sprintf("%d", number),
 		"-R", repoFlag,
-		"--json", "reviews,latestReviews",
+		"--json", "reviews,latestReviews,reviewDecision,reviewRequests",
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list reviews for PR #%d: %w", number, err)
@@ -50,7 +59,10 @@ func (c *Client) GetReviews(ctx context.Context, owner, repo string, number int)
 		deduplicated = deduplicateReviews(data.Reviews)
 	}
 
-	summary := &ReviewSummary{}
+	summary := &ReviewSummary{
+		ReviewDecision: data.ReviewDecision,
+	}
+
 	for _, r := range deduplicated {
 		if r.State == "COMMENTED" {
 			continue
@@ -67,6 +79,16 @@ func (c *Client) GetReviews(ctx context.Context, owner, repo string, number int)
 		case "CHANGES_REQUESTED":
 			summary.ChangesRequested = append(summary.ChangesRequested, review)
 		}
+	}
+
+	for _, rr := range data.ReviewRequests {
+		req := ReviewRequest{IsTeam: rr.TypeName == "Team"}
+		if req.IsTeam {
+			req.Login = rr.Name
+		} else {
+			req.Login = rr.Login
+		}
+		summary.PendingReviewers = append(summary.PendingReviewers, req)
 	}
 
 	return summary, nil

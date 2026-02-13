@@ -63,6 +63,7 @@ type PRRefreshMsg struct{}
 type prItemDelegate struct {
 	selectedPRNumber *int    // points to PRListModel.selectedPRNumber
 	ciOverallStatus  *string // points to PRListModel.ciOverallStatus
+	reviewDecision   *string // points to PRListModel.reviewDecision
 }
 
 func (d prItemDelegate) Height() int                             { return 2 }
@@ -84,11 +85,20 @@ func (d prItemDelegate) Render(w io.Writer, m list.Model, index int, item list.I
 	isCursor := index == m.Index()
 	isActive := d.selectedPRNumber != nil && *d.selectedPRNumber != 0 && i.number == *d.selectedPRNumber
 
-	// Compute CI badge for the active/selected PR
-	var ciBadge string
+	// Compute CI + review badges for the active/selected PR
+	var badges string
 	badgeWidth := 0
-	if isActive && d.ciOverallStatus != nil && *d.ciOverallStatus != "" {
-		ciBadge, badgeWidth = ciBadgeForList(*d.ciOverallStatus)
+	if isActive {
+		if d.ciOverallStatus != nil && *d.ciOverallStatus != "" {
+			b, w := ciBadgeForList(*d.ciOverallStatus)
+			badges += b
+			badgeWidth += w
+		}
+		if d.reviewDecision != nil && *d.reviewDecision != "" {
+			b, w := reviewBadgeForList(*d.reviewDecision)
+			badges += b
+			badgeWidth += w
+		}
 	}
 
 	// Truncate text to fit — leave 2 chars for prefix (▸ or padding)
@@ -142,7 +152,7 @@ func (d prItemDelegate) Render(w io.Writer, m list.Model, index int, item list.I
 		desc = descStyle.Render(desc)
 	}
 
-	fmt.Fprintf(w, "%s\n%s%s", title, desc, ciBadge)
+	fmt.Fprintf(w, "%s\n%s%s", title, desc, badges)
 }
 
 // PRListModel manages the PR list panel.
@@ -160,6 +170,9 @@ type PRListModel struct {
 	// CI status for the selected PR (heap-allocated, shared with delegate).
 	ciOverallStatus *string
 
+	// Review decision for the selected PR (heap-allocated, shared with delegate).
+	reviewDecision *string
+
 	// Data state
 	state    loadState
 	errMsg   string
@@ -168,12 +181,14 @@ type PRListModel struct {
 }
 
 func NewPRListModel() PRListModel {
-	selected := new(int)    // heap-allocated, shared with delegate
-	ciStatus := new(string) // heap-allocated, shared with delegate
+	selected := new(int)       // heap-allocated, shared with delegate
+	ciStatus := new(string)    // heap-allocated, shared with delegate
+	reviewDec := new(string)   // heap-allocated, shared with delegate
 
 	delegate := prItemDelegate{
 		selectedPRNumber: selected,
 		ciOverallStatus:  ciStatus,
+		reviewDecision:   reviewDec,
 	}
 
 	l := list.New(nil, delegate, 0, 0)
@@ -190,6 +205,7 @@ func NewPRListModel() PRListModel {
 		state:            stateLoading,
 		selectedPRNumber: selected,
 		ciOverallStatus:  ciStatus,
+		reviewDecision:   reviewDec,
 	}
 }
 
@@ -201,6 +217,11 @@ func (m *PRListModel) SetSelectedPR(number int) {
 // SetCIStatus updates the CI badge for the selected PR.
 func (m *PRListModel) SetCIStatus(status string) {
 	*m.ciOverallStatus = status
+}
+
+// SetReviewDecision updates the review badge for the selected PR.
+func (m *PRListModel) SetReviewDecision(decision string) {
+	*m.reviewDecision = decision
 }
 
 // ciBadgeForList returns a styled CI badge string and its visual width for the PR list.
@@ -215,6 +236,23 @@ func ciBadgeForList(status string) (string, int) {
 		icon, color = "●", "226"
 	case "mixed":
 		icon, color = "⚠", "208"
+	default:
+		return "", 0
+	}
+	styled := " " + lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Render(icon)
+	return styled, 2
+}
+
+// reviewBadgeForList returns a styled review badge string and its visual width for the PR list.
+func reviewBadgeForList(decision string) (string, int) {
+	var icon, color string
+	switch decision {
+	case "APPROVED":
+		icon, color = "✓", "76"
+	case "CHANGES_REQUESTED":
+		icon, color = "✗", "196"
+	case "REVIEW_REQUIRED":
+		icon, color = "○", "214"
 	default:
 		return "", 0
 	}

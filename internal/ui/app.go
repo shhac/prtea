@@ -78,6 +78,13 @@ type CIStatusLoadedMsg struct {
 	Err      error
 }
 
+// ReviewsLoadedMsg is sent when review status has been fetched.
+type ReviewsLoadedMsg struct {
+	PRNumber int
+	Summary  *github.ReviewSummary
+	Err      error
+}
+
 // AnalysisCompleteMsg is sent when Claude analysis finishes successfully.
 type AnalysisCompleteMsg struct {
 	PRNumber int
@@ -254,6 +261,7 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.statusBar.SetSelectedPR(msg.Number)
 		m.prList.SetSelectedPR(msg.Number)
 		m.prList.SetCIStatus("")
+		m.prList.SetReviewDecision("")
 		m.diffViewer.SetLoading(msg.Number)
 		if m.ghClient != nil {
 			m.chatPanel.SetCommentsLoading()
@@ -262,6 +270,7 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				fetchPRDetailCmd(m.ghClient, msg.Owner, msg.Repo, msg.Number),
 				fetchCommentsCmd(m.ghClient, msg.Owner, msg.Repo, msg.Number),
 				fetchCIStatusCmd(m.ghClient, msg.Owner, msg.Repo, msg.Number),
+				fetchReviewsCmd(m.ghClient, msg.Owner, msg.Repo, msg.Number),
 			)
 		}
 		return m, nil
@@ -316,6 +325,17 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Err == nil && msg.Status != nil {
 			m.diffViewer.SetCIStatus(msg.Status)
 			m.prList.SetCIStatus(msg.Status.OverallStatus)
+		}
+		return m, nil
+
+	case ReviewsLoadedMsg:
+		// Race guard: only apply if this is for the currently selected PR
+		if m.selectedPR == nil || msg.PRNumber != m.selectedPR.Number {
+			return m, nil
+		}
+		if msg.Err == nil && msg.Summary != nil {
+			m.diffViewer.SetReviewSummary(msg.Summary)
+			m.prList.SetReviewDecision(msg.Summary.ReviewDecision)
 		}
 		return m, nil
 
@@ -605,6 +625,15 @@ func fetchCIStatusCmd(client *github.Client, owner, repo string, number int) tea
 		ctx := context.Background()
 		status, err := client.GetCIStatus(ctx, owner, repo, "", number)
 		return CIStatusLoadedMsg{PRNumber: number, Status: status, Err: err}
+	}
+}
+
+// fetchReviewsCmd returns a command that fetches review status for a PR.
+func fetchReviewsCmd(client *github.Client, owner, repo string, number int) tea.Cmd {
+	return func() tea.Msg {
+		ctx := context.Background()
+		summary, err := client.GetReviews(ctx, owner, repo, number)
+		return ReviewsLoadedMsg{PRNumber: number, Summary: summary, Err: err}
 	}
 }
 
