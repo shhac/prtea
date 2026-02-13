@@ -228,7 +228,8 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			Title:   title,
 			HTMLURL: msg.HTMLURL,
 		}
-		m.diffFiles = nil // clear old diff data
+		m.streamChan = nil                 // stop listening to old stream
+		m.diffFiles = nil                  // clear old diff data
 		m.chatPanel.SetAnalysisResult(nil) // clear old analysis
 		m.chatPanel.ClearChat()            // clear old chat
 		if m.chatService != nil {
@@ -293,10 +294,18 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleChatSend(msg.Message)
 
 	case ChatStreamChunkMsg:
+		// Ignore stale chunks from a previous PR's stream
+		if m.streamChan == nil {
+			return m, nil
+		}
 		m.chatPanel.AppendStreamChunk(msg.Content)
 		return m, listenForChatStream(m.streamChan)
 
 	case ChatResponseMsg:
+		// Ignore stale responses from a previous PR's stream
+		if m.streamChan == nil {
+			return m, nil
+		}
 		m.streamChan = nil
 		if msg.Err != nil {
 			m.chatPanel.SetChatError(msg.Err.Error())
