@@ -45,6 +45,11 @@ type ChatResponseMsg struct {
 	Err     error
 }
 
+// ChatStreamChunkMsg carries a streaming text chunk from Claude.
+type ChatStreamChunkMsg struct {
+	Content string
+}
+
 // ChatPanelModel manages the chat/analysis panel.
 type ChatPanelModel struct {
 	viewport  viewport.Model
@@ -58,8 +63,9 @@ type ChatPanelModel struct {
 	ready     bool
 
 	// Chat state
-	isWaiting bool   // true while waiting for Claude response
-	chatError string // last chat error message
+	isWaiting        bool   // true while waiting for Claude response
+	chatError        string // last chat error message
+	streamingContent string // accumulated streaming text from Claude
 
 	// Analysis state
 	analysisResult  *claude.AnalysisResult
@@ -205,6 +211,13 @@ func (m *ChatPanelModel) SetAnalysisError(err string) {
 	m.refreshViewport()
 }
 
+// AppendStreamChunk appends a text chunk during streaming and refreshes the viewport.
+func (m *ChatPanelModel) AppendStreamChunk(chunk string) {
+	m.streamingContent += chunk
+	m.refreshViewport()
+	m.viewport.GotoBottom()
+}
+
 // AddResponse appends a Claude response and clears the waiting state.
 func (m *ChatPanelModel) AddResponse(content string) {
 	m.messages = append(m.messages, chatMessage{
@@ -213,6 +226,7 @@ func (m *ChatPanelModel) AddResponse(content string) {
 	})
 	m.isWaiting = false
 	m.chatError = ""
+	m.streamingContent = ""
 	m.refreshViewport()
 	m.viewport.GotoBottom()
 }
@@ -221,6 +235,7 @@ func (m *ChatPanelModel) AddResponse(content string) {
 func (m *ChatPanelModel) SetChatError(err string) {
 	m.chatError = err
 	m.isWaiting = false
+	m.streamingContent = ""
 	m.refreshViewport()
 	m.viewport.GotoBottom()
 }
@@ -230,6 +245,7 @@ func (m *ChatPanelModel) ClearChat() {
 	m.messages = nil
 	m.isWaiting = false
 	m.chatError = ""
+	m.streamingContent = ""
 	m.refreshViewport()
 }
 
@@ -342,10 +358,17 @@ func (m ChatPanelModel) renderMessages() string {
 		if len(m.messages) > 0 {
 			b.WriteString("\n\n")
 		}
-		b.WriteString(lipgloss.NewStyle().
-			Foreground(lipgloss.Color("244")).
-			Italic(true).
-			Render("Claude is thinking..."))
+		if m.streamingContent != "" {
+			b.WriteString(chatAssistantStyle.Render("Claude:"))
+			b.WriteString("\n")
+			wrapped := wordWrap(m.streamingContent, innerWidth)
+			b.WriteString(wrapped)
+		} else {
+			b.WriteString(lipgloss.NewStyle().
+				Foreground(lipgloss.Color("244")).
+				Italic(true).
+				Render("Claude is thinking..."))
+		}
 	}
 
 	if m.chatError != "" {

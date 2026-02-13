@@ -75,6 +75,9 @@ type AnalysisErrorMsg struct {
 	Err error
 }
 
+// chatStreamChan carries streaming chunks and the final response from Claude chat.
+type chatStreamChan chan tea.Msg
+
 // App is the root Bubbletea model for the PR dashboard.
 type App struct {
 	// Panel models
@@ -100,6 +103,7 @@ type App struct {
 	chatService   *claude.ChatService
 	analysisStore *claude.AnalysisStore
 	analyzing     bool
+	streamChan    chatStreamChan // active chat streaming channel
 
 	// Layout state
 	focused        Panel
@@ -288,7 +292,12 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case ChatSendMsg:
 		return m.handleChatSend(msg.Message)
 
+	case ChatStreamChunkMsg:
+		m.chatPanel.AppendStreamChunk(msg.Content)
+		return m, listenForChatStream(m.streamChan)
+
 	case ChatResponseMsg:
+		m.streamChan = nil
 		if msg.Err != nil {
 			m.chatPanel.SetChatError(msg.Err.Error())
 		} else {
@@ -661,7 +670,7 @@ func (m App) startAnalysis() (tea.Model, tea.Cmd) {
 	return m, analyzeDiffCmd(m.analyzer, m.selectedPR, m.diffFiles, hash)
 }
 
-// handleChatSend validates state and kicks off Claude chat.
+// handleChatSend validates state and kicks off streaming Claude chat.
 func (m App) handleChatSend(message string) (tea.Model, tea.Cmd) {
 	if m.selectedPR == nil {
 		m.chatPanel.SetChatError("No PR selected. Select a PR first.")
@@ -682,18 +691,31 @@ func (m App) handleChatSend(message string) (tea.Model, tea.Cmd) {
 		Message:   message,
 	}
 
-	return m, chatCmd(m.chatService, input)
+	ch := make(chatStreamChan)
+	go func() {
+		defer close(ch)
+		response, err := m.chatService.ChatStream(context.Background(), input, func(text string) {
+			ch <- ChatStreamChunkMsg{Content: text}
+		})
+		if err != nil {
+			ch <- ChatResponseMsg{Err: err}
+		} else {
+			ch <- ChatResponseMsg{Content: response}
+		}
+	}()
+
+	m.streamChan = ch
+	return m, listenForChatStream(ch)
 }
 
-// chatCmd returns a command that sends a message to Claude chat.
-func chatCmd(svc *claude.ChatService, input claude.ChatInput) tea.Cmd {
+// listenForChatStream returns a tea.Cmd that reads the next message from the streaming channel.
+func listenForChatStream(ch chatStreamChan) tea.Cmd {
 	return func() tea.Msg {
-		ctx := context.Background()
-		response, err := svc.Chat(ctx, input)
-		if err != nil {
-			return ChatResponseMsg{Err: err}
+		msg, ok := <-ch
+		if !ok {
+			return nil
 		}
-		return ChatResponseMsg{Content: response}
+		return msg
 	}
 }
 

@@ -1,9 +1,12 @@
 package claude
 
 import (
+	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -130,6 +133,124 @@ func buildChatPrompt(session *ChatSession, userMessage string) string {
 	fmt.Fprintf(&b, "\nUser: %s\n\nRespond helpfully and concisely.", userMessage)
 
 	return b.String()
+}
+
+// ChatStream sends a message to Claude with streaming JSON output.
+// onChunk is called with each text chunk as it arrives.
+// Returns the complete response text.
+func (cs *ChatService) ChatStream(ctx context.Context, input ChatInput, onChunk func(text string)) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, cs.timeout)
+	defer cancel()
+
+	session := cs.getOrCreateSession(input)
+	prompt := buildChatPrompt(session, input.Message)
+
+	args := []string{
+		"-p", prompt,
+		"--output-format", "stream-json",
+		"--max-turns", "3",
+	}
+
+	cmd := exec.CommandContext(ctx, cs.claudePath, args...)
+	cmd.Stdin = nil
+	cmd.Env = filterEnv(os.Environ(), "ANTHROPIC_API_KEY")
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return "", fmt.Errorf("failed to create stdout pipe: %w", err)
+	}
+
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return "", fmt.Errorf("failed to create stderr pipe: %w", err)
+	}
+
+	if err := cmd.Start(); err != nil {
+		if isNotFound(err) {
+			return "", fmt.Errorf("claude CLI not found at %s: ensure 'claude' is installed", cs.claudePath)
+		}
+		return "", fmt.Errorf("failed to start claude: %w", err)
+	}
+
+	// Drain stderr in background
+	var stderrBuf strings.Builder
+	go func() {
+		scanner := bufio.NewScanner(stderr)
+		scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
+		for scanner.Scan() {
+			stderrBuf.WriteString(scanner.Text())
+			stderrBuf.WriteByte('\n')
+		}
+	}()
+
+	// Parse stream-json events from stdout
+	var resultText string
+	scanner := bufio.NewScanner(stdout)
+	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+
+		var event StreamEvent
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			continue
+		}
+
+		// Stream text chunks from assistant messages
+		if event.Type == "assistant" && event.Message != nil {
+			for _, block := range event.Message.Content {
+				if block.Type == "text" && block.Text != "" {
+					onChunk(block.Text)
+				}
+			}
+		}
+
+		// Capture final result
+		if event.Type == "result" {
+			resultText = extractResultText(&event)
+		}
+	}
+
+	if err := cmd.Wait(); err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return "", fmt.Errorf("claude chat timed out after %s", cs.timeout)
+		}
+		errMsg := stderrBuf.String()
+		if len(errMsg) > 300 {
+			errMsg = errMsg[:300]
+		}
+		return "", fmt.Errorf("claude chat exited with error: %w\nstderr: %s", err, errMsg)
+	}
+
+	// Append exchange to session history
+	cs.mu.Lock()
+	session.Messages = append(session.Messages,
+		ChatMessage{Role: "user", Content: input.Message},
+		ChatMessage{Role: "assistant", Content: resultText},
+	)
+	cs.mu.Unlock()
+
+	return resultText, nil
+}
+
+// extractResultText pulls the text content from a result stream event.
+func extractResultText(event *StreamEvent) string {
+	switch v := event.Result.(type) {
+	case string:
+		return v
+	default:
+		if v == nil {
+			return ""
+		}
+		data, err := json.Marshal(v)
+		if err != nil {
+			return ""
+		}
+		return string(data)
+	}
 }
 
 func sessionKey(owner, repo string, prNumber int) string {
