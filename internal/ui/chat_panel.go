@@ -75,7 +75,7 @@ func (m ChatPanelModel) Update(msg tea.Msg) (ChatPanelModel, tea.Cmd) {
 	case tea.KeyMsg:
 		if m.chatMode == ChatModeInsert {
 			switch {
-			case key.Matches(msg, ChatKeys.ExitInsert), key.Matches(msg, ChatKeys.ExitInsertAlt):
+			case key.Matches(msg, ChatKeys.ExitInsert):
 				m.chatMode = ChatModeNormal
 				m.textInput.Blur()
 				return m, func() tea.Msg { return ModeChangedMsg{Mode: ChatModeNormal} }
@@ -111,10 +111,6 @@ func (m ChatPanelModel) Update(msg tea.Msg) (ChatPanelModel, tea.Cmd) {
 			}
 			m.refreshViewport()
 			return m, nil
-		case key.Matches(msg, ChatKeys.InsertMode):
-			m.chatMode = ChatModeInsert
-			m.textInput.Focus()
-			return m, func() tea.Msg { return ModeChangedMsg{Mode: ChatModeInsert} }
 		case msg.String() == "enter":
 			m.chatMode = ChatModeInsert
 			m.textInput.Focus()
@@ -234,7 +230,7 @@ func (m ChatPanelModel) renderHeader() string {
 func (m ChatPanelModel) renderMessages() string {
 	if len(m.messages) == 0 {
 		return lipgloss.NewStyle().Foreground(lipgloss.Color("244")).
-			Render("No messages yet. Press i to start chatting.")
+			Render("No messages yet. Press Enter to start chatting.")
 	}
 
 	var b strings.Builder
@@ -285,7 +281,7 @@ func (m ChatPanelModel) renderInput() string {
 	return prefix + lipgloss.NewStyle().
 		Foreground(lipgloss.Color("240")).
 		Italic(true).
-		Render("press i to chat")
+		Render("press Enter to chat")
 }
 
 // wordWrap wraps text to fit within the given width.

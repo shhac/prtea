@@ -13,9 +13,10 @@ type GlobalKeyMap struct {
 	Panel3      key.Binding
 	Analyze     key.Binding
 	OpenBrowser key.Binding
-	ToggleLeft  key.Binding
-	ToggleRight key.Binding
-	Zoom        key.Binding
+	ToggleLeft   key.Binding
+	ToggleCenter key.Binding
+	ToggleRight  key.Binding
+	Zoom         key.Binding
 }
 
 var GlobalKeys = GlobalKeyMap{
@@ -58,6 +59,10 @@ var GlobalKeys = GlobalKeyMap{
 	ToggleLeft: key.NewBinding(
 		key.WithKeys("["),
 		key.WithHelp("[", "toggle left panel"),
+	),
+	ToggleCenter: key.NewBinding(
+		key.WithKeys("\\"),
+		key.WithHelp("\\", "toggle center panel"),
 	),
 	ToggleRight: key.NewBinding(
 		key.WithKeys("]"),
@@ -160,14 +165,12 @@ var DiffViewerKeys = DiffViewerKeyMap{
 
 // ChatKeyMap defines keys for the chat panel.
 type ChatKeyMap struct {
-	Up              key.Binding
-	Down            key.Binding
-	InsertMode      key.Binding
-	ExitInsert      key.Binding
-	ExitInsertAlt   key.Binding
-	Send            key.Binding
-	PrevTab         key.Binding
-	NextTab         key.Binding
+	Up         key.Binding
+	Down       key.Binding
+	ExitInsert key.Binding
+	Send       key.Binding
+	PrevTab    key.Binding
+	NextTab    key.Binding
 }
 
 var ChatKeys = ChatKeyMap{
@@ -179,17 +182,9 @@ var ChatKeys = ChatKeyMap{
 		key.WithKeys("j", "down"),
 		key.WithHelp("j", "down"),
 	),
-	InsertMode: key.NewBinding(
-		key.WithKeys("i"),
-		key.WithHelp("i", "insert mode"),
-	),
 	ExitInsert: key.NewBinding(
 		key.WithKeys("esc"),
 		key.WithHelp("Esc", "normal mode"),
-	),
-	ExitInsertAlt: key.NewBinding(
-		key.WithKeys("shift+tab"),
-		key.WithHelp("Shift+Tab", "exit input"),
 	),
 	Send: key.NewBinding(
 		key.WithKeys("enter"),

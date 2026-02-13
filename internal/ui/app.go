@@ -146,6 +146,13 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.togglePanel(PanelLeft)
 			return m, nil
 
+		case key.Matches(msg, GlobalKeys.ToggleCenter):
+			if m.zoomed {
+				m.exitZoom()
+			}
+			m.togglePanel(PanelCenter)
+			return m, nil
+
 		case key.Matches(msg, GlobalKeys.ToggleRight):
 			if m.zoomed {
 				m.exitZoom()

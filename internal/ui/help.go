@@ -181,7 +181,7 @@ func (m HelpOverlayModel) renderHelpContent() string {
 			keys: []helpEntry{
 				{"Tab / Shift+Tab", "Switch panels"},
 				{"1 / 2 / 3", "Jump to panel"},
-				{"[ / ]", "Toggle left/right panel"},
+				{"[ / \\ / ]", "Toggle left/center/right panel"},
 				{"z", "Zoom focused panel"},
 				{"a", "Analyze PR"},
 				{"o", "Open in browser"},
@@ -219,7 +219,7 @@ func (m HelpOverlayModel) renderHelpContent() string {
 			keys: []helpEntry{
 				{"h / l", "Prev/next tab"},
 				{"j / k", "Scroll history"},
-				{"i / Enter", "Enter insert mode"},
+				{"Enter", "Enter insert mode"},
 			},
 		},
 		{
@@ -228,7 +228,6 @@ func (m HelpOverlayModel) renderHelpContent() string {
 			match: false,
 			keys: []helpEntry{
 				{"Enter", "Send message"},
-				{"Shift+Tab", "Exit input"},
 				{"Esc", "Exit insert mode"},
 			},
 		},

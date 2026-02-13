@@ -55,7 +55,7 @@ func (m StatusBarModel) View() string {
 
 func (m StatusBarModel) keyHints() string {
 	if m.mode == ModeInsert {
-		return " [Enter]send [Shift+Tab]exit input [Esc]exit input"
+		return " [Enter]send [Esc]exit insert"
 	}
 
 	switch m.focused {
