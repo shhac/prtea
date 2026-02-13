@@ -1,10 +1,44 @@
 package ui
 
 import (
+	"context"
+
 	"github.com/charmbracelet/bubbles/key"
+	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/shhac/prtea/internal/github"
 )
+
+// -- Async message types --
+
+// GHClientReadyMsg is sent when the GitHub client has been created successfully.
+type GHClientReadyMsg struct {
+	Client *github.Client
+}
+
+// GHClientErrorMsg is sent when the GitHub client fails to initialize.
+type GHClientErrorMsg struct {
+	Err error
+}
+
+// PRsLoadedMsg is sent when PR data has been fetched successfully.
+type PRsLoadedMsg struct {
+	ToReview []github.PRItem
+	MyPRs    []github.PRItem
+}
+
+// PRsErrorMsg is sent when PR fetching fails.
+type PRsErrorMsg struct {
+	Err error
+}
+
+// DiffLoadedMsg is sent when PR diff data has been fetched.
+type DiffLoadedMsg struct {
+	PRNumber int
+	Files    []github.PRFile
+	Err      error
+}
 
 // App is the root Bubbletea model for the PR dashboard.
 type App struct {
@@ -16,6 +50,9 @@ type App struct {
 
 	// Overlays
 	helpOverlay HelpOverlayModel
+
+	// GitHub client (nil until GHClientReadyMsg)
+	ghClient *github.Client
 
 	// Layout state
 	focused        Panel
@@ -45,7 +82,7 @@ func NewApp() App {
 }
 
 func (m App) Init() tea.Cmd {
-	return nil
+	return initGHClientCmd
 }
 
 func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -67,6 +104,32 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.recalcLayout()
 		return m, nil
 
+	case GHClientReadyMsg:
+		m.ghClient = msg.Client
+		return m, fetchPRsCmd(m.ghClient)
+
+	case GHClientErrorMsg:
+		m.prList.SetError(msg.Err.Error())
+		return m, nil
+
+	case PRsLoadedMsg:
+		toReview := convertPRItems(msg.ToReview)
+		myPRs := convertPRItems(msg.MyPRs)
+		m.prList.SetItems(toReview, myPRs)
+		return m, nil
+
+	case PRsErrorMsg:
+		m.prList.SetError(msg.Err.Error())
+		return m, nil
+
+	case PRRefreshMsg:
+		m.prList.SetLoading()
+		if m.ghClient != nil {
+			return m, fetchPRsCmd(m.ghClient)
+		}
+		// Client not ready yet — retry init
+		return m, initGHClientCmd
+
 	case HelpClosedMsg:
 		m.mode = ModeNavigation
 		m.statusBar.SetState(m.focused, m.mode)
@@ -83,7 +146,22 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case PRSelectedMsg:
 		m.statusBar.SetSelectedPR(msg.Number)
-		// TODO: trigger diff loading for the selected PR
+		m.diffViewer.SetLoading(msg.Number)
+		if m.ghClient != nil {
+			return m, fetchDiffCmd(m.ghClient, msg.Owner, msg.Repo, msg.Number)
+		}
+		return m, nil
+
+	case DiffLoadedMsg:
+		// Race guard: only apply if this is for the currently displayed PR
+		if msg.PRNumber != m.diffViewer.prNumber {
+			return m, nil
+		}
+		if msg.Err != nil {
+			m.diffViewer.SetError(msg.Err)
+		} else {
+			m.diffViewer.SetDiff(msg.Files)
+		}
 		return m, nil
 
 	case tea.KeyMsg:
@@ -206,6 +284,73 @@ func (m App) View() string {
 
 	return base
 }
+
+// -- Async commands --
+
+// initGHClientCmd creates the GitHub client in a goroutine.
+func initGHClientCmd() tea.Msg {
+	client, err := github.NewClient()
+	if err != nil {
+		return GHClientErrorMsg{Err: err}
+	}
+	return GHClientReadyMsg{Client: client}
+}
+
+// fetchPRsCmd returns a command that fetches both PR lists.
+func fetchPRsCmd(client *github.Client) tea.Cmd {
+	return func() tea.Msg {
+		ctx := context.Background()
+
+		toReview, err := client.GetPRsForReview(ctx)
+		if err != nil {
+			return PRsErrorMsg{Err: err}
+		}
+
+		myPRs, err := client.GetMyPRs(ctx)
+		if err != nil {
+			return PRsErrorMsg{Err: err}
+		}
+
+		return PRsLoadedMsg{
+			ToReview: toReview,
+			MyPRs:    myPRs,
+		}
+	}
+}
+
+// convertPRItems converts github.PRItem slice to list.Item slice.
+func convertPRItems(prs []github.PRItem) []list.Item {
+	items := make([]list.Item, len(prs))
+	for i, pr := range prs {
+		items[i] = PRItem{
+			number:   pr.Number,
+			title:    pr.Title,
+			repo:     pr.Repo.Name,
+			owner:    pr.Repo.Owner,
+			repoFull: pr.Repo.FullName,
+			author:   pr.Author.Login,
+			adds:     pr.Additions,
+			dels:     pr.Deletions,
+			files:    pr.ChangedFiles,
+			htmlURL:  pr.HTMLURL,
+		}
+	}
+	return items
+}
+
+// fetchDiffCmd returns a command that fetches PR file diffs.
+func fetchDiffCmd(client *github.Client, owner, repo string, number int) tea.Cmd {
+	return func() tea.Msg {
+		ctx := context.Background()
+		files, err := client.GetPRFiles(ctx, owner, repo, number)
+		if err != nil {
+			return DiffLoadedMsg{PRNumber: number, Err: err}
+		}
+		return DiffLoadedMsg{PRNumber: number, Files: files}
+	}
+}
+
+// -- Layout & panel helpers --
 
 // focusPanel sets focus to the given panel. If the panel is hidden,
 // focuses the next visible panel instead.

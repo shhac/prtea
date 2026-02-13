@@ -18,15 +18,27 @@ const (
 	TabMyPRs
 )
 
+// loadState tracks the data-fetch lifecycle.
+type loadState int
+
+const (
+	stateLoading loadState = iota
+	stateLoaded
+	stateError
+)
+
 // PRItem represents a PR in the list.
 type PRItem struct {
-	number int
-	title  string
-	repo   string
-	author string
-	adds   int
-	dels   int
-	files  int
+	number  int
+	title   string
+	repo    string // short repo name (e.g. "api")
+	owner   string // repo owner (e.g. "shhac")
+	repoFull string // full name (e.g. "shhac/api")
+	author  string
+	adds    int
+	dels    int
+	files   int
+	htmlURL string
 }
 
 func (i PRItem) FilterValue() string { return i.title }
@@ -37,8 +49,13 @@ func (i PRItem) Description() string {
 
 // PRSelectedMsg is sent when the user selects a PR.
 type PRSelectedMsg struct {
+	Owner  string
+	Repo   string
 	Number int
 }
+
+// PRRefreshMsg is sent when the user presses `r` to refresh PR data.
+type PRRefreshMsg struct{}
 
 // PRListModel manages the PR list panel.
 type PRListModel struct {
@@ -47,14 +64,19 @@ type PRListModel struct {
 	width     int
 	height    int
 	focused   bool
+
+	// Data state
+	state    loadState
+	errMsg   string
+	toReview []list.Item
+	myPRs    []list.Item
 }
 
 func NewPRListModel() PRListModel {
-	items := placeholderPRItems()
 	delegate := list.NewDefaultDelegate()
 	delegate.ShowDescription = true
 
-	l := list.New(items, delegate, 0, 0)
+	l := list.New(nil, delegate, 0, 0)
 	l.Title = ""
 	l.SetShowTitle(false)
 	l.SetShowHelp(false)
@@ -65,6 +87,35 @@ func NewPRListModel() PRListModel {
 	return PRListModel{
 		list:      l,
 		activeTab: TabToReview,
+		state:     stateLoading,
+	}
+}
+
+// SetLoading puts the panel into loading state.
+func (m *PRListModel) SetLoading() {
+	m.state = stateLoading
+	m.errMsg = ""
+}
+
+// SetError puts the panel into error state with a message.
+func (m *PRListModel) SetError(err string) {
+	m.state = stateError
+	m.errMsg = err
+}
+
+// SetItems populates both tab datasets and switches to the loaded state.
+func (m *PRListModel) SetItems(toReview, myPRs []list.Item) {
+	m.toReview = toReview
+	m.myPRs = myPRs
+	m.state = stateLoaded
+	m.errMsg = ""
+
+	// Show the active tab's data
+	switch m.activeTab {
+	case TabToReview:
+		m.list.SetItems(m.toReview)
+	case TabMyPRs:
+		m.list.SetItems(m.myPRs)
 	}
 }
 
@@ -75,25 +126,45 @@ func (m PRListModel) Update(msg tea.Msg) (PRListModel, tea.Cmd) {
 		case key.Matches(msg, PRListKeys.PrevTab):
 			if m.activeTab == TabMyPRs {
 				m.activeTab = TabToReview
+				if m.state == stateLoaded {
+					m.list.SetItems(m.toReview)
+				}
 			}
 			return m, nil
 		case key.Matches(msg, PRListKeys.NextTab):
 			if m.activeTab == TabToReview {
 				m.activeTab = TabMyPRs
+				if m.state == stateLoaded {
+					m.list.SetItems(m.myPRs)
+				}
 			}
 			return m, nil
 		case key.Matches(msg, PRListKeys.Select):
 			if item, ok := m.list.SelectedItem().(PRItem); ok {
 				return m, func() tea.Msg {
-					return PRSelectedMsg{Number: item.number}
+					return PRSelectedMsg{
+						Owner:  item.owner,
+						Repo:   item.repo,
+						Number: item.number,
+					}
 				}
+			}
+		case key.Matches(msg, PRListKeys.Refresh):
+			m.state = stateLoading
+			return m, func() tea.Msg {
+				return PRRefreshMsg{}
 			}
 		}
 	}
 
-	var cmd tea.Cmd
-	m.list, cmd = m.list.Update(msg)
-	return m, cmd
+	// Only delegate to the inner list when we have data
+	if m.state == stateLoaded {
+		var cmd tea.Cmd
+		m.list, cmd = m.list.Update(msg)
+		return m, cmd
+	}
+
+	return m, nil
 }
 
 func (m *PRListModel) SetSize(width, height int) {
@@ -117,7 +188,16 @@ func (m *PRListModel) SetFocused(focused bool) {
 
 func (m PRListModel) View() string {
 	header := m.renderTabs()
-	content := m.list.View()
+
+	var content string
+	switch m.state {
+	case stateLoading:
+		content = m.renderLoading()
+	case stateError:
+		content = m.renderError()
+	case stateLoaded:
+		content = m.list.View()
+	}
 
 	inner := lipgloss.JoinVertical(lipgloss.Left, header, content)
 
@@ -128,25 +208,43 @@ func (m PRListModel) View() string {
 func (m PRListModel) renderTabs() string {
 	var tabs []string
 
+	toReviewLabel := "To Review"
+	myPRsLabel := "My PRs"
+
+	if m.state == stateLoaded {
+		toReviewLabel = fmt.Sprintf("To Review (%d)", len(m.toReview))
+		myPRsLabel = fmt.Sprintf("My PRs (%d)", len(m.myPRs))
+	}
+
 	if m.activeTab == TabToReview {
-		tabs = append(tabs, activeTabStyle().Render("To Review"))
-		tabs = append(tabs, inactiveTabStyle().Render("My PRs"))
+		tabs = append(tabs, activeTabStyle().Render(toReviewLabel))
+		tabs = append(tabs, inactiveTabStyle().Render(myPRsLabel))
 	} else {
-		tabs = append(tabs, inactiveTabStyle().Render("To Review"))
-		tabs = append(tabs, activeTabStyle().Render("My PRs"))
+		tabs = append(tabs, inactiveTabStyle().Render(toReviewLabel))
+		tabs = append(tabs, activeTabStyle().Render(myPRsLabel))
 	}
 
 	return strings.Join(tabs, " ")
 }
 
-func placeholderPRItems() []list.Item {
-	return []list.Item{
-		PRItem{number: 1234, title: "Fix authentication timeout", repo: "api", author: "alice", adds: 42, dels: 8, files: 3},
-		PRItem{number: 1235, title: "Add rate limiting middleware", repo: "api", author: "bob", adds: 156, dels: 12, files: 5},
-		PRItem{number: 892, title: "Update dashboard charts", repo: "frontend", author: "carol", adds: 89, dels: 34, files: 7},
-		PRItem{number: 456, title: "Migrate to new ORM", repo: "backend", author: "dave", adds: 312, dels: 245, files: 18},
-		PRItem{number: 789, title: "Fix memory leak in worker", repo: "worker", author: "eve", adds: 23, dels: 5, files: 2},
-		PRItem{number: 321, title: "Add search functionality", repo: "frontend", author: "frank", adds: 198, dels: 15, files: 9},
-		PRItem{number: 654, title: "Update CI pipeline", repo: "infra", author: "grace", adds: 45, dels: 30, files: 4},
-	}
+func (m PRListModel) renderLoading() string {
+	return lipgloss.NewStyle().
+		Foreground(lipgloss.Color("244")).
+		Padding(1, 2).
+		Render("Loading PRs...")
+}
+
+func (m PRListModel) renderError() string {
+	msg := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("196")).
+		Bold(true).
+		Padding(1, 2).
+		Render(m.errMsg)
+
+	hint := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("244")).
+		Padding(0, 2).
+		Render("Press r to retry")
+
+	return lipgloss.JoinVertical(lipgloss.Left, msg, hint)
 }

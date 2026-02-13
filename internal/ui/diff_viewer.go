@@ -1,12 +1,14 @@
 package ui
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/shhac/prtea/internal/github"
 )
 
 // DiffViewerModel manages the diff viewer panel.
@@ -16,6 +18,14 @@ type DiffViewerModel struct {
 	height   int
 	focused  bool
 	ready    bool
+
+	// Diff data
+	files          []github.PRFile
+	fileOffsets    []int // viewport line index where each file header starts
+	currentFileIdx int
+	loading        bool
+	prNumber       int
+	err            error
 }
 
 func NewDiffViewerModel() DiffViewerModel {
@@ -29,6 +39,30 @@ func (m DiffViewerModel) Update(msg tea.Msg) (DiffViewerModel, tea.Cmd) {
 			return m, nil
 		}
 		switch {
+		case key.Matches(msg, DiffViewerKeys.NextFile):
+			if len(m.fileOffsets) > 0 {
+				currentY := m.viewport.YOffset
+				for i, offset := range m.fileOffsets {
+					if offset > currentY {
+						m.currentFileIdx = i
+						m.viewport.SetYOffset(offset)
+						break
+					}
+				}
+			}
+			return m, nil
+		case key.Matches(msg, DiffViewerKeys.PrevFile):
+			if len(m.fileOffsets) > 0 {
+				currentY := m.viewport.YOffset
+				for i := len(m.fileOffsets) - 1; i >= 0; i-- {
+					if m.fileOffsets[i] < currentY {
+						m.currentFileIdx = i
+						m.viewport.SetYOffset(m.fileOffsets[i])
+						break
+					}
+				}
+			}
+			return m, nil
 		case key.Matches(msg, DiffViewerKeys.HalfDown):
 			m.viewport.HalfViewDown()
 			return m, nil
@@ -64,21 +98,95 @@ func (m *DiffViewerModel) SetSize(width, height int) {
 
 	if !m.ready {
 		m.viewport = viewport.New(innerWidth, innerHeight)
-		m.viewport.SetContent(renderPlaceholderDiff(innerWidth))
 		m.ready = true
 	} else {
 		m.viewport.Width = innerWidth
 		m.viewport.Height = innerHeight
-		m.viewport.SetContent(renderPlaceholderDiff(innerWidth))
 	}
+	m.refreshContent()
 }
 
 func (m *DiffViewerModel) SetFocused(focused bool) {
 	m.focused = focused
 }
 
+// SetLoading puts the viewer into loading state for a given PR.
+func (m *DiffViewerModel) SetLoading(prNumber int) {
+	m.prNumber = prNumber
+	m.loading = true
+	m.files = nil
+	m.fileOffsets = nil
+	m.currentFileIdx = 0
+	m.err = nil
+	m.refreshContent()
+}
+
+// SetDiff displays the fetched diff files.
+func (m *DiffViewerModel) SetDiff(files []github.PRFile) {
+	m.loading = false
+	m.files = files
+	m.err = nil
+	m.currentFileIdx = 0
+	m.refreshContent()
+	m.viewport.GotoTop()
+}
+
+// SetError displays an error message.
+func (m *DiffViewerModel) SetError(err error) {
+	m.loading = false
+	m.err = err
+	m.files = nil
+	m.fileOffsets = nil
+	m.refreshContent()
+}
+
+func (m *DiffViewerModel) refreshContent() {
+	if !m.ready {
+		return
+	}
+	if m.loading {
+		m.viewport.SetContent(
+			lipgloss.NewStyle().
+				Foreground(lipgloss.Color("244")).
+				Padding(1, 2).
+				Render(fmt.Sprintf("Loading diff for PR #%d...", m.prNumber)),
+		)
+		return
+	}
+	if m.err != nil {
+		errMsg := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("196")).
+			Bold(true).
+			Padding(1, 2).
+			Render(fmt.Sprintf("Error: %v", m.err))
+		hint := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("244")).
+			Padding(0, 2).
+			Render("Select a PR to try again")
+		m.viewport.SetContent(lipgloss.JoinVertical(lipgloss.Left, errMsg, hint))
+		return
+	}
+	if m.files != nil {
+		m.viewport.SetContent(m.renderRealDiff())
+		return
+	}
+	// No PR selected yet
+	m.viewport.SetContent(
+		lipgloss.NewStyle().
+			Foreground(lipgloss.Color("244")).
+			Padding(1, 2).
+			Render("Select a PR to view its diff"),
+	)
+}
+
 func (m DiffViewerModel) View() string {
-	header := panelHeaderStyle(m.focused).Render("Diff Viewer")
+	headerText := "Diff Viewer"
+	if m.prNumber > 0 && m.files != nil {
+		headerText = fmt.Sprintf("Diff — PR #%d (%d files)", m.prNumber, len(m.files))
+	} else if m.prNumber > 0 {
+		headerText = fmt.Sprintf("Diff — PR #%d", m.prNumber)
+	}
+	header := panelHeaderStyle(m.focused).Render(headerText)
 
 	var content string
 	if m.ready {
@@ -92,104 +200,92 @@ func (m DiffViewerModel) View() string {
 	return style.Render(inner)
 }
 
-func renderPlaceholderDiff(width int) string {
+// renderRealDiff renders actual PR file diffs with syntax coloring.
+func (m *DiffViewerModel) renderRealDiff() string {
+	if len(m.files) == 0 {
+		return lipgloss.NewStyle().
+			Foreground(lipgloss.Color("244")).
+			Padding(1, 2).
+			Render("No files changed in this PR.")
+	}
+
+	innerWidth := m.viewport.Width
 	var b strings.Builder
+	m.fileOffsets = make([]int, len(m.files))
+	lineCount := 0
 
-	fileHeader := diffFileHeaderStyle.Render("src/auth/handler.go (+42/-8)")
-	b.WriteString(fileHeader)
-	b.WriteString("\n")
-	b.WriteString(strings.Repeat("─", min(width, 60)))
-	b.WriteString("\n\n")
-
-	hunk := diffHunkHeaderStyle.Render("@@ -10,6 +10,8 @@ package auth")
-	b.WriteString(hunk)
-	b.WriteString("\n")
-
-	lines := []struct {
-		prefix string
-		text   string
-	}{
-		{" ", ` import (`},
-		{" ", `     "context"`},
-		{" ", `     "fmt"`},
-		{"+", `     "time"`},
-		{"+", `     "errors"`},
-		{" ", ` )`},
-		{" ", ``},
-		{" ", ` func HandleLogin(ctx context.Context, req LoginRequest) (*Token, error) {`},
-		{"-", `     token, err := authenticate(req.Username, req.Password)`},
-		{"+", `     token, err := authenticateWithTimeout(ctx, req.Username, req.Password)`},
-		{" ", `     if err != nil {`},
-		{"-", `         return nil, err`},
-		{"+", `         return nil, fmt.Errorf("authentication failed: %w", err)`},
-		{" ", `     }`},
-		{"+", ``},
-		{"+", `     // Set token expiration`},
-		{"+", `     token.ExpiresAt = time.Now().Add(24 * time.Hour)`},
-		{" ", `     return token, nil`},
-		{" ", ` }`},
-	}
-
-	for _, l := range lines {
-		var line string
-		switch l.prefix {
-		case "+":
-			line = diffAddedStyle.Render("+" + l.text)
-		case "-":
-			line = diffRemovedStyle.Render("-" + l.text)
-		default:
-			line = " " + l.text
+	for i, f := range m.files {
+		if i > 0 {
+			b.WriteString("\n")
+			lineCount++
 		}
-		b.WriteString(line)
+
+		// Track line offset where this file header starts
+		m.fileOffsets[i] = lineCount
+
+		// File header
+		b.WriteString(diffFileHeaderStyle.Render(fileStatusLabel(f)))
 		b.WriteString("\n")
-	}
+		lineCount++
 
-	b.WriteString("\n")
-
-	fileHeader2 := diffFileHeaderStyle.Render("src/auth/timeout.go (new file)")
-	b.WriteString(fileHeader2)
-	b.WriteString("\n")
-	b.WriteString(strings.Repeat("─", min(width, 60)))
-	b.WriteString("\n\n")
-
-	hunk2 := diffHunkHeaderStyle.Render("@@ -0,0 +1,25 @@ ")
-	b.WriteString(hunk2)
-	b.WriteString("\n")
-
-	newFileLines := []string{
-		`package auth`,
-		``,
-		`import (`,
-		`    "context"`,
-		`    "fmt"`,
-		`    "time"`,
-		`)`,
-		``,
-		`const defaultTimeout = 30 * time.Second`,
-		``,
-		`func authenticateWithTimeout(ctx context.Context, user, pass string) (*Token, error) {`,
-		`    ctx, cancel := context.WithTimeout(ctx, defaultTimeout)`,
-		`    defer cancel()`,
-		``,
-		`    result := make(chan authResult, 1)`,
-		`    go func() {`,
-		`        token, err := authenticate(user, pass)`,
-		`        result <- authResult{token: token, err: err}`,
-		`    }()`,
-		``,
-		`    select {`,
-		`    case r := <-result:`,
-		`        return r.token, r.err`,
-		`    case <-ctx.Done():`,
-		`        return nil, fmt.Errorf("authentication timed out")`,
-		`    }`,
-		`}`,
-	}
-
-	for _, l := range newFileLines {
-		b.WriteString(diffAddedStyle.Render("+" + l))
+		// Separator
+		b.WriteString(strings.Repeat("─", min(innerWidth, 60)))
 		b.WriteString("\n")
+		lineCount++
+
+		// Patch content
+		if f.Patch == "" {
+			b.WriteString(lipgloss.NewStyle().
+				Foreground(lipgloss.Color("244")).
+				Italic(true).
+				Render("  (diff not available)"))
+			b.WriteString("\n")
+			lineCount++
+			continue
+		}
+
+		b.WriteString("\n")
+		lineCount++
+
+		patchLines := strings.Split(f.Patch, "\n")
+		for _, line := range patchLines {
+			if line == "" {
+				b.WriteString("\n")
+				lineCount++
+				continue
+			}
+			switch {
+			case strings.HasPrefix(line, "@@"):
+				b.WriteString(diffHunkHeaderStyle.Render(line))
+			case strings.HasPrefix(line, "+"):
+				b.WriteString(diffAddedStyle.Render(line))
+			case strings.HasPrefix(line, "-"):
+				b.WriteString(diffRemovedStyle.Render(line))
+			case strings.HasPrefix(line, `\`):
+				b.WriteString(lipgloss.NewStyle().
+					Foreground(lipgloss.Color("244")).
+					Italic(true).
+					Render(line))
+			default:
+				b.WriteString(line)
+			}
+			b.WriteString("\n")
+			lineCount++
+		}
 	}
 
 	return b.String()
+}
+
+func fileStatusLabel(f github.PRFile) string {
+	switch f.Status {
+	case "added":
+		return fmt.Sprintf("%s (new file, +%d)", f.Filename, f.Additions)
+	case "removed":
+		return fmt.Sprintf("%s (deleted, -%d)", f.Filename, f.Deletions)
+	case "renamed":
+		return fmt.Sprintf("%s (renamed)", f.Filename)
+	default:
+		return fmt.Sprintf("%s (+%d/-%d)", f.Filename, f.Additions, f.Deletions)
+	}
 }
