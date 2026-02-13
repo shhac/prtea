@@ -56,6 +56,13 @@ type SelectedPR struct {
 	HTMLURL string
 }
 
+// PRDetailLoadedMsg is sent when PR detail data has been fetched.
+type PRDetailLoadedMsg struct {
+	PRNumber int
+	Detail   *github.PRDetail
+	Err      error
+}
+
 // AnalysisCompleteMsg is sent when Claude analysis finishes successfully.
 type AnalysisCompleteMsg struct {
 	PRNumber int
@@ -226,7 +233,10 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.statusBar.SetSelectedPR(msg.Number)
 		m.diffViewer.SetLoading(msg.Number)
 		if m.ghClient != nil {
-			return m, fetchDiffCmd(m.ghClient, msg.Owner, msg.Repo, msg.Number)
+			return m, tea.Batch(
+				fetchDiffCmd(m.ghClient, msg.Owner, msg.Repo, msg.Number),
+				fetchPRDetailCmd(m.ghClient, msg.Owner, msg.Repo, msg.Number),
+			)
 		}
 		return m, nil
 
@@ -240,6 +250,21 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.diffViewer.SetDiff(msg.Files)
 			m.diffFiles = msg.Files
+		}
+		return m, nil
+
+	case PRDetailLoadedMsg:
+		// Race guard: only apply if this is for the currently selected PR
+		if m.selectedPR == nil || msg.PRNumber != m.selectedPR.Number {
+			return m, nil
+		}
+		if msg.Err == nil && msg.Detail != nil {
+			m.diffViewer.SetPRInfo(
+				msg.Detail.Title,
+				msg.Detail.Body,
+				msg.Detail.Author.Login,
+				msg.Detail.HTMLURL,
+			)
 		}
 		return m, nil
 
@@ -460,6 +485,18 @@ func fetchDiffCmd(client *github.Client, owner, repo string, number int) tea.Cmd
 			return DiffLoadedMsg{PRNumber: number, Err: err}
 		}
 		return DiffLoadedMsg{PRNumber: number, Files: files}
+	}
+}
+
+// fetchPRDetailCmd returns a command that fetches PR detail (title, body, etc.).
+func fetchPRDetailCmd(client *github.Client, owner, repo string, number int) tea.Cmd {
+	return func() tea.Msg {
+		ctx := context.Background()
+		detail, err := client.GetPRDetail(ctx, owner, repo, number)
+		if err != nil {
+			return PRDetailLoadedMsg{PRNumber: number, Err: err}
+		}
+		return PRDetailLoadedMsg{PRNumber: number, Detail: detail}
 	}
 }
 

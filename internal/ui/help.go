@@ -206,6 +206,7 @@ func (m HelpOverlayModel) renderHelpContent() string {
 			panel: PanelCenter,
 			match: m.context == PanelCenter,
 			keys: []helpEntry{
+				{"h / l", "Prev/next tab"},
 				{"j / k", "Scroll up/down"},
 				{"Ctrl+d / Ctrl+u", "Half page down/up"},
 				{"n / N", "Next/prev file"},

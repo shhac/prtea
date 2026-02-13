@@ -126,6 +126,8 @@ type DiffViewerKeyMap struct {
 	PrevFile key.Binding
 	Top      key.Binding
 	Bottom   key.Binding
+	PrevTab  key.Binding
+	NextTab  key.Binding
 }
 
 var DiffViewerKeys = DiffViewerKeyMap{
@@ -160,6 +162,14 @@ var DiffViewerKeys = DiffViewerKeyMap{
 	Bottom: key.NewBinding(
 		key.WithKeys("G"),
 		key.WithHelp("G", "bottom"),
+	),
+	PrevTab: key.NewBinding(
+		key.WithKeys("h", "left"),
+		key.WithHelp("h", "prev tab"),
+	),
+	NextTab: key.NewBinding(
+		key.WithKeys("l", "right"),
+		key.WithHelp("l", "next tab"),
 	),
 }
 

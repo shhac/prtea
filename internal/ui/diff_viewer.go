@@ -11,13 +11,22 @@ import (
 	"github.com/shhac/prtea/internal/github"
 )
 
+// DiffViewerTab identifies which sub-tab is active in the diff viewer.
+type DiffViewerTab int
+
+const (
+	TabDiff   DiffViewerTab = iota
+	TabPRInfo
+)
+
 // DiffViewerModel manages the diff viewer panel.
 type DiffViewerModel struct {
-	viewport viewport.Model
-	width    int
-	height   int
-	focused  bool
-	ready    bool
+	viewport  viewport.Model
+	activeTab DiffViewerTab
+	width     int
+	height    int
+	focused   bool
+	ready     bool
 
 	// Diff data
 	files          []github.PRFile
@@ -26,6 +35,12 @@ type DiffViewerModel struct {
 	loading        bool
 	prNumber       int
 	err            error
+
+	// PR info data (for PR Info tab)
+	prTitle  string
+	prBody   string
+	prAuthor string
+	prURL    string
 }
 
 func NewDiffViewerModel() DiffViewerModel {
@@ -39,6 +54,18 @@ func (m DiffViewerModel) Update(msg tea.Msg) (DiffViewerModel, tea.Cmd) {
 			return m, nil
 		}
 		switch {
+		case key.Matches(msg, DiffViewerKeys.PrevTab):
+			if m.activeTab > TabDiff {
+				m.activeTab--
+				m.refreshContent()
+			}
+			return m, nil
+		case key.Matches(msg, DiffViewerKeys.NextTab):
+			if m.activeTab < TabPRInfo {
+				m.activeTab++
+				m.refreshContent()
+			}
+			return m, nil
 		case key.Matches(msg, DiffViewerKeys.NextFile):
 			if len(m.fileOffsets) > 0 {
 				currentY := m.viewport.YOffset
@@ -140,10 +167,27 @@ func (m *DiffViewerModel) SetError(err error) {
 	m.refreshContent()
 }
 
+// SetPRInfo sets PR metadata for the PR Info tab.
+func (m *DiffViewerModel) SetPRInfo(title, body, author, url string) {
+	m.prTitle = title
+	m.prBody = body
+	m.prAuthor = author
+	m.prURL = url
+	m.refreshContent()
+}
+
 func (m *DiffViewerModel) refreshContent() {
 	if !m.ready {
 		return
 	}
+
+	// PR Info tab has its own content path
+	if m.activeTab == TabPRInfo {
+		m.viewport.SetContent(m.renderPRInfo())
+		return
+	}
+
+	// Diff tab
 	if m.loading {
 		m.viewport.SetContent(
 			lipgloss.NewStyle().
@@ -180,13 +224,7 @@ func (m *DiffViewerModel) refreshContent() {
 }
 
 func (m DiffViewerModel) View() string {
-	headerText := "Diff Viewer"
-	if m.prNumber > 0 && m.files != nil {
-		headerText = fmt.Sprintf("Diff — PR #%d (%d files)", m.prNumber, len(m.files))
-	} else if m.prNumber > 0 {
-		headerText = fmt.Sprintf("Diff — PR #%d", m.prNumber)
-	}
-	header := panelHeaderStyle(m.focused).Render(headerText)
+	header := m.renderTabs()
 
 	var content string
 	if m.ready {
@@ -198,6 +236,91 @@ func (m DiffViewerModel) View() string {
 	inner := lipgloss.JoinVertical(lipgloss.Left, header, content)
 	style := panelStyle(m.focused, false, m.width-2, m.height-2)
 	return style.Render(inner)
+}
+
+func (m DiffViewerModel) renderTabs() string {
+	var tabs []string
+
+	diffLabel := "Diff"
+	if m.prNumber > 0 && m.files != nil {
+		diffLabel = fmt.Sprintf("Diff (%d files)", len(m.files))
+	}
+	prInfoLabel := "PR Info"
+
+	tabNames := []struct {
+		tab   DiffViewerTab
+		label string
+	}{
+		{TabDiff, diffLabel},
+		{TabPRInfo, prInfoLabel},
+	}
+
+	for _, t := range tabNames {
+		if m.activeTab == t.tab {
+			tabs = append(tabs, activeTabStyle().Render(t.label))
+		} else {
+			tabs = append(tabs, inactiveTabStyle().Render(t.label))
+		}
+	}
+
+	return strings.Join(tabs, " ")
+}
+
+func (m DiffViewerModel) renderPRInfo() string {
+	if m.prNumber == 0 {
+		return lipgloss.NewStyle().
+			Foreground(lipgloss.Color("244")).
+			Padding(1, 2).
+			Render("Select a PR to view its details")
+	}
+
+	if m.prTitle == "" {
+		return lipgloss.NewStyle().
+			Foreground(lipgloss.Color("244")).
+			Padding(1, 2).
+			Render(fmt.Sprintf("Loading PR #%d info...", m.prNumber))
+	}
+
+	innerWidth := m.viewport.Width
+	if innerWidth < 10 {
+		innerWidth = 10
+	}
+
+	sectionStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("33"))
+	dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+
+	var b strings.Builder
+
+	// Title
+	b.WriteString(sectionStyle.Render(fmt.Sprintf("PR #%d", m.prNumber)))
+	b.WriteString("\n")
+	b.WriteString(lipgloss.NewStyle().Bold(true).Render(m.prTitle))
+	b.WriteString("\n\n")
+
+	// Author
+	b.WriteString(dimStyle.Render("Author: "))
+	b.WriteString(m.prAuthor)
+	b.WriteString("\n")
+
+	// URL
+	if m.prURL != "" {
+		b.WriteString(dimStyle.Render("URL: "))
+		b.WriteString(m.prURL)
+		b.WriteString("\n")
+	}
+
+	// Description
+	if m.prBody != "" {
+		b.WriteString("\n")
+		b.WriteString(sectionStyle.Render("Description"))
+		b.WriteString("\n")
+		b.WriteString(wordWrap(m.prBody, innerWidth))
+	} else {
+		b.WriteString("\n")
+		b.WriteString(dimStyle.Render("No description provided."))
+	}
+
+	return b.String()
 }
 
 // renderRealDiff renders actual PR file diffs with syntax coloring.
