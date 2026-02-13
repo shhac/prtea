@@ -27,13 +27,14 @@ const (
 
 	collapseThreshold = 120
 
-	leftRatio   = 0.20
-	centerRatio = 0.50
-	rightRatio  = 0.30
+	// 3-panel mode ratios
+	leftRatio  = 0.20
+	rightRatio = 0.30
 
 	// 2-panel mode ratios
-	twoLeftRatio   = 0.25
-	twoCenterRatio = 0.75
+	twoLCLeftRatio   = 0.25 // Left + Center: left panel share
+	twoLRLeftRatio   = 0.30 // Left + Right: left panel share
+	twoCRCenterRatio = 0.60 // Center + Right: center panel share
 
 	statusBarHeight = 1
 )
@@ -48,9 +49,10 @@ type PanelSizes struct {
 }
 
 // CalculatePanelSizes determines panel widths based on terminal dimensions
-// and whether the right panel is collapsed.
-func CalculatePanelSizes(termWidth, termHeight int, rightCollapsed bool) PanelSizes {
-	if termWidth < minTotalWidth {
+// and which panels are visible.
+func CalculatePanelSizes(termWidth, termHeight int, visible [3]bool) PanelSizes {
+	numVisible := visibleCount(visible)
+	if numVisible == 0 || termWidth < minTotalWidth {
 		return PanelSizes{TooSmall: true}
 	}
 
@@ -59,46 +61,118 @@ func CalculatePanelSizes(termWidth, termHeight int, rightCollapsed bool) PanelSi
 		return PanelSizes{TooSmall: true}
 	}
 
-	// Account for borders (2 chars per panel for left+right border)
 	usableWidth := termWidth
 
-	autoCollapse := termWidth < collapseThreshold
-	collapsed := rightCollapsed || autoCollapse
+	switch numVisible {
+	case 1:
+		sizes := PanelSizes{PanelHeight: panelHeight}
+		if visible[PanelLeft] {
+			sizes.LeftWidth = usableWidth
+		} else if visible[PanelCenter] {
+			sizes.CenterWidth = usableWidth
+		} else {
+			sizes.RightWidth = usableWidth
+		}
+		return sizes
 
-	if collapsed {
-		leftW := max(minLeftWidth, int(float64(usableWidth)*twoLeftRatio))
-		centerW := usableWidth - leftW
+	case 2:
+		return calcTwoPanels(usableWidth, panelHeight, visible)
+
+	case 3:
+		return calcThreePanels(usableWidth, panelHeight)
+	}
+
+	return PanelSizes{TooSmall: true}
+}
+
+func calcTwoPanels(width, height int, visible [3]bool) PanelSizes {
+	sizes := PanelSizes{PanelHeight: height}
+
+	switch {
+	case visible[PanelLeft] && visible[PanelCenter]:
+		leftW := max(minLeftWidth, int(float64(width)*twoLCLeftRatio))
+		centerW := width - leftW
 		if centerW < minCenterWidth {
 			centerW = minCenterWidth
-			leftW = usableWidth - centerW
+			leftW = width - centerW
 		}
-		return PanelSizes{
-			LeftWidth:   leftW,
-			CenterWidth: centerW,
-			RightWidth:  0,
-			PanelHeight: panelHeight,
+		sizes.LeftWidth = leftW
+		sizes.CenterWidth = centerW
+
+	case visible[PanelLeft] && visible[PanelRight]:
+		leftW := max(minLeftWidth, int(float64(width)*twoLRLeftRatio))
+		rightW := width - leftW
+		if rightW < minRightWidth {
+			rightW = minRightWidth
+			leftW = width - rightW
 		}
+		sizes.LeftWidth = leftW
+		sizes.RightWidth = rightW
+
+	case visible[PanelCenter] && visible[PanelRight]:
+		centerW := max(minCenterWidth, int(float64(width)*twoCRCenterRatio))
+		rightW := width - centerW
+		if rightW < minRightWidth {
+			rightW = minRightWidth
+			centerW = width - rightW
+		}
+		sizes.CenterWidth = centerW
+		sizes.RightWidth = rightW
 	}
 
-	leftW := max(minLeftWidth, int(float64(usableWidth)*leftRatio))
-	rightW := max(minRightWidth, int(float64(usableWidth)*rightRatio))
-	centerW := usableWidth - leftW - rightW
+	return sizes
+}
+
+func calcThreePanels(width, height int) PanelSizes {
+	leftW := max(minLeftWidth, int(float64(width)*leftRatio))
+	rightW := max(minRightWidth, int(float64(width)*rightRatio))
+	centerW := width - leftW - rightW
 	if centerW < minCenterWidth {
 		centerW = minCenterWidth
-		rightW = usableWidth - leftW - centerW
-		if rightW < minRightWidth {
-			// Fall back to 2-panel mode
+		rightW = width - leftW - centerW
+		if rightW < 0 {
 			rightW = 0
-			centerW = usableWidth - leftW
 		}
 	}
-
 	return PanelSizes{
 		LeftWidth:   leftW,
 		CenterWidth: centerW,
 		RightWidth:  rightW,
-		PanelHeight: panelHeight,
+		PanelHeight: height,
 	}
+}
+
+// visibleCount returns the number of visible panels.
+func visibleCount(visible [3]bool) int {
+	n := 0
+	for _, v := range visible {
+		if v {
+			n++
+		}
+	}
+	return n
+}
+
+// nextVisiblePanel returns the next visible panel after current, cycling forward.
+func nextVisiblePanel(current Panel, visible [3]bool) Panel {
+	for i := 1; i <= 3; i++ {
+		candidate := Panel((int(current) + i) % 3)
+		if visible[candidate] {
+			return candidate
+		}
+	}
+	return current
+}
+
+// prevVisiblePanel returns the previous visible panel before current, cycling backward.
+func prevVisiblePanel(current Panel, visible [3]bool) Panel {
+	for i := 1; i <= 3; i++ {
+		candidate := Panel((int(current) - i + 3) % 3)
+		if visible[candidate] {
+			return candidate
+		}
+	}
+	return current
 }
 
 func (p Panel) Next() Panel {

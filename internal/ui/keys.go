@@ -13,7 +13,9 @@ type GlobalKeyMap struct {
 	Panel3      key.Binding
 	Analyze     key.Binding
 	OpenBrowser key.Binding
+	ToggleLeft  key.Binding
 	ToggleRight key.Binding
+	Zoom        key.Binding
 }
 
 var GlobalKeys = GlobalKeyMap{
@@ -53,9 +55,17 @@ var GlobalKeys = GlobalKeyMap{
 		key.WithKeys("o"),
 		key.WithHelp("o", "open in browser"),
 	),
+	ToggleLeft: key.NewBinding(
+		key.WithKeys("["),
+		key.WithHelp("[", "toggle left panel"),
+	),
 	ToggleRight: key.NewBinding(
-		key.WithKeys("\\"),
-		key.WithHelp("\\", "toggle right panel"),
+		key.WithKeys("]"),
+		key.WithHelp("]", "toggle right panel"),
+	),
+	Zoom: key.NewBinding(
+		key.WithKeys("z"),
+		key.WithHelp("z", "zoom panel"),
 	),
 }
 

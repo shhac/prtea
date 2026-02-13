@@ -11,7 +11,6 @@ import (
 
 // Config holds application configuration.
 type Config struct {
-	GithubToken    string `json:"githubToken"`
 	ReposPath      string `json:"reposPath"`
 	ClaudeTimeout  int    `json:"claudeTimeoutMs"`
 	PollInterval   int    `json:"pollIntervalMs"`

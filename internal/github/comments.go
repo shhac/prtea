@@ -4,88 +4,106 @@ import (
 	"context"
 	"fmt"
 	"sort"
-
-	gh "github.com/google/go-github/v68/github"
+	"time"
 )
+
+// ghComment is the JSON shape for issue-level comments from gh pr view.
+type ghComment struct {
+	ID     string `json:"id"`
+	Author struct {
+		Login string `json:"login"`
+	} `json:"author"`
+	Body      string    `json:"body"`
+	CreatedAt time.Time `json:"createdAt"`
+	URL       string    `json:"url"`
+}
+
+// ghPRComments is the JSON shape from gh pr view --json comments.
+type ghPRComments struct {
+	Comments []ghComment `json:"comments"`
+}
+
+// ghInlineComment is the JSON shape from the pulls comments API.
+type ghInlineComment struct {
+	ID     int64 `json:"id"`
+	User   struct {
+		Login     string `json:"login"`
+		AvatarURL string `json:"avatar_url"`
+	} `json:"user"`
+	Body        string    `json:"body"`
+	CreatedAt   time.Time `json:"created_at"`
+	Path        string    `json:"path"`
+	Line        int       `json:"line"`
+	OriginalLine int      `json:"original_line"`
+	Side        string    `json:"side"`
+	InReplyToID *int64    `json:"in_reply_to_id"`
+	Position    *int      `json:"position"`
+}
 
 // GetComments fetches issue-level comments on a PR (general conversation).
 func (c *Client) GetComments(ctx context.Context, owner, repo string, number int) ([]Comment, error) {
-	var allComments []Comment
-	opts := &gh.IssueListCommentsOptions{
-		ListOptions: gh.ListOptions{PerPage: 100},
+	repoFlag := owner + "/" + repo
+
+	var data ghPRComments
+	err := ghJSON(ctx, &data,
+		"pr", "view", fmt.Sprintf("%d", number),
+		"-R", repoFlag,
+		"--json", "comments",
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list comments for PR #%d: %w", number, err)
 	}
 
-	for {
-		comments, resp, err := c.gh.Issues.ListComments(ctx, owner, repo, number, opts)
-		if err != nil {
-			return nil, fmt.Errorf("failed to list comments for PR #%d: %w", number, err)
-		}
-
-		for _, c := range comments {
-			allComments = append(allComments, Comment{
-				ID:        c.GetID(),
-				Author:    userFromGH(c.GetUser()),
-				Body:      c.GetBody(),
-				CreatedAt: c.GetCreatedAt().Time,
-				UpdatedAt: c.GetUpdatedAt().Time,
-			})
-		}
-
-		if resp.NextPage == 0 {
-			break
-		}
-		opts.Page = resp.NextPage
+	comments := make([]Comment, 0, len(data.Comments))
+	for _, c := range data.Comments {
+		comments = append(comments, Comment{
+			Author:    User{Login: c.Author.Login},
+			Body:      c.Body,
+			CreatedAt: c.CreatedAt,
+		})
 	}
 
-	sort.Slice(allComments, func(i, j int) bool {
-		return allComments[i].CreatedAt.Before(allComments[j].CreatedAt)
+	sort.Slice(comments, func(i, j int) bool {
+		return comments[i].CreatedAt.Before(comments[j].CreatedAt)
 	})
 
-	return allComments, nil
+	return comments, nil
 }
 
 // GetInlineComments fetches review comments attached to specific file lines.
 func (c *Client) GetInlineComments(ctx context.Context, owner, repo string, number int) ([]InlineComment, error) {
-	var allComments []InlineComment
-	opts := &gh.PullRequestListCommentsOptions{
-		ListOptions: gh.ListOptions{PerPage: 100},
+	var raw []ghInlineComment
+	endpoint := fmt.Sprintf("repos/%s/%s/pulls/%d/comments", owner, repo, number)
+	if err := ghJSON(ctx, &raw, "api", endpoint, "--paginate"); err != nil {
+		return nil, fmt.Errorf("failed to list inline comments for PR #%d: %w", number, err)
 	}
 
-	for {
-		comments, resp, err := c.gh.PullRequests.ListComments(ctx, owner, repo, number, opts)
-		if err != nil {
-			return nil, fmt.Errorf("failed to list inline comments for PR #%d: %w", number, err)
+	comments := make([]InlineComment, 0, len(raw))
+	for _, c := range raw {
+		line := c.Line
+		if line == 0 {
+			line = c.OriginalLine
 		}
 
-		for _, c := range comments {
-			line := c.GetLine()
-			if line == 0 {
-				line = c.GetOriginalLine()
-			}
-
-			var inReplyToID int64
-			if c.InReplyTo != nil {
-				inReplyToID = c.GetInReplyTo()
-			}
-
-			allComments = append(allComments, InlineComment{
-				ID:          c.GetID(),
-				Author:      userFromGH(c.GetUser()),
-				Body:        c.GetBody(),
-				CreatedAt:   c.GetCreatedAt().Time,
-				Path:        c.GetPath(),
-				Line:        line,
-				Side:        c.GetSide(),
-				InReplyToID: inReplyToID,
-				Outdated:    c.GetPosition() == 0,
-			})
+		var inReplyToID int64
+		if c.InReplyToID != nil {
+			inReplyToID = *c.InReplyToID
 		}
 
-		if resp.NextPage == 0 {
-			break
-		}
-		opts.Page = resp.NextPage
+		outdated := c.Position == nil || *c.Position == 0
+
+		comments = append(comments, InlineComment{
+			ID:          c.ID,
+			Author:      User{Login: c.User.Login, AvatarURL: c.User.AvatarURL},
+			Body:        c.Body,
+			CreatedAt:   c.CreatedAt,
+			Path:        c.Path,
+			Line:        line,
+			Side:        c.Side,
+			InReplyToID: inReplyToID,
+			Outdated:    outdated,
+		})
 	}
 
-	return allComments, nil
+	return comments, nil
 }

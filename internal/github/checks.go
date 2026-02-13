@@ -3,50 +3,74 @@ package github
 import (
 	"context"
 	"fmt"
-
-	gh "github.com/google/go-github/v68/github"
+	"strings"
 )
 
+// ghCheckRun is the JSON shape for statusCheckRollup items from gh pr view.
+type ghCheckRun struct {
+	Name       string `json:"name"`
+	Status     string `json:"status"`     // "IN_PROGRESS", "COMPLETED", "QUEUED", etc.
+	Conclusion string `json:"conclusion"` // "SUCCESS", "FAILURE", "NEUTRAL", etc.
+	DetailsURL string `json:"detailsUrl"`
+}
+
+// ghPRChecks is the JSON shape from gh pr view --json statusCheckRollup.
+type ghPRChecks struct {
+	StatusCheckRollup []ghCheckRun `json:"statusCheckRollup"`
+}
+
 // GetCIStatus fetches check runs for a given ref and computes the overall CI status.
-func (c *Client) GetCIStatus(ctx context.Context, owner, repo string, ref string) (*CIStatus, error) {
-	var allChecks []CICheck
-	opts := &gh.ListCheckRunsOptions{
-		ListOptions: gh.ListOptions{PerPage: 100},
+// Note: ref is unused when using gh pr view; we use the PR number directly.
+// The ref parameter is kept for interface compatibility.
+func (c *Client) GetCIStatus(ctx context.Context, owner, repo string, ref string, number int) (*CIStatus, error) {
+	repoFlag := owner + "/" + repo
+
+	var data ghPRChecks
+	err := ghJSON(ctx, &data,
+		"pr", "view", fmt.Sprintf("%d", number),
+		"-R", repoFlag,
+		"--json", "statusCheckRollup",
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list check runs for PR #%d: %w", number, err)
 	}
 
-	for {
-		result, resp, err := c.gh.Checks.ListCheckRunsForRef(ctx, owner, repo, ref, opts)
-		if err != nil {
-			return nil, fmt.Errorf("failed to list check runs for %s: %w", ref, err)
-		}
-
-		for _, cr := range result.CheckRuns {
-			conclusion := ""
-			if cr.Conclusion != nil {
-				conclusion = cr.GetConclusion()
-			}
-			allChecks = append(allChecks, CICheck{
-				ID:         cr.GetID(),
-				Name:       cr.GetName(),
-				Status:     cr.GetStatus(),
-				Conclusion: conclusion,
-				HTMLURL:    cr.GetHTMLURL(),
-			})
-		}
-
-		if resp.NextPage == 0 {
-			break
-		}
-		opts.Page = resp.NextPage
+	checks := make([]CICheck, 0, len(data.StatusCheckRollup))
+	for _, cr := range data.StatusCheckRollup {
+		checks = append(checks, CICheck{
+			Name:       cr.Name,
+			Status:     normalizeStatus(cr.Status),
+			Conclusion: normalizeConclusionStr(cr.Conclusion),
+			HTMLURL:    cr.DetailsURL,
+		})
 	}
 
-	overall := computeOverallStatus(allChecks)
+	overall := computeOverallStatus(checks)
 
 	return &CIStatus{
-		TotalCount:    len(allChecks),
-		Checks:        allChecks,
+		TotalCount:    len(checks),
+		Checks:        checks,
 		OverallStatus: overall,
 	}, nil
+}
+
+// normalizeStatus converts gh CLI status values to our lowercase convention.
+func normalizeStatus(s string) string {
+	switch strings.ToUpper(s) {
+	case "IN_PROGRESS":
+		return "in_progress"
+	case "COMPLETED":
+		return "completed"
+	case "QUEUED":
+		return "queued"
+	default:
+		return strings.ToLower(s)
+	}
+}
+
+// normalizeConclusionStr converts gh CLI conclusion values to our lowercase convention.
+func normalizeConclusionStr(s string) string {
+	return strings.ToLower(s)
 }
 
 // computeOverallStatus determines the aggregate CI status from individual checks.

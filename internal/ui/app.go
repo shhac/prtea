@@ -18,7 +18,10 @@ type App struct {
 	focused        Panel
 	width          int
 	height         int
-	rightCollapsed bool
+	panelVisible   [3]bool // which panels are currently visible
+	zoomed         bool    // zoom mode: only focused panel shown
+	preZoomVisible [3]bool // saved visibility before zoom
+	initialized    bool    // whether first WindowSizeMsg has been processed
 
 	// Mode
 	mode AppMode
@@ -27,12 +30,13 @@ type App struct {
 // NewApp creates a new App model with default state.
 func NewApp() App {
 	return App{
-		prList:     NewPRListModel(),
-		diffViewer: NewDiffViewerModel(),
-		chatPanel:  NewChatPanelModel(),
-		statusBar:  NewStatusBarModel(),
-		focused:    PanelLeft,
-		mode:       ModeNavigation,
+		prList:       NewPRListModel(),
+		diffViewer:   NewDiffViewerModel(),
+		chatPanel:    NewChatPanelModel(),
+		statusBar:    NewStatusBarModel(),
+		focused:      PanelLeft,
+		panelVisible: [3]bool{true, true, true},
+		mode:         ModeNavigation,
 	}
 }
 
@@ -45,6 +49,16 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		// Auto-collapse right panel on first render if terminal is narrow
+		if !m.initialized {
+			m.initialized = true
+			if m.width < collapseThreshold {
+				m.panelVisible[PanelRight] = false
+				if m.focused == PanelRight {
+					m.focusPanel(nextVisiblePanel(m.focused, m.panelVisible))
+				}
+			}
+		}
 		m.recalcLayout()
 		return m, nil
 
@@ -73,35 +87,49 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 
 		case key.Matches(msg, GlobalKeys.Tab):
-			m.focusPanel(m.focused.Next())
+			if m.zoomed {
+				m.exitZoom()
+				m.recalcLayout()
+			}
+			m.focusPanel(nextVisiblePanel(m.focused, m.panelVisible))
 			return m, nil
 
 		case key.Matches(msg, GlobalKeys.ShiftTab):
-			m.focusPanel(m.focused.Prev())
+			if m.zoomed {
+				m.exitZoom()
+				m.recalcLayout()
+			}
+			m.focusPanel(prevVisiblePanel(m.focused, m.panelVisible))
 			return m, nil
 
 		case key.Matches(msg, GlobalKeys.Panel1):
-			m.focusPanel(PanelLeft)
+			m.showAndFocusPanel(PanelLeft)
 			return m, nil
 
 		case key.Matches(msg, GlobalKeys.Panel2):
-			m.focusPanel(PanelCenter)
+			m.showAndFocusPanel(PanelCenter)
 			return m, nil
 
 		case key.Matches(msg, GlobalKeys.Panel3):
-			if m.rightCollapsed {
-				m.rightCollapsed = false
-				m.recalcLayout()
+			m.showAndFocusPanel(PanelRight)
+			return m, nil
+
+		case key.Matches(msg, GlobalKeys.ToggleLeft):
+			if m.zoomed {
+				m.exitZoom()
 			}
-			m.focusPanel(PanelRight)
+			m.togglePanel(PanelLeft)
 			return m, nil
 
 		case key.Matches(msg, GlobalKeys.ToggleRight):
-			m.rightCollapsed = !m.rightCollapsed
-			if m.rightCollapsed && m.focused == PanelRight {
-				m.focusPanel(PanelCenter)
+			if m.zoomed {
+				m.exitZoom()
 			}
-			m.recalcLayout()
+			m.togglePanel(PanelRight)
+			return m, nil
+
+		case key.Matches(msg, GlobalKeys.Zoom):
+			m.toggleZoom()
 			return m, nil
 		}
 
@@ -113,7 +141,7 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m App) View() string {
-	sizes := CalculatePanelSizes(m.width, m.height, m.rightCollapsed)
+	sizes := CalculatePanelSizes(m.width, m.height, m.panelVisible)
 
 	if sizes.TooSmall {
 		msg := lipgloss.NewStyle().
@@ -123,28 +151,28 @@ func (m App) View() string {
 		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, msg)
 	}
 
-	// Render panels
-	left := m.prList.View()
-	center := m.diffViewer.View()
-
-	var panels string
+	var panelViews []string
+	if sizes.LeftWidth > 0 {
+		panelViews = append(panelViews, m.prList.View())
+	}
+	if sizes.CenterWidth > 0 {
+		panelViews = append(panelViews, m.diffViewer.View())
+	}
 	if sizes.RightWidth > 0 {
-		right := m.chatPanel.View()
-		panels = lipgloss.JoinHorizontal(lipgloss.Top, left, center, right)
-	} else {
-		panels = lipgloss.JoinHorizontal(lipgloss.Top, left, center)
+		panelViews = append(panelViews, m.chatPanel.View())
 	}
 
-	// Render status bar
+	panels := lipgloss.JoinHorizontal(lipgloss.Top, panelViews...)
 	bar := m.statusBar.View()
 
 	return lipgloss.JoinVertical(lipgloss.Left, panels, bar)
 }
 
+// focusPanel sets focus to the given panel. If the panel is hidden,
+// focuses the next visible panel instead.
 func (m *App) focusPanel(p Panel) {
-	// Skip right panel if collapsed
-	if p == PanelRight && m.rightCollapsed {
-		p = p.Next()
+	if !m.panelVisible[p] {
+		p = nextVisiblePanel(p, m.panelVisible)
 	}
 	m.focused = p
 	m.prList.SetFocused(p == PanelLeft)
@@ -154,18 +182,70 @@ func (m *App) focusPanel(p Panel) {
 }
 
 func (m *App) recalcLayout() {
-	sizes := CalculatePanelSizes(m.width, m.height, m.rightCollapsed)
+	sizes := CalculatePanelSizes(m.width, m.height, m.panelVisible)
 	if sizes.TooSmall {
 		return
 	}
 
-	m.prList.SetSize(sizes.LeftWidth, sizes.PanelHeight)
-	m.diffViewer.SetSize(sizes.CenterWidth, sizes.PanelHeight)
+	if sizes.LeftWidth > 0 {
+		m.prList.SetSize(sizes.LeftWidth, sizes.PanelHeight)
+	}
+	if sizes.CenterWidth > 0 {
+		m.diffViewer.SetSize(sizes.CenterWidth, sizes.PanelHeight)
+	}
 	if sizes.RightWidth > 0 {
 		m.chatPanel.SetSize(sizes.RightWidth, sizes.PanelHeight)
 	}
 	m.statusBar.SetWidth(m.width)
 	m.statusBar.SetState(m.focused, m.mode)
+}
+
+// togglePanel shows or hides a panel. Prevents hiding the last visible panel.
+func (m *App) togglePanel(p Panel) {
+	if m.panelVisible[p] && visibleCount(m.panelVisible) <= 1 {
+		return // can't hide the last visible panel
+	}
+	m.panelVisible[p] = !m.panelVisible[p]
+	if !m.panelVisible[m.focused] {
+		m.focusPanel(nextVisiblePanel(m.focused, m.panelVisible))
+	}
+	m.recalcLayout()
+}
+
+// toggleZoom enters or exits zoom mode. When zoomed, only the focused panel
+// is visible at full width.
+func (m *App) toggleZoom() {
+	if m.zoomed {
+		m.exitZoom()
+	} else {
+		m.preZoomVisible = m.panelVisible
+		m.panelVisible = [3]bool{}
+		m.panelVisible[m.focused] = true
+		m.zoomed = true
+	}
+	m.recalcLayout()
+}
+
+// exitZoom restores the pre-zoom panel visibility.
+func (m *App) exitZoom() {
+	if !m.zoomed {
+		return
+	}
+	m.panelVisible = m.preZoomVisible
+	m.zoomed = false
+}
+
+// showAndFocusPanel ensures a panel is visible, exits zoom if active,
+// and focuses the panel.
+func (m *App) showAndFocusPanel(p Panel) {
+	if m.zoomed {
+		m.exitZoom()
+	}
+	if !m.panelVisible[p] {
+		m.panelVisible[p] = true
+	}
+	m.focusPanel(p)
+	m.recalcLayout()
 }
 
 func (m App) updateFocusedPanel(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
