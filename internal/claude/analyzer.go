@@ -1,0 +1,328 @@
+package claude
+
+import (
+	"bufio"
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"os/exec"
+	"strings"
+	"time"
+)
+
+// Analyzer spawns claude CLI to produce structured PR analysis.
+type Analyzer struct {
+	claudePath string
+	timeout    time.Duration
+	promptsDir string
+}
+
+// NewAnalyzer creates an Analyzer. claudePath is the path to the claude binary.
+// timeout is the maximum time to wait for analysis to complete.
+// promptsDir is the directory for custom per-repo prompts (may be empty).
+func NewAnalyzer(claudePath string, timeout time.Duration, promptsDir string) *Analyzer {
+	return &Analyzer{
+		claudePath: claudePath,
+		timeout:    timeout,
+		promptsDir: promptsDir,
+	}
+}
+
+// AnalyzeInput contains the parameters for a PR analysis.
+type AnalyzeInput struct {
+	RepoPath   string
+	Owner      string
+	Repo       string
+	PRNumber   int
+	PRTitle    string
+	PRBody     string
+	BaseBranch string
+	HeadBranch string
+}
+
+// Analyze runs Claude CLI analysis on a PR and returns the structured result.
+func (a *Analyzer) Analyze(ctx context.Context, input AnalyzeInput, onProgress ProgressFunc) (*AnalysisResult, error) {
+	ctx, cancel := context.WithTimeout(ctx, a.timeout)
+	defer cancel()
+
+	prompt := a.buildAnalysisPrompt(input)
+
+	args := []string{
+		"-p", prompt,
+		"--output-format", "stream-json",
+		"--verbose",
+		"--allowedTools", "Read,Glob,Grep,Bash",
+		"--max-turns", "30",
+	}
+
+	cmd := exec.CommandContext(ctx, a.claudePath, args...)
+	cmd.Dir = input.RepoPath
+	cmd.Stdin = nil
+
+	// Remove ANTHROPIC_API_KEY from env — let Claude CLI use its own auth
+	cmd.Env = filterEnv(os.Environ(), "ANTHROPIC_API_KEY")
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create stdout pipe: %w", err)
+	}
+
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create stderr pipe: %w", err)
+	}
+
+	if err := cmd.Start(); err != nil {
+		if isNotFound(err) {
+			return nil, fmt.Errorf("claude CLI not found at %s: ensure 'claude' is installed", a.claudePath)
+		}
+		return nil, fmt.Errorf("failed to start claude: %w", err)
+	}
+
+	// Drain stderr in background
+	var stderrBuf strings.Builder
+	go func() {
+		scanner := bufio.NewScanner(stderr)
+		scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
+		for scanner.Scan() {
+			stderrBuf.WriteString(scanner.Text())
+			stderrBuf.WriteByte('\n')
+		}
+	}()
+
+	// Parse stream-json events from stdout
+	var resultEvent *StreamEvent
+	scanner := bufio.NewScanner(stdout)
+	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+
+		var event StreamEvent
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			continue // skip unparseable lines
+		}
+
+		if onProgress != nil {
+			reportProgress(&event, onProgress)
+		}
+
+		if event.Type == "result" {
+			resultEvent = &event
+		}
+	}
+
+	if err := cmd.Wait(); err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return nil, fmt.Errorf("claude analysis timed out after %s", a.timeout)
+		}
+		errMsg := stderrBuf.String()
+		if len(errMsg) > 500 {
+			errMsg = errMsg[:500]
+		}
+		return nil, fmt.Errorf("claude exited with error: %w\nstderr: %s", err, errMsg)
+	}
+
+	if resultEvent == nil {
+		return nil, fmt.Errorf("claude produced no result event")
+	}
+
+	return extractAnalysisResult(resultEvent)
+}
+
+func (a *Analyzer) buildAnalysisPrompt(input AnalyzeInput) string {
+	body := input.PRBody
+	if body == "" {
+		body = "No description provided."
+	}
+
+	customPrompt := a.loadCustomPrompt(input.Owner, input.Repo)
+
+	return fmt.Sprintf(`You are reviewing PR #%d: "%s".
+
+PR description:
+%s
+
+Instructions:
+1. Run `+"`git diff origin/%s...origin/%s`"+` to see all changes in this PR.
+2. For each changed file, read the full file on the %s branch to understand context — follow imports, check callers, understand the module's role.
+3. Produce a thorough code review as structured JSON output.
+
+Focus on: correctness, security, performance, maintainability, and test coverage. Be specific with line numbers when possible.
+%s
+IMPORTANT: Your final response must be ONLY valid JSON matching this schema (no markdown, no wrapping):
+%s`,
+		input.PRNumber, input.PRTitle,
+		body,
+		input.BaseBranch, input.HeadBranch,
+		input.BaseBranch,
+		customPrompt,
+		analysisJSONSchema,
+	)
+}
+
+func (a *Analyzer) loadCustomPrompt(owner, repo string) string {
+	if a.promptsDir == "" {
+		return ""
+	}
+	path := fmt.Sprintf("%s/%s_%s.md", a.promptsDir, owner, repo)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return "\nAdditional review instructions:\n" + string(data)
+}
+
+func extractAnalysisResult(event *StreamEvent) (*AnalysisResult, error) {
+	var resultText string
+
+	switch v := event.Result.(type) {
+	case string:
+		resultText = v
+	default:
+		data, err := json.Marshal(v)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal result: %w", err)
+		}
+		resultText = string(data)
+	}
+
+	// Try direct parse
+	var result AnalysisResult
+	if err := json.Unmarshal([]byte(resultText), &result); err == nil {
+		return &result, nil
+	}
+
+	// Fallback: extract JSON between first { and last }
+	start := strings.Index(resultText, "{")
+	end := strings.LastIndex(resultText, "}")
+	if start == -1 || end == -1 || end <= start {
+		return nil, fmt.Errorf("no JSON object found in claude result")
+	}
+
+	if err := json.Unmarshal([]byte(resultText[start:end+1]), &result); err != nil {
+		return nil, fmt.Errorf("failed to parse analysis JSON: %w\nraw: %s", err, truncate(resultText, 500))
+	}
+
+	return &result, nil
+}
+
+func reportProgress(event *StreamEvent, onProgress ProgressFunc) {
+	switch event.Type {
+	case "assistant":
+		if event.Message == nil {
+			return
+		}
+		for _, block := range event.Message.Content {
+			switch block.Type {
+			case "tool_use":
+				onProgress(ProgressEvent{
+					Type:    "tool_use",
+					Message: fmt.Sprintf("Using %s...", block.Name),
+				})
+			case "text":
+				if block.Text != "" {
+					onProgress(ProgressEvent{
+						Type:    "text",
+						Message: truncate(block.Text, 100),
+					})
+				}
+			}
+		}
+	}
+}
+
+func filterEnv(env []string, remove string) []string {
+	prefix := remove + "="
+	filtered := make([]string, 0, len(env))
+	for _, e := range env {
+		if !strings.HasPrefix(e, prefix) {
+			filtered = append(filtered, e)
+		}
+	}
+	return filtered
+}
+
+func isNotFound(err error) bool {
+	return strings.Contains(err.Error(), exec.ErrNotFound.Error())
+}
+
+func truncate(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
+}
+
+// analysisJSONSchema is the JSON schema that Claude must produce.
+var analysisJSONSchema = `{
+  "type": "object",
+  "required": ["summary", "risk", "architectureImpact", "fileReviews", "testCoverage", "suggestions"],
+  "properties": {
+    "summary": { "type": "string" },
+    "risk": {
+      "type": "object",
+      "required": ["level", "reasoning"],
+      "properties": {
+        "level": { "type": "string", "enum": ["low", "medium", "high", "critical"] },
+        "reasoning": { "type": "string" }
+      }
+    },
+    "architectureImpact": {
+      "type": "object",
+      "required": ["hasImpact", "description", "affectedModules"],
+      "properties": {
+        "hasImpact": { "type": "boolean" },
+        "description": { "type": "string" },
+        "affectedModules": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "fileReviews": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["file", "summary", "comments"],
+        "properties": {
+          "file": { "type": "string" },
+          "summary": { "type": "string" },
+          "comments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["severity", "comment"],
+              "properties": {
+                "line": { "type": "number" },
+                "severity": { "type": "string", "enum": ["critical", "warning", "suggestion", "praise"] },
+                "comment": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "testCoverage": {
+      "type": "object",
+      "required": ["assessment", "gaps"],
+      "properties": {
+        "assessment": { "type": "string" },
+        "gaps": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "suggestions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["title", "description"],
+        "properties": {
+          "title": { "type": "string" },
+          "description": { "type": "string" },
+          "file": { "type": "string" }
+        }
+      }
+    }
+  }
+}`
