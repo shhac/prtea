@@ -5,24 +5,11 @@ import (
 	"os"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/shhac/prtea/internal/ui"
 )
 
-type model struct{}
-
-func (m model) Init() tea.Cmd {
-	return tea.Quit
-}
-
-func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	return m, tea.Quit
-}
-
-func (m model) View() string {
-	return "PR Dashboard TUI\n"
-}
-
 func main() {
-	p := tea.NewProgram(model{})
+	p := tea.NewProgram(ui.NewApp(), tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
