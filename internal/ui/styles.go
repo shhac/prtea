@@ -46,6 +46,9 @@ var diffSelectedBg = lipgloss.Color("236")
 // Focused hunk indicator
 var diffFocusedHunkStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("99")).Bold(true)
 
+// Focused hunk gutter marker (▎ in accent color)
+var diffFocusGutterStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("62"))
+
 // PR list styles
 var (
 	prTitleStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))

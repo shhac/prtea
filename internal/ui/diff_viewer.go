@@ -513,9 +513,20 @@ func (m *DiffViewerModel) renderRealDiff() string {
 
 			for _, line := range hunk.Lines {
 				if line == "" {
+					if isFocused {
+						b.WriteString(diffFocusGutterStyle.Render("▎"))
+					}
 					b.WriteString("\n")
 					lineCount++
 					continue
+				}
+
+				// Gutter marker: ▎ for focused hunk, space for others
+				var gutter string
+				if isFocused {
+					gutter = diffFocusGutterStyle.Render("▎") + " "
+				} else {
+					gutter = "  "
 				}
 
 				var style lipgloss.Style
@@ -551,7 +562,7 @@ func (m *DiffViewerModel) renderRealDiff() string {
 					style = style.Background(diffSelectedBg)
 				}
 
-				b.WriteString(style.Render(displayLine))
+				b.WriteString(gutter + style.Render(displayLine))
 				b.WriteString("\n")
 				lineCount++
 			}
