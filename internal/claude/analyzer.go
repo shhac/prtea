@@ -41,6 +41,16 @@ type AnalyzeInput struct {
 	HeadBranch string
 }
 
+// AnalyzeDiffInput contains the parameters for a diff-based analysis (no local repo needed).
+type AnalyzeDiffInput struct {
+	Owner       string
+	Repo        string
+	PRNumber    int
+	PRTitle     string
+	PRBody      string
+	DiffContent string // unified diff patches for all changed files
+}
+
 // Analyze runs Claude CLI analysis on a PR and returns the structured result.
 func (a *Analyzer) Analyze(ctx context.Context, input AnalyzeInput, onProgress ProgressFunc) (*AnalysisResult, error) {
 	ctx, cancel := context.WithTimeout(ctx, a.timeout)
@@ -63,6 +73,32 @@ func (a *Analyzer) Analyze(ctx context.Context, input AnalyzeInput, onProgress P
 	// Remove ANTHROPIC_API_KEY from env — let Claude CLI use its own auth
 	cmd.Env = filterEnv(os.Environ(), "ANTHROPIC_API_KEY")
 
+	return a.runAndParse(ctx, cmd, onProgress)
+}
+
+// AnalyzeDiff runs analysis using inline diff content (no local repo needed).
+func (a *Analyzer) AnalyzeDiff(ctx context.Context, input AnalyzeDiffInput, onProgress ProgressFunc) (*AnalysisResult, error) {
+	ctx, cancel := context.WithTimeout(ctx, a.timeout)
+	defer cancel()
+
+	prompt := a.buildDiffAnalysisPrompt(input)
+
+	args := []string{
+		"-p", prompt,
+		"--output-format", "stream-json",
+		"--verbose",
+		"--max-turns", "1",
+	}
+
+	cmd := exec.CommandContext(ctx, a.claudePath, args...)
+	cmd.Stdin = nil
+	cmd.Env = filterEnv(os.Environ(), "ANTHROPIC_API_KEY")
+
+	return a.runAndParse(ctx, cmd, onProgress)
+}
+
+// runAndParse starts the Claude CLI subprocess, reads stream-json events, and extracts the result.
+func (a *Analyzer) runAndParse(ctx context.Context, cmd *exec.Cmd, onProgress ProgressFunc) (*AnalysisResult, error) {
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create stdout pipe: %w", err)
@@ -175,6 +211,39 @@ func (a *Analyzer) loadCustomPrompt(owner, repo string) string {
 		return ""
 	}
 	return "\nAdditional review instructions:\n" + string(data)
+}
+
+func (a *Analyzer) buildDiffAnalysisPrompt(input AnalyzeDiffInput) string {
+	body := input.PRBody
+	if body == "" {
+		body = "No description provided."
+	}
+
+	customPrompt := a.loadCustomPrompt(input.Owner, input.Repo)
+
+	return fmt.Sprintf(`You are reviewing PR #%d in %s/%s: "%s".
+
+PR description:
+%s
+
+Here is the complete diff for this PR:
+
+%s
+
+Instructions:
+1. Review all changes shown in the diff above.
+2. Produce a thorough code review as structured JSON output.
+
+Focus on: correctness, security, performance, maintainability, and test coverage. Be specific with line numbers when possible.
+%s
+IMPORTANT: Your final response must be ONLY valid JSON matching this schema (no markdown, no wrapping):
+%s`,
+		input.PRNumber, input.Owner, input.Repo, input.PRTitle,
+		body,
+		input.DiffContent,
+		customPrompt,
+		analysisJSONSchema,
+	)
 }
 
 func extractAnalysisResult(event *StreamEvent) (*AnalysisResult, error) {
