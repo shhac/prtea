@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/shhac/prtea/internal/claude"
 	"github.com/shhac/prtea/internal/github"
@@ -392,9 +393,11 @@ func (m ChatPanelModel) renderMessages() string {
 		b.WriteString(roleLabel)
 		b.WriteString("\n")
 
-		// Word wrap the content
-		wrapped := wordWrap(msg.content, innerWidth)
-		b.WriteString(wrapped)
+		if msg.role == "assistant" {
+			b.WriteString(renderMarkdown(msg.content, innerWidth))
+		} else {
+			b.WriteString(wordWrap(msg.content, innerWidth))
+		}
 	}
 
 	if m.isWaiting {
@@ -494,7 +497,7 @@ func (m ChatPanelModel) renderComments() string {
 			b.WriteString(authorStyle.Render(c.Author.Login))
 			b.WriteString(dimStyle.Render(" · " + c.CreatedAt.Format("Jan 2 15:04")))
 			b.WriteString("\n")
-			b.WriteString(wordWrap(c.Body, innerWidth))
+			b.WriteString(renderMarkdown(c.Body, innerWidth))
 			b.WriteString("\n")
 		}
 	}
@@ -524,7 +527,7 @@ func (m ChatPanelModel) renderComments() string {
 				b.WriteString(dimStyle.Render(" (outdated)"))
 			}
 			b.WriteString("\n")
-			b.WriteString(wordWrap(c.Body, innerWidth))
+			b.WriteString(renderMarkdown(c.Body, innerWidth))
 			b.WriteString("\n")
 		}
 	}
@@ -695,6 +698,26 @@ func (m ChatPanelModel) renderInput() string {
 		Foreground(lipgloss.Color("240")).
 		Italic(true).
 		Render("press Enter to chat")
+}
+
+// renderMarkdown renders markdown text with glamour for terminal display.
+// Falls back to plain wordWrap if glamour fails.
+func renderMarkdown(markdown string, width int) string {
+	if width < 10 {
+		width = 10
+	}
+	r, err := glamour.NewTermRenderer(
+		glamour.WithAutoStyle(),
+		glamour.WithWordWrap(width),
+	)
+	if err != nil {
+		return wordWrap(markdown, width)
+	}
+	out, err := r.Render(markdown)
+	if err != nil {
+		return wordWrap(markdown, width)
+	}
+	return strings.TrimSpace(out)
 }
 
 // wordWrap wraps text to fit within the given width.
