@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -29,12 +28,12 @@ func NewChatService(claudePath string, timeout time.Duration) *ChatService {
 }
 
 // ChatInput contains the parameters for a chat request.
+// RepoPath is optional — if empty, Claude runs without filesystem access (diff-as-context mode).
 type ChatInput struct {
-	RepoPath  string
 	Owner     string
 	Repo      string
 	PRNumber  int
-	PRContext string
+	PRContext string // PR metadata + diff content embedded as text
 	Message   string
 }
 
@@ -49,12 +48,10 @@ func (cs *ChatService) Chat(ctx context.Context, input ChatInput) (string, error
 
 	args := []string{
 		"-p", prompt,
-		"--allowedTools", "Read,Glob,Grep,Bash",
-		"--max-turns", "10",
+		"--max-turns", "3",
 	}
 
 	cmd := exec.CommandContext(ctx, cs.claudePath, args...)
-	cmd.Dir = input.RepoPath
 	cmd.Stdin = nil
 
 	var stdout, stderr bytes.Buffer
@@ -120,7 +117,7 @@ func buildChatPrompt(session *ChatSession, userMessage string) string {
 
 	b.WriteString("You are helping review a pull request. Here is the context:\n\n")
 	b.WriteString(session.PRContext)
-	b.WriteString("\n\nYou have access to the repository files to answer questions. The repo is checked out on the main branch.\n")
+	b.WriteString("\n\nAnswer questions about this PR based on the diff and metadata provided above.\n")
 
 	for _, msg := range session.Messages {
 		if msg.Role == "user" {
@@ -137,10 +134,4 @@ func buildChatPrompt(session *ChatSession, userMessage string) string {
 
 func sessionKey(owner, repo string, prNumber int) string {
 	return fmt.Sprintf("%s_%s_%d", owner, repo, prNumber)
-}
-
-// removeEnvKey returns env with the specified key removed.
-// Unused but kept as a utility parallel to filterEnv in analyzer.go.
-func removeEnvKey(key string) []string {
-	return filterEnv(os.Environ(), key)
 }

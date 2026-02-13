@@ -2,13 +2,18 @@ package ui
 
 import (
 	"context"
+	"crypto/sha256"
+	"fmt"
 	"os/exec"
 	"runtime"
+	"strings"
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/shhac/prtea/internal/claude"
+	"github.com/shhac/prtea/internal/config"
 	"github.com/shhac/prtea/internal/github"
 )
 
@@ -47,7 +52,20 @@ type SelectedPR struct {
 	Owner   string
 	Repo    string
 	Number  int
+	Title   string
 	HTMLURL string
+}
+
+// AnalysisCompleteMsg is sent when Claude analysis finishes successfully.
+type AnalysisCompleteMsg struct {
+	PRNumber int
+	DiffHash string
+	Result   *claude.AnalysisResult
+}
+
+// AnalysisErrorMsg is sent when Claude analysis fails.
+type AnalysisErrorMsg struct {
+	Err error
 }
 
 // App is the root Bubbletea model for the PR dashboard.
@@ -66,6 +84,15 @@ type App struct {
 
 	// Currently selected PR (nil until a PR is selected)
 	selectedPR *SelectedPR
+	diffFiles  []github.PRFile // stored for analysis context
+
+	// Claude integration
+	claudePath    string
+	appConfig     *config.Config
+	analyzer      *claude.Analyzer
+	chatService   *claude.ChatService
+	analysisStore *claude.AnalysisStore
+	analyzing     bool
 
 	// Layout state
 	focused        Panel
@@ -82,15 +109,36 @@ type App struct {
 
 // NewApp creates a new App model with default state.
 func NewApp() App {
+	cfg, _ := config.Load()
+	if cfg == nil {
+		cfg = &config.Config{ClaudeTimeout: config.DefaultClaudeTimeoutMs}
+	}
+
+	claudePath, _ := claude.FindClaude()
+
+	var analyzer *claude.Analyzer
+	var chatSvc *claude.ChatService
+	if claudePath != "" {
+		analyzer = claude.NewAnalyzer(claudePath, cfg.ClaudeTimeoutDuration(), config.PromptsDir())
+		chatSvc = claude.NewChatService(claudePath, cfg.ClaudeTimeoutDuration())
+	}
+
+	store := claude.NewAnalysisStore(config.AnalysesCacheDir())
+
 	return App{
-		prList:       NewPRListModel(),
-		diffViewer:   NewDiffViewerModel(),
-		chatPanel:    NewChatPanelModel(),
-		statusBar:    NewStatusBarModel(),
-		helpOverlay:  NewHelpOverlayModel(),
-		focused:      PanelLeft,
-		panelVisible: [3]bool{true, true, true},
-		mode:         ModeNavigation,
+		prList:        NewPRListModel(),
+		diffViewer:    NewDiffViewerModel(),
+		chatPanel:     NewChatPanelModel(),
+		statusBar:     NewStatusBarModel(),
+		helpOverlay:   NewHelpOverlayModel(),
+		focused:       PanelLeft,
+		panelVisible:  [3]bool{true, true, true},
+		mode:          ModeNavigation,
+		claudePath:    claudePath,
+		appConfig:     cfg,
+		analyzer:      analyzer,
+		chatService:   chatSvc,
+		analysisStore: store,
 	}
 }
 
@@ -158,11 +206,22 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case PRSelectedMsg:
+		title := ""
+		if item, ok := m.prList.list.SelectedItem().(PRItem); ok {
+			title = item.title
+		}
 		m.selectedPR = &SelectedPR{
 			Owner:   msg.Owner,
 			Repo:    msg.Repo,
 			Number:  msg.Number,
+			Title:   title,
 			HTMLURL: msg.HTMLURL,
+		}
+		m.diffFiles = nil // clear old diff data
+		m.chatPanel.SetAnalysisResult(nil) // clear old analysis
+		m.chatPanel.ClearChat()            // clear old chat
+		if m.chatService != nil {
+			m.chatService.ClearSession(msg.Owner, msg.Repo, msg.Number)
 		}
 		m.statusBar.SetSelectedPR(msg.Number)
 		m.diffViewer.SetLoading(msg.Number)
@@ -180,6 +239,35 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.diffViewer.SetError(msg.Err)
 		} else {
 			m.diffViewer.SetDiff(msg.Files)
+			m.diffFiles = msg.Files
+		}
+		return m, nil
+
+	case AnalysisCompleteMsg:
+		m.analyzing = false
+		if m.selectedPR != nil && msg.PRNumber == m.selectedPR.Number {
+			m.chatPanel.SetAnalysisResult(msg.Result)
+			// Cache the result
+			_ = m.analysisStore.Put(
+				m.selectedPR.Owner, m.selectedPR.Repo, m.selectedPR.Number,
+				msg.DiffHash, msg.Result,
+			)
+		}
+		return m, nil
+
+	case AnalysisErrorMsg:
+		m.analyzing = false
+		m.chatPanel.SetAnalysisError(msg.Err.Error())
+		return m, nil
+
+	case ChatSendMsg:
+		return m.handleChatSend(msg.Message)
+
+	case ChatResponseMsg:
+		if msg.Err != nil {
+			m.chatPanel.SetChatError(msg.Err.Error())
+		} else {
+			m.chatPanel.AddResponse(msg.Content)
 		}
 		return m, nil
 
@@ -266,6 +354,9 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, openBrowserCmd(m.selectedPR.HTMLURL)
 			}
 			return m, nil
+
+		case key.Matches(msg, GlobalKeys.Analyze):
+			return m.startAnalysis()
 		}
 
 		// Delegate to focused panel
@@ -488,4 +579,151 @@ func (m App) updateChatPanel(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.chatPanel, cmd = m.chatPanel.Update(msg)
 	return m, cmd
+}
+
+// startAnalysis validates state and kicks off Claude analysis.
+func (m App) startAnalysis() (tea.Model, tea.Cmd) {
+	if m.selectedPR == nil {
+		m.chatPanel.SetAnalysisError("No PR selected. Select a PR first.")
+		m.chatPanel.activeTab = ChatTabAnalysis
+		m.showAndFocusPanel(PanelRight)
+		return m, nil
+	}
+	if m.claudePath == "" {
+		m.chatPanel.SetAnalysisError("Claude CLI not found.\nInstall from https://docs.anthropic.com/en/docs/claude-code")
+		m.chatPanel.activeTab = ChatTabAnalysis
+		m.showAndFocusPanel(PanelRight)
+		return m, nil
+	}
+	if m.analyzing {
+		return m, nil
+	}
+	if len(m.diffFiles) == 0 {
+		m.chatPanel.SetAnalysisError("No diff loaded. Select a PR to load its diff first.")
+		m.chatPanel.activeTab = ChatTabAnalysis
+		m.showAndFocusPanel(PanelRight)
+		return m, nil
+	}
+
+	// Check cache
+	hash := diffContentHash(m.diffFiles)
+	cached, _ := m.analysisStore.Get(m.selectedPR.Owner, m.selectedPR.Repo, m.selectedPR.Number)
+	if cached != nil && !m.analysisStore.IsStale(cached, hash) {
+		m.chatPanel.SetAnalysisResult(cached.Result)
+		m.chatPanel.activeTab = ChatTabAnalysis
+		m.showAndFocusPanel(PanelRight)
+		return m, nil
+	}
+
+	// Start async analysis
+	m.analyzing = true
+	m.chatPanel.SetAnalysisLoading()
+	m.chatPanel.activeTab = ChatTabAnalysis
+	m.showAndFocusPanel(PanelRight)
+
+	return m, analyzeDiffCmd(m.analyzer, m.selectedPR, m.diffFiles, hash)
+}
+
+// handleChatSend validates state and kicks off Claude chat.
+func (m App) handleChatSend(message string) (tea.Model, tea.Cmd) {
+	if m.selectedPR == nil {
+		m.chatPanel.SetChatError("No PR selected. Select a PR first.")
+		return m, nil
+	}
+	if m.chatService == nil {
+		m.chatPanel.SetChatError("Claude CLI not found.\nInstall from https://docs.anthropic.com/en/docs/claude-code")
+		return m, nil
+	}
+
+	prContext := buildChatContext(m.selectedPR, m.diffFiles)
+
+	input := claude.ChatInput{
+		Owner:     m.selectedPR.Owner,
+		Repo:      m.selectedPR.Repo,
+		PRNumber:  m.selectedPR.Number,
+		PRContext: prContext,
+		Message:   message,
+	}
+
+	return m, chatCmd(m.chatService, input)
+}
+
+// chatCmd returns a command that sends a message to Claude chat.
+func chatCmd(svc *claude.ChatService, input claude.ChatInput) tea.Cmd {
+	return func() tea.Msg {
+		ctx := context.Background()
+		response, err := svc.Chat(ctx, input)
+		if err != nil {
+			return ChatResponseMsg{Err: err}
+		}
+		return ChatResponseMsg{Content: response}
+	}
+}
+
+// buildChatContext constructs the PR context string for chat from metadata + diff.
+func buildChatContext(pr *SelectedPR, files []github.PRFile) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "PR #%d: \"%s\" in %s/%s\n", pr.Number, pr.Title, pr.Owner, pr.Repo)
+	if len(files) > 0 {
+		b.WriteString("\nChanges in this PR:\n\n")
+		b.WriteString(buildDiffContent(files))
+	} else {
+		b.WriteString("\n(Diff not yet loaded)")
+	}
+	return b.String()
+}
+
+// analyzeDiffCmd returns a command that runs Claude analysis with inline diff content.
+func analyzeDiffCmd(analyzer *claude.Analyzer, pr *SelectedPR, files []github.PRFile, diffHash string) tea.Cmd {
+	return func() tea.Msg {
+		ctx := context.Background()
+
+		diffContent := buildDiffContent(files)
+
+		input := claude.AnalyzeDiffInput{
+			Owner:       pr.Owner,
+			Repo:        pr.Repo,
+			PRNumber:    pr.Number,
+			PRTitle:     pr.Title,
+			DiffContent: diffContent,
+		}
+
+		result, err := analyzer.AnalyzeDiff(ctx, input, nil)
+		if err != nil {
+			return AnalysisErrorMsg{Err: err}
+		}
+
+		return AnalysisCompleteMsg{
+			PRNumber: pr.Number,
+			DiffHash: diffHash,
+			Result:   result,
+		}
+	}
+}
+
+// buildDiffContent constructs a unified diff string from PR files.
+func buildDiffContent(files []github.PRFile) string {
+	var b strings.Builder
+	for _, f := range files {
+		b.WriteString(fmt.Sprintf("--- a/%s\n", f.Filename))
+		b.WriteString(fmt.Sprintf("+++ b/%s\n", f.Filename))
+		if f.Patch != "" {
+			b.WriteString(f.Patch)
+			b.WriteString("\n")
+		} else {
+			b.WriteString("(binary or too large to display)\n")
+		}
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+// diffContentHash computes a short hash of the diff content for cache staleness checks.
+func diffContentHash(files []github.PRFile) string {
+	h := sha256.New()
+	for _, f := range files {
+		h.Write([]byte(f.Filename))
+		h.Write([]byte(f.Patch))
+	}
+	return fmt.Sprintf("%x", h.Sum(nil))[:16]
 }
