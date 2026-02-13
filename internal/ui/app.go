@@ -681,7 +681,12 @@ func (m App) handleChatSend(message string) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	prContext := buildChatContext(m.selectedPR, m.diffFiles)
+	var prContext string
+	if selected := m.diffViewer.GetSelectedHunkContent(); selected != "" {
+		prContext = buildSelectedHunkContext(m.selectedPR, selected)
+	} else {
+		prContext = buildChatContext(m.selectedPR, m.diffFiles)
+	}
 
 	input := claude.ChatInput{
 		Owner:     m.selectedPR.Owner,
@@ -758,6 +763,15 @@ func analyzeDiffCmd(analyzer *claude.Analyzer, pr *SelectedPR, files []github.PR
 			Result:   result,
 		}
 	}
+}
+
+// buildSelectedHunkContext constructs PR context using only selected hunks.
+func buildSelectedHunkContext(pr *SelectedPR, selectedDiff string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "PR #%d: \"%s\" in %s/%s\n", pr.Number, pr.Title, pr.Owner, pr.Repo)
+	b.WriteString("\nSelected hunks from this PR:\n\n")
+	b.WriteString(selectedDiff)
+	return b.String()
 }
 
 // buildDiffContent constructs a unified diff string from PR files.

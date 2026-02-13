@@ -118,16 +118,19 @@ var PRListKeys = PRListKeyMap{
 
 // DiffViewerKeyMap defines keys for the diff viewer panel.
 type DiffViewerKeyMap struct {
-	Up       key.Binding
-	Down     key.Binding
-	HalfDown key.Binding
-	HalfUp   key.Binding
-	NextFile key.Binding
-	PrevFile key.Binding
-	Top      key.Binding
-	Bottom   key.Binding
-	PrevTab  key.Binding
-	NextTab  key.Binding
+	Up              key.Binding
+	Down            key.Binding
+	HalfDown        key.Binding
+	HalfUp          key.Binding
+	NextFile        key.Binding
+	PrevFile        key.Binding
+	Top             key.Binding
+	Bottom          key.Binding
+	PrevTab         key.Binding
+	NextTab         key.Binding
+	SelectHunk      key.Binding
+	SelectFileHunks key.Binding
+	ClearSelection  key.Binding
 }
 
 var DiffViewerKeys = DiffViewerKeyMap{
@@ -170,6 +173,18 @@ var DiffViewerKeys = DiffViewerKeyMap{
 	NextTab: key.NewBinding(
 		key.WithKeys("l", "right"),
 		key.WithHelp("l", "next tab"),
+	),
+	SelectHunk: key.NewBinding(
+		key.WithKeys("s"),
+		key.WithHelp("s", "select hunk"),
+	),
+	SelectFileHunks: key.NewBinding(
+		key.WithKeys("S"),
+		key.WithHelp("S", "select file hunks"),
+	),
+	ClearSelection: key.NewBinding(
+		key.WithKeys("c"),
+		key.WithHelp("c", "clear selection"),
 	),
 }
 

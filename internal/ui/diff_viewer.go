@@ -19,6 +19,42 @@ const (
 	TabPRInfo
 )
 
+// DiffHunk represents a single hunk within a file's patch.
+type DiffHunk struct {
+	FileIndex int
+	Filename  string
+	Header    string   // the @@ line
+	Lines     []string // all lines including the @@ header
+}
+
+// parsePatchHunks splits a file's patch string into individual hunks.
+func parsePatchHunks(fileIndex int, filename string, patch string) []DiffHunk {
+	lines := strings.Split(patch, "\n")
+	var hunks []DiffHunk
+	var current *DiffHunk
+
+	for _, line := range lines {
+		if strings.HasPrefix(line, "@@") {
+			if current != nil {
+				hunks = append(hunks, *current)
+			}
+			current = &DiffHunk{
+				FileIndex: fileIndex,
+				Filename:  filename,
+				Header:    line,
+				Lines:     []string{line},
+			}
+		} else if current != nil {
+			current.Lines = append(current.Lines, line)
+		}
+	}
+	if current != nil {
+		hunks = append(hunks, *current)
+	}
+
+	return hunks
+}
+
 // DiffViewerModel manages the diff viewer panel.
 type DiffViewerModel struct {
 	viewport  viewport.Model
@@ -35,6 +71,11 @@ type DiffViewerModel struct {
 	loading        bool
 	prNumber       int
 	err            error
+
+	// Hunk selection
+	hunks         []DiffHunk    // all parsed hunks across all files
+	hunkOffsets   []int         // viewport line offset where each hunk starts
+	selectedHunks map[int]bool  // hunk index → selected
 
 	// PR info data (for PR Info tab)
 	prTitle  string
@@ -102,6 +143,56 @@ func (m DiffViewerModel) Update(msg tea.Msg) (DiffViewerModel, tea.Cmd) {
 		case key.Matches(msg, DiffViewerKeys.Bottom):
 			m.viewport.GotoBottom()
 			return m, nil
+		case key.Matches(msg, DiffViewerKeys.SelectHunk):
+			if m.activeTab == TabDiff && len(m.hunks) > 0 {
+				idx := m.currentHunkIndex()
+				if idx >= 0 {
+					if m.selectedHunks == nil {
+						m.selectedHunks = make(map[int]bool)
+					}
+					if m.selectedHunks[idx] {
+						delete(m.selectedHunks, idx)
+					} else {
+						m.selectedHunks[idx] = true
+					}
+					m.refreshContent()
+				}
+			}
+			return m, nil
+		case key.Matches(msg, DiffViewerKeys.SelectFileHunks):
+			if m.activeTab == TabDiff && len(m.hunks) > 0 {
+				idx := m.currentHunkIndex()
+				if idx >= 0 && idx < len(m.hunks) {
+					if m.selectedHunks == nil {
+						m.selectedHunks = make(map[int]bool)
+					}
+					fileIdx := m.hunks[idx].FileIndex
+					allSelected := true
+					for j, h := range m.hunks {
+						if h.FileIndex == fileIdx && !m.selectedHunks[j] {
+							allSelected = false
+							break
+						}
+					}
+					for j, h := range m.hunks {
+						if h.FileIndex == fileIdx {
+							if allSelected {
+								delete(m.selectedHunks, j)
+							} else {
+								m.selectedHunks[j] = true
+							}
+						}
+					}
+					m.refreshContent()
+				}
+			}
+			return m, nil
+		case key.Matches(msg, DiffViewerKeys.ClearSelection):
+			if m.activeTab == TabDiff && len(m.selectedHunks) > 0 {
+				m.selectedHunks = nil
+				m.refreshContent()
+			}
+			return m, nil
 		}
 	}
 
@@ -143,6 +234,9 @@ func (m *DiffViewerModel) SetLoading(prNumber int) {
 	m.loading = true
 	m.files = nil
 	m.fileOffsets = nil
+	m.hunks = nil
+	m.hunkOffsets = nil
+	m.selectedHunks = nil
 	m.currentFileIdx = 0
 	m.err = nil
 	m.refreshContent()
@@ -154,6 +248,7 @@ func (m *DiffViewerModel) SetDiff(files []github.PRFile) {
 	m.files = files
 	m.err = nil
 	m.currentFileIdx = 0
+	m.selectedHunks = nil
 	m.refreshContent()
 	m.viewport.GotoTop()
 }
@@ -245,6 +340,9 @@ func (m DiffViewerModel) renderTabs() string {
 	if m.prNumber > 0 && m.files != nil {
 		diffLabel = fmt.Sprintf("Diff (%d files)", len(m.files))
 	}
+	if len(m.selectedHunks) > 0 {
+		diffLabel += fmt.Sprintf(" [%d/%d hunks]", len(m.selectedHunks), len(m.hunks))
+	}
 	prInfoLabel := "PR Info"
 
 	tabNames := []struct {
@@ -323,7 +421,7 @@ func (m DiffViewerModel) renderPRInfo() string {
 	return b.String()
 }
 
-// renderRealDiff renders actual PR file diffs with syntax coloring.
+// renderRealDiff renders actual PR file diffs with syntax coloring and hunk selection.
 func (m *DiffViewerModel) renderRealDiff() string {
 	if len(m.files) == 0 {
 		return lipgloss.NewStyle().
@@ -335,7 +433,10 @@ func (m *DiffViewerModel) renderRealDiff() string {
 	innerWidth := m.viewport.Width
 	var b strings.Builder
 	m.fileOffsets = make([]int, len(m.files))
+	m.hunks = nil
+	m.hunkOffsets = nil
 	lineCount := 0
+	globalHunkIdx := 0
 
 	for i, f := range m.files {
 		if i > 0 {
@@ -370,30 +471,50 @@ func (m *DiffViewerModel) renderRealDiff() string {
 		b.WriteString("\n")
 		lineCount++
 
-		patchLines := strings.Split(f.Patch, "\n")
-		for _, line := range patchLines {
-			if line == "" {
+		// Parse and render hunks
+		fileHunks := parsePatchHunks(i, f.Filename, f.Patch)
+		for _, hunk := range fileHunks {
+			m.hunks = append(m.hunks, hunk)
+			m.hunkOffsets = append(m.hunkOffsets, lineCount)
+			selected := m.selectedHunks[globalHunkIdx]
+
+			for _, line := range hunk.Lines {
+				if line == "" {
+					b.WriteString("\n")
+					lineCount++
+					continue
+				}
+
+				var style lipgloss.Style
+				displayLine := line
+				switch {
+				case strings.HasPrefix(line, "@@"):
+					style = diffHunkHeaderStyle
+					if selected {
+						displayLine = "✓ " + line
+					}
+				case strings.HasPrefix(line, "+"):
+					style = diffAddedStyle
+				case strings.HasPrefix(line, "-"):
+					style = diffRemovedStyle
+				case strings.HasPrefix(line, `\`):
+					style = lipgloss.NewStyle().
+						Foreground(lipgloss.Color("244")).
+						Italic(true)
+				default:
+					style = lipgloss.NewStyle()
+				}
+
+				if selected {
+					style = style.Background(diffSelectedBg)
+				}
+
+				b.WriteString(style.Render(displayLine))
 				b.WriteString("\n")
 				lineCount++
-				continue
 			}
-			switch {
-			case strings.HasPrefix(line, "@@"):
-				b.WriteString(diffHunkHeaderStyle.Render(line))
-			case strings.HasPrefix(line, "+"):
-				b.WriteString(diffAddedStyle.Render(line))
-			case strings.HasPrefix(line, "-"):
-				b.WriteString(diffRemovedStyle.Render(line))
-			case strings.HasPrefix(line, `\`):
-				b.WriteString(lipgloss.NewStyle().
-					Foreground(lipgloss.Color("244")).
-					Italic(true).
-					Render(line))
-			default:
-				b.WriteString(line)
-			}
-			b.WriteString("\n")
-			lineCount++
+
+			globalHunkIdx++
 		}
 	}
 
@@ -411,4 +532,54 @@ func fileStatusLabel(f github.PRFile) string {
 	default:
 		return fmt.Sprintf("%s (+%d/-%d)", f.Filename, f.Additions, f.Deletions)
 	}
+}
+
+// currentHunkIndex returns the index of the hunk at or before the current viewport position.
+func (m DiffViewerModel) currentHunkIndex() int {
+	if len(m.hunkOffsets) == 0 {
+		return -1
+	}
+	y := m.viewport.YOffset
+	idx := 0
+	for i, offset := range m.hunkOffsets {
+		if offset <= y {
+			idx = i
+		} else {
+			break
+		}
+	}
+	return idx
+}
+
+// GetSelectedHunkContent returns formatted diff content for only the selected hunks.
+// Returns empty string if no hunks are selected.
+func (m DiffViewerModel) GetSelectedHunkContent() string {
+	if len(m.selectedHunks) == 0 {
+		return ""
+	}
+
+	var b strings.Builder
+	lastFileIdx := -1
+
+	for i, hunk := range m.hunks {
+		if !m.selectedHunks[i] {
+			continue
+		}
+
+		if hunk.FileIndex != lastFileIdx {
+			if lastFileIdx >= 0 {
+				b.WriteString("\n")
+			}
+			b.WriteString(fmt.Sprintf("--- a/%s\n", hunk.Filename))
+			b.WriteString(fmt.Sprintf("+++ b/%s\n", hunk.Filename))
+			lastFileIdx = hunk.FileIndex
+		}
+
+		for _, line := range hunk.Lines {
+			b.WriteString(line)
+			b.WriteString("\n")
+		}
+	}
+
+	return b.String()
 }
