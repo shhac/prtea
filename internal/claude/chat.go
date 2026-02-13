@@ -96,6 +96,7 @@ func (cs *ChatService) ChatStream(ctx context.Context, input ChatInput, onChunk 
 		"-p", prompt,
 		"--output-format", "stream-json",
 		"--verbose",
+		"--include-partial-messages",
 		"--max-turns", "3",
 	}
 
@@ -131,7 +132,11 @@ func (cs *ChatService) ChatStream(ctx context.Context, input ChatInput, onChunk 
 		}
 	}()
 
-	// Parse stream-json events from stdout
+	// Parse stream-json events from stdout.
+	// With --include-partial-messages, Claude emits "stream_event" envelopes
+	// containing content_block_delta events with text_delta for token-level streaming.
+	// We also keep the "assistant" handler as a fallback for complete turn events.
+	var streamedText strings.Builder
 	var resultText string
 	scanner := bufio.NewScanner(stdout)
 	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
@@ -147,7 +152,18 @@ func (cs *ChatService) ChatStream(ctx context.Context, input ChatInput, onChunk 
 			continue
 		}
 
-		// Stream text chunks from assistant messages
+		// Token-level streaming: stream_event with content_block_delta
+		if event.Type == "stream_event" && event.Event != nil {
+			if event.Event.Type == "content_block_delta" && event.Event.Delta != nil {
+				if event.Event.Delta.Type == "text_delta" && event.Event.Delta.Text != "" {
+					onChunk(event.Event.Delta.Text)
+					streamedText.WriteString(event.Event.Delta.Text)
+				}
+			}
+			continue
+		}
+
+		// Fallback: complete assistant turn (without --include-partial-messages)
 		if event.Type == "assistant" && event.Message != nil {
 			for _, block := range event.Message.Content {
 				if block.Type == "text" && block.Text != "" {
@@ -173,15 +189,21 @@ func (cs *ChatService) ChatStream(ctx context.Context, input ChatInput, onChunk 
 		return "", fmt.Errorf("claude chat exited with error: %w\nstderr: %s", err, errMsg)
 	}
 
+	// Prefer streamed text if available (token-level), fall back to result event
+	finalText := resultText
+	if streamedText.Len() > 0 {
+		finalText = streamedText.String()
+	}
+
 	// Append exchange to session history
 	cs.mu.Lock()
 	session.Messages = append(session.Messages,
 		ChatMessage{Role: "user", Content: input.Message},
-		ChatMessage{Role: "assistant", Content: resultText},
+		ChatMessage{Role: "assistant", Content: finalText},
 	)
 	cs.mu.Unlock()
 
-	return resultText, nil
+	return finalText, nil
 }
 
 // extractResultText pulls the text content from a result stream event.

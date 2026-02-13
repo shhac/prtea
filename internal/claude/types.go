@@ -89,6 +89,23 @@ type StreamEvent struct {
 		Content []ContentBlock `json:"content,omitempty"`
 	} `json:"message,omitempty"`
 	Content []ContentBlock `json:"content,omitempty"`
+
+	// Event holds the nested API event when type == "stream_event"
+	// (emitted with --include-partial-messages). Contains content_block_delta
+	// events with text_delta for token-level streaming.
+	Event *StreamInnerEvent `json:"event,omitempty"`
+}
+
+// StreamInnerEvent is the nested event inside a stream_event envelope.
+type StreamInnerEvent struct {
+	Type  string       `json:"type"`
+	Delta *StreamDelta `json:"delta,omitempty"`
+}
+
+// StreamDelta carries incremental content from content_block_delta events.
+type StreamDelta struct {
+	Type string `json:"type"`
+	Text string `json:"text,omitempty"`
 }
 
 // ContentBlock is a block within a stream event message.
