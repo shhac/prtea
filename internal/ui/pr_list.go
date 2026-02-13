@@ -29,22 +29,19 @@ const (
 
 // PRItem represents a PR in the list.
 type PRItem struct {
-	number  int
-	title   string
-	repo    string // short repo name (e.g. "api")
-	owner   string // repo owner (e.g. "shhac")
+	number   int
+	title    string
+	repo     string // short repo name (e.g. "api")
+	owner    string // repo owner (e.g. "shhac")
 	repoFull string // full name (e.g. "shhac/api")
-	author  string
-	adds    int
-	dels    int
-	files   int
-	htmlURL string
+	author   string
+	htmlURL  string
 }
 
 func (i PRItem) FilterValue() string { return i.title }
 func (i PRItem) Title() string       { return fmt.Sprintf("#%d %s", i.number, i.title) }
 func (i PRItem) Description() string {
-	return fmt.Sprintf("%s · %s · +%d/-%d · %d files", i.author, i.repo, i.adds, i.dels, i.files)
+	return fmt.Sprintf("%s · %s", i.author, i.repo)
 }
 
 // PRSelectedMsg is sent when the user selects a PR.

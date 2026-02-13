@@ -9,15 +9,12 @@ import (
 
 // ghSearchPR is the JSON shape returned by gh search prs.
 type ghSearchPR struct {
-	Number     int    `json:"number"`
-	Title      string `json:"title"`
-	URL        string `json:"url"`
-	CreatedAt  time.Time `json:"createdAt"`
-	IsDraft    bool   `json:"isDraft"`
-	Additions  int    `json:"additions"`
-	Deletions  int    `json:"deletions"`
-	ChangedFiles int  `json:"changedFiles"`
-	Author     struct {
+	Number    int       `json:"number"`
+	Title     string    `json:"title"`
+	URL       string    `json:"url"`
+	CreatedAt time.Time `json:"createdAt"`
+	IsDraft   bool      `json:"isDraft"`
+	Author    struct {
 		Login string `json:"login"`
 	} `json:"author"`
 	Repository struct {
@@ -60,7 +57,7 @@ func (c *Client) GetPRsForReview(ctx context.Context) ([]PRItem, error) {
 		"--review-requested=@me",
 		"--state=open",
 		"--limit", "100",
-		"--json", "number,title,url,createdAt,isDraft,additions,deletions,changedFiles,author,repository,labels",
+		"--json", "number,title,url,createdAt,isDraft,author,repository,labels",
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to search PRs for review: %w", err)
@@ -76,7 +73,7 @@ func (c *Client) GetMyPRs(ctx context.Context) ([]PRItem, error) {
 		"--author=@me",
 		"--state=open",
 		"--limit", "100",
-		"--json", "number,title,url,createdAt,isDraft,additions,deletions,changedFiles,author,repository,labels",
+		"--json", "number,title,url,createdAt,isDraft,author,repository,labels",
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to search my PRs: %w", err)
@@ -135,17 +132,14 @@ func convertSearchResults(results []ghSearchPR) []PRItem {
 		}
 
 		prs = append(prs, PRItem{
-			Number:       r.Number,
-			Title:        r.Title,
-			HTMLURL:      r.URL,
-			Repo:         Repo{Owner: owner, Name: name, FullName: r.Repository.NameWithOwner},
-			Author:       User{Login: r.Author.Login},
-			Labels:       labels,
-			Draft:        r.IsDraft,
-			CreatedAt:    r.CreatedAt,
-			Additions:    r.Additions,
-			Deletions:    r.Deletions,
-			ChangedFiles: r.ChangedFiles,
+			Number:    r.Number,
+			Title:     r.Title,
+			HTMLURL:   r.URL,
+			Repo:      Repo{Owner: owner, Name: name, FullName: r.Repository.NameWithOwner},
+			Author:    User{Login: r.Author.Login},
+			Labels:    labels,
+			Draft:     r.IsDraft,
+			CreatedAt: r.CreatedAt,
 		})
 	}
 	return prs

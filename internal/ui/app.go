@@ -329,9 +329,6 @@ func convertPRItems(prs []github.PRItem) []list.Item {
 			owner:    pr.Repo.Owner,
 			repoFull: pr.Repo.FullName,
 			author:   pr.Author.Login,
-			adds:     pr.Additions,
-			dels:     pr.Deletions,
-			files:    pr.ChangedFiles,
 			htmlURL:  pr.HTMLURL,
 		}
 	}
