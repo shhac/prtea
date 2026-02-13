@@ -263,7 +263,9 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.selectedPR == nil || msg.PRNumber != m.selectedPR.Number {
 			return m, nil
 		}
-		if msg.Err == nil && msg.Detail != nil {
+		if msg.Err != nil {
+			m.diffViewer.SetPRInfoError(msg.Err.Error())
+		} else if msg.Detail != nil {
 			m.diffViewer.SetPRInfo(
 				msg.Detail.Title,
 				msg.Detail.Body,

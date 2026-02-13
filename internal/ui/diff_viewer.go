@@ -78,10 +78,11 @@ type DiffViewerModel struct {
 	selectedHunks map[int]bool  // hunk index → selected
 
 	// PR info data (for PR Info tab)
-	prTitle  string
-	prBody   string
-	prAuthor string
-	prURL    string
+	prTitle   string
+	prBody    string
+	prAuthor  string
+	prURL     string
+	prInfoErr string
 }
 
 func NewDiffViewerModel() DiffViewerModel {
@@ -239,6 +240,11 @@ func (m *DiffViewerModel) SetLoading(prNumber int) {
 	m.selectedHunks = nil
 	m.currentFileIdx = 0
 	m.err = nil
+	m.prTitle = ""
+	m.prBody = ""
+	m.prAuthor = ""
+	m.prURL = ""
+	m.prInfoErr = ""
 	m.refreshContent()
 }
 
@@ -268,6 +274,13 @@ func (m *DiffViewerModel) SetPRInfo(title, body, author, url string) {
 	m.prBody = body
 	m.prAuthor = author
 	m.prURL = url
+	m.prInfoErr = ""
+	m.refreshContent()
+}
+
+// SetPRInfoError sets an error message for the PR Info tab.
+func (m *DiffViewerModel) SetPRInfoError(err string) {
+	m.prInfoErr = err
 	m.refreshContent()
 }
 
@@ -370,6 +383,14 @@ func (m DiffViewerModel) renderPRInfo() string {
 			Foreground(lipgloss.Color("244")).
 			Padding(1, 2).
 			Render("Select a PR to view its details")
+	}
+
+	if m.prInfoErr != "" {
+		return lipgloss.NewStyle().
+			Foreground(lipgloss.Color("196")).
+			Bold(true).
+			Padding(1, 2).
+			Render(fmt.Sprintf("Error loading PR info: %s", m.prInfoErr))
 	}
 
 	if m.prTitle == "" {
