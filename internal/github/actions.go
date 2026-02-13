@@ -19,6 +19,15 @@ func (c *Client) ApprovePR(ctx context.Context, owner, repo string, number int, 
 	return nil
 }
 
+// PostComment posts an issue-level comment on a PR.
+func (c *Client) PostComment(ctx context.Context, owner, repo string, number int, body string) error {
+	repoFlag := owner + "/" + repo
+	if _, err := ghExec(ctx, "pr", "comment", fmt.Sprintf("%d", number), "-R", repoFlag, "--body", body); err != nil {
+		return fmt.Errorf("failed to post comment on PR #%d: %w", number, err)
+	}
+	return nil
+}
+
 // ClosePR closes a PR without merging.
 func (c *Client) ClosePR(ctx context.Context, owner, repo string, number int) error {
 	repoFlag := owner + "/" + repo

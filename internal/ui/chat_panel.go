@@ -52,6 +52,16 @@ type ChatStreamChunkMsg struct {
 	Content string
 }
 
+// CommentPostMsg is emitted when the user wants to post a PR comment.
+type CommentPostMsg struct {
+	Body string
+}
+
+// CommentPostedMsg is sent after a comment has been posted (or failed).
+type CommentPostedMsg struct {
+	Err error
+}
+
 // ChatPanelModel manages the chat/analysis panel.
 type ChatPanelModel struct {
 	viewport  viewport.Model
@@ -79,6 +89,7 @@ type ChatPanelModel struct {
 	inlineComments  []github.InlineComment
 	commentsLoading bool
 	commentsError   string
+	commentPosting  bool // true while posting a comment
 }
 
 type chatMessage struct {
@@ -108,13 +119,28 @@ func (m ChatPanelModel) Update(msg tea.Msg) (ChatPanelModel, tea.Cmd) {
 				m.textInput.Blur()
 				return m, func() tea.Msg { return ModeChangedMsg{Mode: ChatModeNormal} }
 			case key.Matches(msg, ChatKeys.Send):
-				if m.textInput.Value() != "" && !m.isWaiting {
-					userMsg := m.textInput.Value()
+				if m.textInput.Value() == "" {
+					return m, nil
+				}
+				userMsg := m.textInput.Value()
+				m.textInput.Reset()
+
+				if m.activeTab == ChatTabComments {
+					if !m.commentPosting {
+						m.commentPosting = true
+						m.refreshViewport()
+						m.viewport.GotoBottom()
+						return m, func() tea.Msg { return CommentPostMsg{Body: userMsg} }
+					}
+					return m, nil
+				}
+
+				// Chat tab send
+				if !m.isWaiting {
 					m.messages = append(m.messages, chatMessage{
 						role:    "user",
 						content: userMsg,
 					})
-					m.textInput.Reset()
 					m.isWaiting = true
 					m.chatError = ""
 					m.refreshViewport()
@@ -144,10 +170,15 @@ func (m ChatPanelModel) Update(msg tea.Msg) (ChatPanelModel, tea.Cmd) {
 			m.refreshViewport()
 			return m, nil
 		case msg.String() == "enter":
-			if m.activeTab != ChatTabChat {
+			if m.activeTab == ChatTabAnalysis {
 				return m, nil
 			}
 			m.chatMode = ChatModeInsert
+			if m.activeTab == ChatTabComments {
+				m.textInput.Placeholder = "Write a comment..."
+			} else {
+				m.textInput.Placeholder = "Ask about this PR..."
+			}
 			m.textInput.Focus()
 			return m, func() tea.Msg { return ModeChangedMsg{Mode: ChatModeInsert} }
 		}
@@ -282,12 +313,23 @@ func (m *ChatPanelModel) SetCommentsError(err string) {
 	m.refreshViewport()
 }
 
+// SetCommentPosted clears the posting state after a comment post attempt.
+func (m *ChatPanelModel) SetCommentPosted(err error) {
+	m.commentPosting = false
+	if err != nil {
+		m.commentsError = "Failed to post comment: " + err.Error()
+	}
+	m.refreshViewport()
+	m.viewport.GotoBottom()
+}
+
 // ClearComments resets comments state for a new PR.
 func (m *ChatPanelModel) ClearComments() {
 	m.comments = nil
 	m.inlineComments = nil
 	m.commentsLoading = false
 	m.commentsError = ""
+	m.commentPosting = false
 	m.refreshViewport()
 }
 
@@ -663,14 +705,14 @@ func severityStyle(severity string) lipgloss.Style {
 }
 
 func (m ChatPanelModel) renderInput() string {
-	// Non-chat tabs don't have text input
-	if m.activeTab != ChatTabChat {
+	// Analysis tab doesn't have text input
+	if m.activeTab == ChatTabAnalysis {
 		return lipgloss.NewStyle().
 			Foreground(lipgloss.Color("240")).
 			Render("> ") + lipgloss.NewStyle().
 			Foreground(lipgloss.Color("240")).
 			Italic(true).
-			Render("switch to Chat tab to type")
+			Render("press 'a' to analyze")
 	}
 
 	var prefix string
@@ -686,7 +728,13 @@ func (m ChatPanelModel) renderInput() string {
 	}
 
 	if m.chatMode == ChatModeInsert {
-		if m.isWaiting {
+		if m.activeTab == ChatTabComments && m.commentPosting {
+			return prefix + lipgloss.NewStyle().
+				Foreground(lipgloss.Color("244")).
+				Italic(true).
+				Render("posting comment...")
+		}
+		if m.activeTab == ChatTabChat && m.isWaiting {
 			return prefix + lipgloss.NewStyle().
 				Foreground(lipgloss.Color("244")).
 				Italic(true).
@@ -694,10 +742,15 @@ func (m ChatPanelModel) renderInput() string {
 		}
 		return prefix + m.textInput.View()
 	}
+
+	hint := "press Enter to chat"
+	if m.activeTab == ChatTabComments {
+		hint = "press Enter to comment"
+	}
 	return prefix + lipgloss.NewStyle().
 		Foreground(lipgloss.Color("240")).
 		Italic(true).
-		Render("press Enter to chat")
+		Render(hint)
 }
 
 // renderMarkdown renders markdown text with glamour for terminal display.

@@ -316,6 +316,17 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.chatPanel.SetAnalysisError(msg.Err.Error())
 		return m, nil
 
+	case CommentPostMsg:
+		return m.handleCommentPost(msg.Body)
+
+	case CommentPostedMsg:
+		m.chatPanel.SetCommentPosted(msg.Err)
+		if msg.Err == nil && m.ghClient != nil && m.selectedPR != nil {
+			// Refresh comments after successful post
+			return m, fetchCommentsCmd(m.ghClient, m.selectedPR.Owner, m.selectedPR.Repo, m.selectedPR.Number)
+		}
+		return m, nil
+
 	case ChatSendMsg:
 		return m.handleChatSend(msg.Message)
 
@@ -770,6 +781,25 @@ func (m App) handleChatSend(message string) (tea.Model, tea.Cmd) {
 
 	m.streamChan = ch
 	return m, listenForChatStream(ch)
+}
+
+// handleCommentPost validates state and posts a comment on the selected PR.
+func (m App) handleCommentPost(body string) (tea.Model, tea.Cmd) {
+	if m.selectedPR == nil {
+		m.chatPanel.SetCommentPosted(fmt.Errorf("no PR selected"))
+		return m, nil
+	}
+	if m.ghClient == nil {
+		m.chatPanel.SetCommentPosted(fmt.Errorf("GitHub client not ready"))
+		return m, nil
+	}
+
+	pr := m.selectedPR
+	client := m.ghClient
+	return m, func() tea.Msg {
+		err := client.PostComment(context.Background(), pr.Owner, pr.Repo, pr.Number, body)
+		return CommentPostedMsg{Err: err}
+	}
 }
 
 // listenForChatStream returns a tea.Cmd that reads the next message from the streaming channel.
