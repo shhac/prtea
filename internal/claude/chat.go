@@ -2,7 +2,6 @@ package claude
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -38,58 +37,6 @@ type ChatInput struct {
 	PRNumber  int
 	PRContext string // PR metadata + diff content embedded as text
 	Message   string
-}
-
-// Chat sends a message to Claude about a PR and returns the response.
-// Conversation history is maintained per PR.
-func (cs *ChatService) Chat(ctx context.Context, input ChatInput) (string, error) {
-	ctx, cancel := context.WithTimeout(ctx, cs.timeout)
-	defer cancel()
-
-	session := cs.getOrCreateSession(input)
-	prompt := buildChatPrompt(session, input.Message)
-
-	args := []string{
-		"-p", prompt,
-		"--max-turns", "3",
-	}
-
-	cmd := exec.CommandContext(ctx, cs.claudePath, args...)
-	cmd.Stdin = nil
-
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	if err := cmd.Start(); err != nil {
-		if isNotFound(err) {
-			return "", fmt.Errorf("claude CLI not found at %s: ensure 'claude' is installed", cs.claudePath)
-		}
-		return "", fmt.Errorf("failed to start claude: %w", err)
-	}
-
-	if err := cmd.Wait(); err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			return "", fmt.Errorf("claude chat timed out after %s", cs.timeout)
-		}
-		errMsg := stderr.String()
-		if len(errMsg) > 300 {
-			errMsg = errMsg[:300]
-		}
-		return "", fmt.Errorf("claude chat exited with error: %w\nstderr: %s", err, errMsg)
-	}
-
-	response := strings.TrimSpace(stdout.String())
-
-	// Append exchange to session history
-	cs.mu.Lock()
-	session.Messages = append(session.Messages,
-		ChatMessage{Role: "user", Content: input.Message},
-		ChatMessage{Role: "assistant", Content: response},
-	)
-	cs.mu.Unlock()
-
-	return response, nil
 }
 
 // ClearSession removes the chat history for a PR.
