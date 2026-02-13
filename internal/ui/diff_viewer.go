@@ -72,10 +72,11 @@ type DiffViewerModel struct {
 	prNumber       int
 	err            error
 
-	// Hunk selection
-	hunks         []DiffHunk    // all parsed hunks across all files
-	hunkOffsets   []int         // viewport line offset where each hunk starts
-	selectedHunks map[int]bool  // hunk index → selected
+	// Hunk navigation and selection
+	hunks          []DiffHunk   // all parsed hunks across all files
+	hunkOffsets    []int        // viewport line offset where each hunk starts
+	focusedHunkIdx int          // explicitly tracked focused hunk
+	selectedHunks  map[int]bool // hunk index → selected
 
 	// PR info data (for PR Info tab)
 	prTitle   string
@@ -108,46 +109,48 @@ func (m DiffViewerModel) Update(msg tea.Msg) (DiffViewerModel, tea.Cmd) {
 				m.refreshContent()
 			}
 			return m, nil
-		case key.Matches(msg, DiffViewerKeys.NextFile):
-			if len(m.fileOffsets) > 0 {
-				currentY := m.viewport.YOffset
-				for i, offset := range m.fileOffsets {
-					if offset > currentY {
-						m.currentFileIdx = i
-						m.viewport.SetYOffset(offset)
-						break
-					}
+		case key.Matches(msg, DiffViewerKeys.NextHunk):
+			if m.activeTab == TabDiff && len(m.hunks) > 0 {
+				if m.focusedHunkIdx < len(m.hunks)-1 {
+					m.focusedHunkIdx++
 				}
+				m.scrollToFocusedHunk()
+				m.refreshContent()
 			}
 			return m, nil
-		case key.Matches(msg, DiffViewerKeys.PrevFile):
-			if len(m.fileOffsets) > 0 {
-				currentY := m.viewport.YOffset
-				for i := len(m.fileOffsets) - 1; i >= 0; i-- {
-					if m.fileOffsets[i] < currentY {
-						m.currentFileIdx = i
-						m.viewport.SetYOffset(m.fileOffsets[i])
-						break
-					}
+		case key.Matches(msg, DiffViewerKeys.PrevHunk):
+			if m.activeTab == TabDiff && len(m.hunks) > 0 {
+				if m.focusedHunkIdx > 0 {
+					m.focusedHunkIdx--
 				}
+				m.scrollToFocusedHunk()
+				m.refreshContent()
 			}
 			return m, nil
 		case key.Matches(msg, DiffViewerKeys.HalfDown):
 			m.viewport.HalfViewDown()
+			m.syncFocusToScroll()
+			m.refreshContent()
 			return m, nil
 		case key.Matches(msg, DiffViewerKeys.HalfUp):
 			m.viewport.HalfViewUp()
+			m.syncFocusToScroll()
+			m.refreshContent()
 			return m, nil
 		case key.Matches(msg, DiffViewerKeys.Top):
 			m.viewport.GotoTop()
+			m.syncFocusToScroll()
+			m.refreshContent()
 			return m, nil
 		case key.Matches(msg, DiffViewerKeys.Bottom):
 			m.viewport.GotoBottom()
+			m.syncFocusToScroll()
+			m.refreshContent()
 			return m, nil
 		case key.Matches(msg, DiffViewerKeys.SelectHunk):
 			if m.activeTab == TabDiff && len(m.hunks) > 0 {
-				idx := m.currentHunkIndex()
-				if idx >= 0 {
+				idx := m.focusedHunkIdx
+				if idx >= 0 && idx < len(m.hunks) {
 					if m.selectedHunks == nil {
 						m.selectedHunks = make(map[int]bool)
 					}
@@ -162,7 +165,7 @@ func (m DiffViewerModel) Update(msg tea.Msg) (DiffViewerModel, tea.Cmd) {
 			return m, nil
 		case key.Matches(msg, DiffViewerKeys.SelectFileHunks):
 			if m.activeTab == TabDiff && len(m.hunks) > 0 {
-				idx := m.currentHunkIndex()
+				idx := m.focusedHunkIdx
 				if idx >= 0 && idx < len(m.hunks) {
 					if m.selectedHunks == nil {
 						m.selectedHunks = make(map[int]bool)
@@ -198,7 +201,12 @@ func (m DiffViewerModel) Update(msg tea.Msg) (DiffViewerModel, tea.Cmd) {
 	}
 
 	var cmd tea.Cmd
+	oldFocus := m.focusedHunkIdx
 	m.viewport, cmd = m.viewport.Update(msg)
+	m.syncFocusToScroll()
+	if m.focusedHunkIdx != oldFocus {
+		m.refreshContent()
+	}
 	return m, cmd
 }
 
@@ -237,6 +245,7 @@ func (m *DiffViewerModel) SetLoading(prNumber int) {
 	m.fileOffsets = nil
 	m.hunks = nil
 	m.hunkOffsets = nil
+	m.focusedHunkIdx = 0
 	m.selectedHunks = nil
 	m.currentFileIdx = 0
 	m.err = nil
@@ -254,6 +263,7 @@ func (m *DiffViewerModel) SetDiff(files []github.PRFile) {
 	m.files = files
 	m.err = nil
 	m.currentFileIdx = 0
+	m.focusedHunkIdx = 0
 	m.selectedHunks = nil
 	m.refreshContent()
 	m.viewport.GotoTop()
@@ -499,6 +509,8 @@ func (m *DiffViewerModel) renderRealDiff() string {
 			m.hunkOffsets = append(m.hunkOffsets, lineCount)
 			selected := m.selectedHunks[globalHunkIdx]
 
+			isFocused := globalHunkIdx == m.focusedHunkIdx
+
 			for _, line := range hunk.Lines {
 				if line == "" {
 					b.WriteString("\n")
@@ -510,9 +522,18 @@ func (m *DiffViewerModel) renderRealDiff() string {
 				displayLine := line
 				switch {
 				case strings.HasPrefix(line, "@@"):
-					style = diffHunkHeaderStyle
-					if selected {
-						displayLine = "✓ " + line
+					if isFocused {
+						style = diffFocusedHunkStyle
+						if selected {
+							displayLine = "✓ " + line
+						} else {
+							displayLine = "▶ " + line
+						}
+					} else {
+						style = diffHunkHeaderStyle
+						if selected {
+							displayLine = "✓ " + line
+						}
 					}
 				case strings.HasPrefix(line, "+"):
 					style = diffAddedStyle
@@ -555,21 +576,36 @@ func fileStatusLabel(f github.PRFile) string {
 	}
 }
 
-// currentHunkIndex returns the index of the hunk at or before the current viewport position.
-func (m DiffViewerModel) currentHunkIndex() int {
+// syncFocusToScroll updates focusedHunkIdx to match the current viewport scroll position.
+// It picks the last hunk whose header is in the top third of the viewport.
+func (m *DiffViewerModel) syncFocusToScroll() {
 	if len(m.hunkOffsets) == 0 {
-		return -1
+		return
 	}
-	y := m.viewport.YOffset
+	ref := m.viewport.YOffset + m.viewport.Height/3
 	idx := 0
 	for i, offset := range m.hunkOffsets {
-		if offset <= y {
+		if offset <= ref {
 			idx = i
 		} else {
 			break
 		}
 	}
-	return idx
+	m.focusedHunkIdx = idx
+}
+
+// scrollToFocusedHunk scrolls the viewport so the focused hunk's header is visible
+// near the top of the viewport.
+func (m *DiffViewerModel) scrollToFocusedHunk() {
+	if m.focusedHunkIdx < 0 || m.focusedHunkIdx >= len(m.hunkOffsets) {
+		return
+	}
+	offset := m.hunkOffsets[m.focusedHunkIdx]
+	target := offset - 2 // small margin above the @@ header
+	if target < 0 {
+		target = 0
+	}
+	m.viewport.SetYOffset(target)
 }
 
 // GetSelectedHunkContent returns formatted diff content for only the selected hunks.

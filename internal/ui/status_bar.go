@@ -62,7 +62,7 @@ func (m StatusBarModel) keyHints() string {
 	case PanelLeft:
 		return " [h/l]tab [j/k]move [Enter]select [Tab]panel [z]zoom [?]help"
 	case PanelCenter:
-		return " [h/l]tab [j/k]scroll [n/N]file [s]hunk [S]file [c]clear [Tab]panel [z]zoom [?]help"
+		return " [h/l]tab [j/k]scroll [n/N]hunk [s]select [S]file [c]clear [Tab]panel [z]zoom [?]help"
 	case PanelRight:
 		return " [h/l]tab [j/k]scroll [Enter]insert [Tab]panel [z]zoom [?]help"
 	default:

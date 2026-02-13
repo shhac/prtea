@@ -209,7 +209,7 @@ func (m HelpOverlayModel) renderHelpContent() string {
 				{"h / l", "Prev/next tab"},
 				{"j / k", "Scroll up/down"},
 				{"Ctrl+d / Ctrl+u", "Half page down/up"},
-				{"n / N", "Next/prev file"},
+				{"n / N", "Next/prev hunk"},
 				{"g / G", "Jump to top/bottom"},
 				{"s", "Select/deselect hunk"},
 				{"S", "Select/deselect file hunks"},

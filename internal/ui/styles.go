@@ -43,6 +43,9 @@ var (
 // Selected hunk highlight
 var diffSelectedBg = lipgloss.Color("236")
 
+// Focused hunk indicator
+var diffFocusedHunkStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("99")).Bold(true)
+
 // PR list styles
 var (
 	prTitleStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))

@@ -122,8 +122,8 @@ type DiffViewerKeyMap struct {
 	Down            key.Binding
 	HalfDown        key.Binding
 	HalfUp          key.Binding
-	NextFile        key.Binding
-	PrevFile        key.Binding
+	NextHunk        key.Binding
+	PrevHunk        key.Binding
 	Top             key.Binding
 	Bottom          key.Binding
 	PrevTab         key.Binding
@@ -150,13 +150,13 @@ var DiffViewerKeys = DiffViewerKeyMap{
 		key.WithKeys("ctrl+u"),
 		key.WithHelp("Ctrl+u", "half page up"),
 	),
-	NextFile: key.NewBinding(
+	NextHunk: key.NewBinding(
 		key.WithKeys("n"),
-		key.WithHelp("n", "next file"),
+		key.WithHelp("n", "next hunk"),
 	),
-	PrevFile: key.NewBinding(
+	PrevHunk: key.NewBinding(
 		key.WithKeys("N"),
-		key.WithHelp("N", "prev file"),
+		key.WithHelp("N", "prev hunk"),
 	),
 	Top: key.NewBinding(
 		key.WithKeys("g"),
