@@ -95,8 +95,8 @@ var PRListKeys = PRListKeyMap{
 		key.WithHelp("j", "down"),
 	),
 	Select: key.NewBinding(
-		key.WithKeys("enter"),
-		key.WithHelp("Enter", "select"),
+		key.WithKeys("enter", " "),
+		key.WithHelp("Enter/Space", "select"),
 	),
 	Filter: key.NewBinding(
 		key.WithKeys("/"),
@@ -175,8 +175,8 @@ var DiffViewerKeys = DiffViewerKeyMap{
 		key.WithHelp("l", "next tab"),
 	),
 	SelectHunk: key.NewBinding(
-		key.WithKeys("s"),
-		key.WithHelp("s", "select hunk"),
+		key.WithKeys("s", " ", "enter"),
+		key.WithHelp("s/Space", "select hunk"),
 	),
 	SelectFileHunks: key.NewBinding(
 		key.WithKeys("S"),

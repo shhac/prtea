@@ -107,13 +107,14 @@ func (m HelpOverlayModel) View() string {
 	titleLine := lipgloss.PlaceHorizontal(innerW, lipgloss.Center, title)
 	footerLine := lipgloss.PlaceHorizontal(innerW, lipgloss.Center, footer)
 
-	box := lipgloss.JoinVertical(lipgloss.Left,
-		titleLine,
-		"",
-		content,
-		"",
-		footerLine,
-	)
+	boxParts := []string{titleLine, "", content}
+	if indicator := scrollIndicator(m.viewport, innerW); indicator != "" {
+		boxParts = append(boxParts, indicator)
+	} else {
+		boxParts = append(boxParts, "")
+	}
+	boxParts = append(boxParts, footerLine)
+	box := lipgloss.JoinVertical(lipgloss.Left, boxParts...)
 
 	overlayStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
@@ -196,7 +197,7 @@ func (m HelpOverlayModel) renderHelpContent() string {
 			keys: []helpEntry{
 				{"h / l", "Prev/next tab"},
 				{"j / k", "Move up/down"},
-				{"Enter", "Select PR"},
+				{"Enter / Space", "Select PR"},
 				{"/", "Filter"},
 				{"r", "Refresh"},
 			},
@@ -211,7 +212,7 @@ func (m HelpOverlayModel) renderHelpContent() string {
 				{"Ctrl+d / Ctrl+u", "Half page down/up"},
 				{"n / N", "Next/prev hunk"},
 				{"g / G", "Jump to top/bottom"},
-				{"s", "Select/deselect hunk"},
+				{"s / Space / Enter", "Select/deselect hunk"},
 				{"S", "Select/deselect file hunks"},
 				{"c", "Clear selection"},
 			},

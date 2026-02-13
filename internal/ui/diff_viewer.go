@@ -147,6 +147,39 @@ func (m DiffViewerModel) Update(msg tea.Msg) (DiffViewerModel, tea.Cmd) {
 			m.syncFocusToScroll()
 			m.refreshContent()
 			return m, nil
+		case key.Matches(msg, DiffViewerKeys.Down):
+			if m.activeTab == TabDiff && m.viewport.AtBottom() && len(m.hunks) > 0 && m.focusedHunkIdx < len(m.hunks)-1 {
+				// At bottom of scroll: advance to next hunk
+				m.focusedHunkIdx++
+				m.scrollToFocusedHunk()
+				m.refreshContent()
+				return m, nil
+			}
+			var cmd tea.Cmd
+			m.viewport, cmd = m.viewport.Update(msg)
+			if m.activeTab == TabDiff {
+				m.syncFocusToScroll()
+			}
+			m.refreshContent()
+			return m, cmd
+		case key.Matches(msg, DiffViewerKeys.Up):
+			if m.activeTab == TabDiff && len(m.hunks) > 0 && m.focusedHunkIdx > 0 {
+				prevOffset := m.hunkOffsets[m.focusedHunkIdx-1]
+				// If scrolling up 1 line would make previous hunk's header visible
+				if prevOffset >= m.viewport.YOffset-1 {
+					m.focusedHunkIdx--
+					m.scrollToFocusedHunk()
+					m.refreshContent()
+					return m, nil
+				}
+			}
+			var cmd tea.Cmd
+			m.viewport, cmd = m.viewport.Update(msg)
+			if m.activeTab == TabDiff {
+				m.syncFocusToScroll()
+			}
+			m.refreshContent()
+			return m, cmd
 		case key.Matches(msg, DiffViewerKeys.SelectHunk):
 			if m.activeTab == TabDiff && len(m.hunks) > 0 {
 				idx := m.focusedHunkIdx
@@ -161,8 +194,9 @@ func (m DiffViewerModel) Update(msg tea.Msg) (DiffViewerModel, tea.Cmd) {
 					}
 					m.refreshContent()
 				}
+				return m, nil
 			}
-			return m, nil
+			// Non-diff tabs: fall through to viewport (Space → page down)
 		case key.Matches(msg, DiffViewerKeys.SelectFileHunks):
 			if m.activeTab == TabDiff && len(m.hunks) > 0 {
 				idx := m.focusedHunkIdx
@@ -351,7 +385,12 @@ func (m DiffViewerModel) View() string {
 		content = "Loading..."
 	}
 
-	inner := lipgloss.JoinVertical(lipgloss.Left, header, content)
+	parts := []string{header, content}
+	if indicator := scrollIndicator(m.viewport, m.width-4); indicator != "" {
+		parts = append(parts, indicator)
+	}
+
+	inner := lipgloss.JoinVertical(lipgloss.Left, parts...)
 	style := panelStyle(m.focused, false, m.width-2, m.height-2)
 	return style.Render(inner)
 }
