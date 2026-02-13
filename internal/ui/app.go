@@ -63,6 +63,14 @@ type PRDetailLoadedMsg struct {
 	Err      error
 }
 
+// CommentsLoadedMsg is sent when PR comments have been fetched.
+type CommentsLoadedMsg struct {
+	PRNumber       int
+	Comments       []github.Comment
+	InlineComments []github.InlineComment
+	Err            error
+}
+
 // AnalysisCompleteMsg is sent when Claude analysis finishes successfully.
 type AnalysisCompleteMsg struct {
 	PRNumber int
@@ -232,15 +240,18 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.diffFiles = nil                  // clear old diff data
 		m.chatPanel.SetAnalysisResult(nil) // clear old analysis
 		m.chatPanel.ClearChat()            // clear old chat
+		m.chatPanel.ClearComments()        // clear old comments
 		if m.chatService != nil {
 			m.chatService.ClearSession(msg.Owner, msg.Repo, msg.Number)
 		}
 		m.statusBar.SetSelectedPR(msg.Number)
 		m.diffViewer.SetLoading(msg.Number)
 		if m.ghClient != nil {
+			m.chatPanel.SetCommentsLoading()
 			return m, tea.Batch(
 				fetchDiffCmd(m.ghClient, msg.Owner, msg.Repo, msg.Number),
 				fetchPRDetailCmd(m.ghClient, msg.Owner, msg.Repo, msg.Number),
+				fetchCommentsCmd(m.ghClient, msg.Owner, msg.Repo, msg.Number),
 			)
 		}
 		return m, nil
@@ -272,6 +283,18 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				msg.Detail.Author.Login,
 				msg.Detail.HTMLURL,
 			)
+		}
+		return m, nil
+
+	case CommentsLoadedMsg:
+		// Race guard: only apply if this is for the currently selected PR
+		if m.selectedPR == nil || msg.PRNumber != m.selectedPR.Number {
+			return m, nil
+		}
+		if msg.Err != nil {
+			m.chatPanel.SetCommentsError(msg.Err.Error())
+		} else {
+			m.chatPanel.SetComments(msg.Comments, msg.InlineComments)
 		}
 		return m, nil
 
@@ -517,6 +540,30 @@ func fetchPRDetailCmd(client *github.Client, owner, repo string, number int) tea
 			return PRDetailLoadedMsg{PRNumber: number, Err: err}
 		}
 		return PRDetailLoadedMsg{PRNumber: number, Detail: detail}
+	}
+}
+
+// fetchCommentsCmd returns a command that fetches PR comments (issue-level + inline).
+func fetchCommentsCmd(client *github.Client, owner, repo string, number int) tea.Cmd {
+	return func() tea.Msg {
+		ctx := context.Background()
+
+		comments, commErr := client.GetComments(ctx, owner, repo, number)
+		inline, inlineErr := client.GetInlineComments(ctx, owner, repo, number)
+
+		// Report first error if any
+		if commErr != nil {
+			return CommentsLoadedMsg{PRNumber: number, Err: commErr}
+		}
+		if inlineErr != nil {
+			return CommentsLoadedMsg{PRNumber: number, Err: inlineErr}
+		}
+
+		return CommentsLoadedMsg{
+			PRNumber:       number,
+			Comments:       comments,
+			InlineComments: inline,
+		}
 	}
 }
 

@@ -95,6 +95,7 @@ func (cs *ChatService) ChatStream(ctx context.Context, input ChatInput, onChunk 
 	args := []string{
 		"-p", prompt,
 		"--output-format", "stream-json",
+		"--verbose",
 		"--max-turns", "3",
 	}
 

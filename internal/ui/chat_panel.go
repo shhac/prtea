@@ -10,6 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/shhac/prtea/internal/claude"
+	"github.com/shhac/prtea/internal/github"
 )
 
 // ChatMode represents normal/insert mode for the chat panel.
@@ -71,6 +72,12 @@ type ChatPanelModel struct {
 	analysisResult  *claude.AnalysisResult
 	analysisLoading bool
 	analysisError   string
+
+	// Comments state
+	comments        []github.Comment
+	inlineComments  []github.InlineComment
+	commentsLoading bool
+	commentsError   string
 }
 
 type chatMessage struct {
@@ -249,6 +256,40 @@ func (m *ChatPanelModel) ClearChat() {
 	m.refreshViewport()
 }
 
+// SetCommentsLoading puts the comments tab into loading state.
+func (m *ChatPanelModel) SetCommentsLoading() {
+	m.commentsLoading = true
+	m.commentsError = ""
+	m.comments = nil
+	m.inlineComments = nil
+	m.refreshViewport()
+}
+
+// SetComments sets the comments data and clears loading state.
+func (m *ChatPanelModel) SetComments(comments []github.Comment, inline []github.InlineComment) {
+	m.comments = comments
+	m.inlineComments = inline
+	m.commentsLoading = false
+	m.commentsError = ""
+	m.refreshViewport()
+}
+
+// SetCommentsError sets an error message on the comments tab.
+func (m *ChatPanelModel) SetCommentsError(err string) {
+	m.commentsError = err
+	m.commentsLoading = false
+	m.refreshViewport()
+}
+
+// ClearComments resets comments state for a new PR.
+func (m *ChatPanelModel) ClearComments() {
+	m.comments = nil
+	m.inlineComments = nil
+	m.commentsLoading = false
+	m.commentsError = ""
+	m.refreshViewport()
+}
+
 func (m *ChatPanelModel) refreshViewport() {
 	if !m.ready {
 		return
@@ -257,6 +298,8 @@ func (m *ChatPanelModel) refreshViewport() {
 	switch m.activeTab {
 	case ChatTabAnalysis:
 		content = m.renderAnalysis()
+	case ChatTabComments:
+		content = m.renderComments()
 	default:
 		content = m.renderMessages()
 	}
@@ -405,6 +448,88 @@ func (m ChatPanelModel) renderAnalysis() string {
 			Render("Press 'a' to analyze this PR with Claude.")
 	}
 	return m.renderAnalysisResult()
+}
+
+func (m ChatPanelModel) renderComments() string {
+	if m.commentsLoading {
+		return lipgloss.NewStyle().
+			Foreground(lipgloss.Color("244")).
+			Padding(1, 0).
+			Render("Loading comments...")
+	}
+	if m.commentsError != "" {
+		return lipgloss.NewStyle().
+			Foreground(lipgloss.Color("196")).
+			Bold(true).
+			Padding(1, 0).
+			Render(m.commentsError)
+	}
+	if len(m.comments) == 0 && len(m.inlineComments) == 0 {
+		return lipgloss.NewStyle().
+			Foreground(lipgloss.Color("244")).
+			Padding(1, 0).
+			Render("No comments on this PR.")
+	}
+
+	innerWidth := m.width - 6
+	if innerWidth < 10 {
+		innerWidth = 10
+	}
+
+	sectionStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("33"))
+	authorStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("220"))
+	dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+	fileStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("42"))
+
+	var b strings.Builder
+
+	// Issue-level comments
+	if len(m.comments) > 0 {
+		b.WriteString(sectionStyle.Render(fmt.Sprintf("Conversation (%d)", len(m.comments))))
+		b.WriteString("\n")
+		for i, c := range m.comments {
+			if i > 0 {
+				b.WriteString("\n")
+			}
+			b.WriteString(authorStyle.Render(c.Author.Login))
+			b.WriteString(dimStyle.Render(" · " + c.CreatedAt.Format("Jan 2 15:04")))
+			b.WriteString("\n")
+			b.WriteString(wordWrap(c.Body, innerWidth))
+			b.WriteString("\n")
+		}
+	}
+
+	// Inline review comments
+	if len(m.inlineComments) > 0 {
+		if len(m.comments) > 0 {
+			b.WriteString("\n")
+		}
+		b.WriteString(sectionStyle.Render(fmt.Sprintf("Review Comments (%d)", len(m.inlineComments))))
+		b.WriteString("\n")
+		for i, c := range m.inlineComments {
+			if i > 0 {
+				b.WriteString("\n")
+			}
+			b.WriteString(authorStyle.Render(c.Author.Login))
+			b.WriteString(dimStyle.Render(" · " + c.CreatedAt.Format("Jan 2 15:04")))
+			if c.Path != "" {
+				b.WriteString(" ")
+				label := c.Path
+				if c.Line > 0 {
+					label = fmt.Sprintf("%s:%d", c.Path, c.Line)
+				}
+				b.WriteString(fileStyle.Render(label))
+			}
+			if c.Outdated {
+				b.WriteString(dimStyle.Render(" (outdated)"))
+			}
+			b.WriteString("\n")
+			b.WriteString(wordWrap(c.Body, innerWidth))
+			b.WriteString("\n")
+		}
+	}
+
+	return b.String()
 }
 
 func (m ChatPanelModel) renderAnalysisResult() string {
