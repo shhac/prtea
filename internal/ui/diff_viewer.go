@@ -156,9 +156,14 @@ func (m DiffViewerModel) Update(msg tea.Msg) (DiffViewerModel, tea.Cmd) {
 				return m, nil
 			}
 			var cmd tea.Cmd
+			oldFocus := m.focusedHunkIdx
 			m.viewport, cmd = m.viewport.Update(msg)
 			if m.activeTab == TabDiff {
 				m.syncFocusToScroll()
+				// When scrolling down, don't allow focus to jump backward
+				if m.focusedHunkIdx < oldFocus {
+					m.focusedHunkIdx = oldFocus
+				}
 			}
 			m.refreshContent()
 			return m, cmd
@@ -174,9 +179,14 @@ func (m DiffViewerModel) Update(msg tea.Msg) (DiffViewerModel, tea.Cmd) {
 				}
 			}
 			var cmd tea.Cmd
+			oldFocus := m.focusedHunkIdx
 			m.viewport, cmd = m.viewport.Update(msg)
 			if m.activeTab == TabDiff {
 				m.syncFocusToScroll()
+				// When scrolling up, don't allow focus to jump forward
+				if m.focusedHunkIdx > oldFocus {
+					m.focusedHunkIdx = oldFocus
+				}
 			}
 			m.refreshContent()
 			return m, cmd
