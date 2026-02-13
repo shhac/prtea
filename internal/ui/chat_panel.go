@@ -360,7 +360,12 @@ func (m ChatPanelModel) View() string {
 	}
 
 	input := m.renderInput()
-	inner := lipgloss.JoinVertical(lipgloss.Left, header, content, input)
+	parts := []string{header, content}
+	if indicator := scrollIndicator(m.viewport, m.width-4); indicator != "" {
+		parts = append(parts, indicator)
+	}
+	parts = append(parts, input)
+	inner := lipgloss.JoinVertical(lipgloss.Left, parts...)
 
 	isInsert := m.chatMode == ChatModeInsert
 	style := panelStyle(m.focused, isInsert, m.width-2, m.height-2)

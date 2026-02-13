@@ -1,6 +1,11 @@
 package ui
 
-import "github.com/charmbracelet/lipgloss"
+import (
+	"fmt"
+
+	"github.com/charmbracelet/bubbles/viewport"
+	"github.com/charmbracelet/lipgloss"
+)
 
 // Panel border colors
 var (
@@ -109,4 +114,28 @@ func insertModeBadge() string {
 		Background(lipgloss.Color("42")).
 		Padding(0, 1).
 		Render("INSERT")
+}
+
+// Scroll indicator style
+var scrollIndicatorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+
+// scrollIndicator returns a scroll position line for a viewport.
+// Returns "" if all content fits within the viewport (no scrolling needed).
+func scrollIndicator(vp viewport.Model, width int) string {
+	if vp.TotalLineCount() <= vp.Height {
+		return ""
+	}
+	pct := int(vp.ScrollPercent() * 100)
+	var label string
+	switch {
+	case vp.AtTop():
+		label = fmt.Sprintf("%d%% ▼", pct)
+	case vp.AtBottom():
+		label = fmt.Sprintf("▲ %d%%", pct)
+	default:
+		label = fmt.Sprintf("▲ %d%% ▼", pct)
+	}
+	return scrollIndicatorStyle.Render(
+		lipgloss.PlaceHorizontal(width, lipgloss.Right, label),
+	)
 }
