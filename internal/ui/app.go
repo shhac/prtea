@@ -2,6 +2,8 @@ package ui
 
 import (
 	"context"
+	"os/exec"
+	"runtime"
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/list"
@@ -40,6 +42,14 @@ type DiffLoadedMsg struct {
 	Err      error
 }
 
+// SelectedPR tracks the currently selected PR's metadata for global actions.
+type SelectedPR struct {
+	Owner   string
+	Repo    string
+	Number  int
+	HTMLURL string
+}
+
 // App is the root Bubbletea model for the PR dashboard.
 type App struct {
 	// Panel models
@@ -53,6 +63,9 @@ type App struct {
 
 	// GitHub client (nil until GHClientReadyMsg)
 	ghClient *github.Client
+
+	// Currently selected PR (nil until a PR is selected)
+	selectedPR *SelectedPR
 
 	// Layout state
 	focused        Panel
@@ -145,6 +158,12 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case PRSelectedMsg:
+		m.selectedPR = &SelectedPR{
+			Owner:   msg.Owner,
+			Repo:    msg.Repo,
+			Number:  msg.Number,
+			HTMLURL: msg.HTMLURL,
+		}
 		m.statusBar.SetSelectedPR(msg.Number)
 		m.diffViewer.SetLoading(msg.Number)
 		if m.ghClient != nil {
@@ -240,6 +259,12 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case key.Matches(msg, GlobalKeys.Zoom):
 			m.toggleZoom()
+			return m, nil
+
+		case key.Matches(msg, GlobalKeys.OpenBrowser):
+			if m.selectedPR != nil && m.selectedPR.HTMLURL != "" {
+				return m, openBrowserCmd(m.selectedPR.HTMLURL)
+			}
 			return m, nil
 		}
 
@@ -344,6 +369,23 @@ func fetchDiffCmd(client *github.Client, owner, repo string, number int) tea.Cmd
 			return DiffLoadedMsg{PRNumber: number, Err: err}
 		}
 		return DiffLoadedMsg{PRNumber: number, Files: files}
+	}
+}
+
+// openBrowserCmd returns a command that opens a URL in the default browser.
+func openBrowserCmd(url string) tea.Cmd {
+	return func() tea.Msg {
+		var cmd *exec.Cmd
+		switch runtime.GOOS {
+		case "darwin":
+			cmd = exec.Command("open", url)
+		case "windows":
+			cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
+		default: // linux, freebsd, etc.
+			cmd = exec.Command("xdg-open", url)
+		}
+		_ = cmd.Start()
+		return nil
 	}
 }
 

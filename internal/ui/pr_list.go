@@ -46,9 +46,10 @@ func (i PRItem) Description() string {
 
 // PRSelectedMsg is sent when the user selects a PR.
 type PRSelectedMsg struct {
-	Owner  string
-	Repo   string
-	Number int
+	Owner   string
+	Repo    string
+	Number  int
+	HTMLURL string
 }
 
 // PRRefreshMsg is sent when the user presses `r` to refresh PR data.
@@ -140,9 +141,10 @@ func (m PRListModel) Update(msg tea.Msg) (PRListModel, tea.Cmd) {
 			if item, ok := m.list.SelectedItem().(PRItem); ok {
 				return m, func() tea.Msg {
 					return PRSelectedMsg{
-						Owner:  item.owner,
-						Repo:   item.repo,
-						Number: item.number,
+						Owner:   item.owner,
+						Repo:    item.repo,
+						Number:  item.number,
+						HTMLURL: item.htmlURL,
 					}
 				}
 			}
