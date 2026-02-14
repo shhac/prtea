@@ -25,6 +25,8 @@ Three-panel TUI built with [Bubbletea](https://github.com/charmbracelet/bubblete
 - [GitHub CLI](https://cli.github.com/) (`gh`) — authenticated with `gh auth login`
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (`claude`) — optional, required for AI analysis and chat
 
+For releasing: `gh` CLI and access to the `../homebrew-tap` sibling repo.
+
 ## Installation
 
 ### Homebrew
@@ -172,6 +174,20 @@ go test ./...
 ```
 
 Tests cover pure functions (panel layout, CI status computation, diff parsing, review deduplication) and mock-based GitHub client methods using injectable `CommandRunner`. No external services or `gh` CLI needed for tests.
+
+### Releasing
+
+Releases are done manually via scripts and `gh` CLI. Use the `/release` command in Claude Code, or follow the steps in `.claude/commands/release.md`.
+
+Quick overview:
+
+```bash
+sh scripts/release.sh patch      # bump version, tag, push
+sh scripts/build-release-assets.sh  # cross-compile + tarballs + checksums
+gh release create v<VERSION> release/*.tar.gz release/checksums-sha256.txt --title "v<VERSION>"
+```
+
+Then update the Homebrew formula in `../homebrew-tap/Formula/prtea.rb`.
 
 ### Project Structure
 

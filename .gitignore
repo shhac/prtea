@@ -30,6 +30,7 @@ Thumbs.db
 # Build output
 dist/
 bin/
+release/
 
 # Design docs (local only)
 design-docs/
