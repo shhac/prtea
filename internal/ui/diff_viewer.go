@@ -93,9 +93,13 @@ type DiffViewerModel struct {
 	focusedHunkIdx int          // explicitly tracked focused hunk
 	selectedHunks  map[int]bool // hunk index → selected
 
-	// Cached rendering — avoids re-parsing and re-styling on every scroll
-	cachedLines    []string // per-line styled output (nil = needs full rebuild)
-	hunkLineRanges [][2]int // [start, end) line indices in cachedLines per hunk
+	// Cached rendering — avoids re-parsing and re-styling on every scroll.
+	// On scroll, only the old and new focused hunks are re-rendered (O(hunk_size)
+	// lipgloss calls instead of O(total_lines)).
+	cachedLines       []string     // per-line styled output (nil = needs full rebuild)
+	hunkLineRanges    [][2]int     // [start, end) line indices in cachedLines per hunk
+	lastRenderedFocus int          // focusedHunkIdx at last cache update
+	dirtyHunks        map[int]bool // hunk indices needing re-render in cache
 
 	// PR info data (for PR Info tab)
 	prTitle   string
@@ -238,6 +242,7 @@ func (m DiffViewerModel) Update(msg tea.Msg) (DiffViewerModel, tea.Cmd) {
 					} else {
 						m.selectedHunks[idx] = true
 					}
+					m.markHunkDirty(idx)
 					m.refreshContent()
 				}
 				return m, func() tea.Msg { return HunkSelectedAndAdvanceMsg{} }
@@ -254,6 +259,7 @@ func (m DiffViewerModel) Update(msg tea.Msg) (DiffViewerModel, tea.Cmd) {
 					} else {
 						m.selectedHunks[idx] = true
 					}
+					m.markHunkDirty(idx)
 					m.refreshContent()
 				}
 				return m, nil
@@ -281,6 +287,7 @@ func (m DiffViewerModel) Update(msg tea.Msg) (DiffViewerModel, tea.Cmd) {
 							} else {
 								m.selectedHunks[j] = true
 							}
+							m.markHunkDirty(j)
 						}
 					}
 					m.refreshContent()
@@ -289,6 +296,9 @@ func (m DiffViewerModel) Update(msg tea.Msg) (DiffViewerModel, tea.Cmd) {
 			return m, nil
 		case key.Matches(msg, DiffViewerKeys.ClearSelection):
 			if m.activeTab == TabDiff && len(m.selectedHunks) > 0 {
+				for idx := range m.selectedHunks {
+					m.markHunkDirty(idx)
+				}
 				m.selectedHunks = nil
 				m.refreshContent()
 			}
@@ -346,6 +356,8 @@ func (m *DiffViewerModel) SetLoading(prNumber int) {
 	m.selectedHunks = nil
 	m.cachedLines = nil
 	m.hunkLineRanges = nil
+	m.lastRenderedFocus = 0
+	m.dirtyHunks = nil
 	m.currentFileIdx = 0
 	m.err = nil
 	m.prTitle = ""
@@ -459,7 +471,21 @@ func (m *DiffViewerModel) refreshContent() {
 		return
 	}
 	if m.files != nil {
-		m.buildCachedLines()
+		if m.cachedLines == nil {
+			// Full rebuild needed (new diff, resize, etc.)
+			m.buildCachedLines()
+		} else {
+			// Incremental update: only re-render hunks whose visual state changed
+			if m.focusedHunkIdx != m.lastRenderedFocus {
+				m.markHunkDirty(m.lastRenderedFocus)
+				m.markHunkDirty(m.focusedHunkIdx)
+				m.lastRenderedFocus = m.focusedHunkIdx
+			}
+			for idx := range m.dirtyHunks {
+				m.rerenderHunkInCache(idx)
+			}
+			m.dirtyHunks = nil
+		}
 		m.viewport.SetContent(strings.Join(m.cachedLines, "\n"))
 		return
 	}
@@ -797,6 +823,8 @@ func (m *DiffViewerModel) buildCachedLines() {
 	}
 
 	m.cachedLines = lines
+	m.lastRenderedFocus = m.focusedHunkIdx
+	m.dirtyHunks = nil
 }
 
 // renderHunkLines renders a single hunk's styled output lines.
@@ -861,6 +889,30 @@ func (m *DiffViewerModel) renderHunkLines(hunkIdx int) []string {
 	}
 
 	return lines
+}
+
+// rerenderHunkInCache re-renders a single hunk's styled lines in the cache.
+// The hunk's line count is stable (content doesn't change), so we replace in place.
+func (m *DiffViewerModel) rerenderHunkInCache(hunkIdx int) {
+	if hunkIdx < 0 || hunkIdx >= len(m.hunkLineRanges) {
+		return
+	}
+	r := m.hunkLineRanges[hunkIdx]
+	newLines := m.renderHunkLines(hunkIdx)
+	for i, line := range newLines {
+		m.cachedLines[r[0]+i] = line
+	}
+}
+
+// markHunkDirty marks a hunk for re-rendering on the next refreshContent call.
+func (m *DiffViewerModel) markHunkDirty(idx int) {
+	if idx < 0 || idx >= len(m.hunks) {
+		return
+	}
+	if m.dirtyHunks == nil {
+		m.dirtyHunks = make(map[int]bool)
+	}
+	m.dirtyHunks[idx] = true
 }
 
 func fileStatusLabel(f github.PRFile) string {

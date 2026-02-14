@@ -242,3 +242,122 @@ func TestRenderHunkLines_FocusAndSelection(t *testing.T) {
 		t.Fatalf("got %d lines, want 3", len(lines))
 	}
 }
+
+func TestIncrementalFocusUpdate(t *testing.T) {
+	m := newTestDiffViewer(80, 24)
+	m.files = []github.PRFile{
+		{
+			Filename: "a.go", Status: "modified", Additions: 1, Deletions: 1,
+			Patch: "@@ -1,2 +1,2 @@\n-old\n+new",
+		},
+		{
+			Filename: "b.go", Status: "modified", Additions: 1, Deletions: 0,
+			Patch: "@@ -1,2 +1,3 @@\n ctx\n+added",
+		},
+	}
+	m.parseAllHunks()
+	m.focusedHunkIdx = 0
+	m.buildCachedLines()
+
+	// Snapshot the initial cached lines
+	initialLines := make([]string, len(m.cachedLines))
+	copy(initialLines, m.cachedLines)
+
+	// Simulate focus moving to hunk 1
+	m.focusedHunkIdx = 1
+	m.refreshContent()
+
+	// The cache should still exist (not rebuilt from scratch)
+	if m.cachedLines == nil {
+		t.Fatal("cachedLines should not be nil after incremental update")
+	}
+
+	// Lines outside both hunks should be unchanged
+	// File header for a.go is at fileOffsets[0], which is before any hunk
+	fileHeaderIdx := m.fileOffsets[0]
+	if m.cachedLines[fileHeaderIdx] != initialLines[fileHeaderIdx] {
+		t.Error("file header line should not change during focus update")
+	}
+
+	// lastRenderedFocus should track the new focus
+	if m.lastRenderedFocus != 1 {
+		t.Errorf("lastRenderedFocus = %d, want 1", m.lastRenderedFocus)
+	}
+}
+
+func TestIncrementalSelectionUpdate(t *testing.T) {
+	m := newTestDiffViewer(80, 24)
+	m.files = []github.PRFile{
+		{
+			Filename: "a.go", Status: "modified", Additions: 2, Deletions: 0,
+			Patch: "@@ -1,2 +1,4 @@\n ctx\n+line1\n+line2",
+		},
+	}
+	m.parseAllHunks()
+	m.focusedHunkIdx = 0
+	m.buildCachedLines()
+
+	// Snapshot before selection
+	beforeSelect := make([]string, len(m.cachedLines))
+	copy(beforeSelect, m.cachedLines)
+
+	// Mark hunk as selected and dirty
+	m.selectedHunks = map[int]bool{0: true}
+	m.markHunkDirty(0)
+	m.refreshContent()
+
+	// Hunk lines should have changed (selection adds background)
+	r := m.hunkLineRanges[0]
+	changed := false
+	for i := r[0]; i < r[1]; i++ {
+		if m.cachedLines[i] != beforeSelect[i] {
+			changed = true
+			break
+		}
+	}
+	if !changed {
+		t.Error("hunk lines should change after selection toggle")
+	}
+}
+
+func TestMarkHunkDirty_OutOfBounds(t *testing.T) {
+	m := newTestDiffViewer(80, 24)
+	m.files = []github.PRFile{
+		{
+			Filename: "a.go", Status: "modified", Additions: 1, Deletions: 0,
+			Patch: "@@ -1,1 +1,2 @@\n ctx\n+new",
+		},
+	}
+	m.parseAllHunks()
+
+	// Should not panic on out-of-bounds
+	m.markHunkDirty(-1)
+	m.markHunkDirty(999)
+	if m.dirtyHunks != nil {
+		t.Error("dirtyHunks should be nil for out-of-bounds indices")
+	}
+}
+
+func TestCacheInvalidation_SetSize(t *testing.T) {
+	m := newTestDiffViewer(80, 24)
+	m.files = []github.PRFile{
+		{
+			Filename: "a.go", Status: "modified", Additions: 1, Deletions: 0,
+			Patch: "@@ -1,1 +1,2 @@\n ctx\n+new",
+		},
+	}
+	m.parseAllHunks()
+	m.buildCachedLines()
+
+	if m.cachedLines == nil {
+		t.Fatal("cachedLines should exist before SetSize")
+	}
+
+	// SetSize should invalidate cache
+	m.SetSize(100, 30)
+
+	// After SetSize+refreshContent, cache should be rebuilt (not nil)
+	if m.cachedLines == nil {
+		t.Fatal("cachedLines should be rebuilt after SetSize")
+	}
+}
