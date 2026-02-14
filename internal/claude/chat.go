@@ -32,11 +32,12 @@ func NewChatService(claudePath string, timeout time.Duration) *ChatService {
 // ChatInput contains the parameters for a chat request.
 // RepoPath is optional — if empty, Claude runs without filesystem access (diff-as-context mode).
 type ChatInput struct {
-	Owner     string
-	Repo      string
-	PRNumber  int
-	PRContext string // PR metadata + diff content embedded as text
-	Message   string
+	Owner        string
+	Repo         string
+	PRNumber     int
+	PRContext    string // PR metadata + diff content embedded as text
+	HunksSelected bool   // true when the user has selected specific hunks
+	Message      string
 }
 
 // ClearSession removes the chat history for a PR.
@@ -62,12 +63,19 @@ func (cs *ChatService) getOrCreateSession(input ChatInput) *ChatSession {
 	return session
 }
 
-func buildChatPrompt(session *ChatSession, userMessage string) string {
+func buildChatPrompt(session *ChatSession, input ChatInput) string {
 	var b strings.Builder
 
 	b.WriteString("You are helping review a pull request. Here is the context:\n\n")
-	b.WriteString(session.PRContext)
-	b.WriteString("\n\nAnswer questions about this PR based on the diff and metadata provided above.\n")
+	b.WriteString(input.PRContext)
+
+	if input.HunksSelected {
+		b.WriteString("\n\nThe user has selected specific code hunks from the diff above. " +
+			"Focus your answer primarily on these selected hunks. " +
+			"Explain what the selected code does, flag potential issues, and suggest improvements.\n")
+	} else {
+		b.WriteString("\n\nAnswer questions about this PR based on the diff and metadata provided above.\n")
+	}
 
 	for _, msg := range session.Messages {
 		if msg.Role == "user" {
@@ -77,7 +85,7 @@ func buildChatPrompt(session *ChatSession, userMessage string) string {
 		}
 	}
 
-	fmt.Fprintf(&b, "\nUser: %s\n\nRespond helpfully and concisely.", userMessage)
+	fmt.Fprintf(&b, "\nUser: %s\n\nRespond helpfully and concisely.", input.Message)
 
 	return b.String()
 }
@@ -90,7 +98,7 @@ func (cs *ChatService) ChatStream(ctx context.Context, input ChatInput, onChunk 
 	defer cancel()
 
 	session := cs.getOrCreateSession(input)
-	prompt := buildChatPrompt(session, input.Message)
+	prompt := buildChatPrompt(session, input)
 
 	args := []string{
 		"-p", prompt,

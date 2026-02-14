@@ -31,12 +31,34 @@ func TestBuildChatPrompt(t *testing.T) {
 	}
 
 	t.Run("first message", func(t *testing.T) {
-		prompt := buildChatPrompt(session, "What does this PR do?")
+		input := ChatInput{
+			PRContext: session.PRContext,
+			Message:   "What does this PR do?",
+		}
+		prompt := buildChatPrompt(session, input)
 		if !strings.Contains(prompt, "PR #42") {
 			t.Error("prompt should contain PR context")
 		}
 		if !strings.Contains(prompt, "What does this PR do?") {
 			t.Error("prompt should contain user message")
+		}
+		if !strings.Contains(prompt, "Answer questions about this PR") {
+			t.Error("prompt should contain full-PR instruction")
+		}
+	})
+
+	t.Run("with hunks selected", func(t *testing.T) {
+		input := ChatInput{
+			PRContext:     session.PRContext,
+			HunksSelected: true,
+			Message:       "What does this do?",
+		}
+		prompt := buildChatPrompt(session, input)
+		if !strings.Contains(prompt, "selected specific code hunks") {
+			t.Error("prompt should contain hunk-focused instruction")
+		}
+		if strings.Contains(prompt, "Answer questions about this PR") {
+			t.Error("prompt should NOT contain full-PR instruction when hunks are selected")
 		}
 	})
 
@@ -45,7 +67,11 @@ func TestBuildChatPrompt(t *testing.T) {
 			{Role: "user", Content: "What does this do?"},
 			{Role: "assistant", Content: "It adds a frobnicate function."},
 		}
-		prompt := buildChatPrompt(session, "Is it safe?")
+		input := ChatInput{
+			PRContext: session.PRContext,
+			Message:   "Is it safe?",
+		}
+		prompt := buildChatPrompt(session, input)
 		if !strings.Contains(prompt, "What does this do?") {
 			t.Error("prompt should contain previous user message")
 		}

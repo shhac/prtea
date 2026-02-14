@@ -167,6 +167,25 @@ func closePRCmd(client GitHubService, owner, repo string, number int) tea.Cmd {
 	}
 }
 
+// submitReviewCmd returns a command that submits a PR review.
+func submitReviewCmd(client GitHubService, owner, repo string, number int, action ReviewAction, body string) tea.Cmd {
+	return func() tea.Msg {
+		var err error
+		switch action {
+		case ReviewApprove:
+			err = client.ApprovePR(context.Background(), owner, repo, number, body)
+		case ReviewComment:
+			err = client.CommentReviewPR(context.Background(), owner, repo, number, body)
+		case ReviewRequestChanges:
+			err = client.RequestChangesPR(context.Background(), owner, repo, number, body)
+		}
+		if err != nil {
+			return ReviewSubmitErrMsg{PRNumber: number, Err: err}
+		}
+		return ReviewSubmitDoneMsg{PRNumber: number, Action: action}
+	}
+}
+
 // analyzeDiffCmd returns a command that runs Claude analysis with inline diff content.
 func analyzeDiffCmd(analyzer *claude.Analyzer, pr *SelectedPR, files []github.PRFile, diffHash string) tea.Cmd {
 	return func() tea.Msg {
@@ -221,11 +240,25 @@ func buildChatContext(pr *SelectedPR, files []github.PRFile) string {
 	return b.String()
 }
 
-// buildSelectedHunkContext constructs PR context using only selected hunks.
-func buildSelectedHunkContext(pr *SelectedPR, selectedDiff string) string {
+// buildSelectedHunkContext constructs PR context with selected hunks as the primary
+// focus, plus a brief file list for broader context.
+func buildSelectedHunkContext(pr *SelectedPR, files []github.PRFile, selectedDiff string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "PR #%d: \"%s\" in %s/%s\n", pr.Number, pr.Title, pr.Owner, pr.Repo)
-	b.WriteString("\nSelected hunks from this PR:\n\n")
+
+	// Include file list for broader context
+	if len(files) > 0 {
+		b.WriteString("\nFiles changed in this PR: ")
+		for i, f := range files {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			b.WriteString(f.Filename)
+		}
+		b.WriteString("\n")
+	}
+
+	b.WriteString("\nThe user selected the following hunks to discuss:\n\n")
 	b.WriteString(selectedDiff)
 	return b.String()
 }
