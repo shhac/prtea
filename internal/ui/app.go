@@ -2,15 +2,10 @@ package ui
 
 import (
 	"context"
-	"crypto/sha256"
 	"fmt"
-	"os/exec"
-	"runtime"
-	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/key"
-	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -18,122 +13,6 @@ import (
 	"github.com/shhac/prtea/internal/config"
 	"github.com/shhac/prtea/internal/github"
 )
-
-// -- Async message types --
-
-// GHClientReadyMsg is sent when the GitHub client has been created successfully.
-type GHClientReadyMsg struct {
-	Client *github.Client
-}
-
-// GHClientErrorMsg is sent when the GitHub client fails to initialize.
-type GHClientErrorMsg struct {
-	Err error
-}
-
-// PRsLoadedMsg is sent when PR data has been fetched successfully.
-type PRsLoadedMsg struct {
-	ToReview []github.PRItem
-	MyPRs    []github.PRItem
-}
-
-// PRsErrorMsg is sent when PR fetching fails.
-type PRsErrorMsg struct {
-	Err error
-}
-
-// DiffLoadedMsg is sent when PR diff data has been fetched.
-type DiffLoadedMsg struct {
-	PRNumber int
-	Files    []github.PRFile
-	Err      error
-}
-
-// SelectedPR tracks the currently selected PR's metadata for global actions.
-type SelectedPR struct {
-	Owner   string
-	Repo    string
-	Number  int
-	Title   string
-	HTMLURL string
-}
-
-// PRDetailLoadedMsg is sent when PR detail data has been fetched.
-type PRDetailLoadedMsg struct {
-	PRNumber int
-	Detail   *github.PRDetail
-	Err      error
-}
-
-// CommentsLoadedMsg is sent when PR comments have been fetched.
-type CommentsLoadedMsg struct {
-	PRNumber       int
-	Comments       []github.Comment
-	InlineComments []github.InlineComment
-	Err            error
-}
-
-// CIStatusLoadedMsg is sent when CI check status has been fetched.
-type CIStatusLoadedMsg struct {
-	PRNumber int
-	Status   *github.CIStatus
-	Err      error
-}
-
-// ReviewsLoadedMsg is sent when review status has been fetched.
-type ReviewsLoadedMsg struct {
-	PRNumber int
-	Summary  *github.ReviewSummary
-	Err      error
-}
-
-// AnalysisCompleteMsg is sent when Claude analysis finishes successfully.
-type AnalysisCompleteMsg struct {
-	PRNumber int
-	DiffHash string
-	Result   *claude.AnalysisResult
-}
-
-// AnalysisErrorMsg is sent when Claude analysis fails.
-type AnalysisErrorMsg struct {
-	Err error
-}
-
-// PRApproveDoneMsg is sent when PR approval succeeds.
-type PRApproveDoneMsg struct {
-	PRNumber int
-}
-
-// PRApproveErrMsg is sent when PR approval fails.
-type PRApproveErrMsg struct {
-	PRNumber int
-	Err      error
-}
-
-// PRCloseDoneMsg is sent when PR close succeeds.
-type PRCloseDoneMsg struct {
-	PRNumber int
-}
-
-// PRCloseErrMsg is sent when PR close fails.
-type PRCloseErrMsg struct {
-	PRNumber int
-	Err      error
-}
-
-// PRSelectedAndAdvanceMsg is sent when ENTER selects a PR and should advance focus to the diff viewer.
-type PRSelectedAndAdvanceMsg struct {
-	Owner   string
-	Repo    string
-	Number  int
-	HTMLURL string
-}
-
-// HunkSelectedAndAdvanceMsg is sent when ENTER selects a hunk and should advance focus to the chat panel.
-type HunkSelectedAndAdvanceMsg struct{}
-
-// chatStreamChan carries streaming chunks and the final response from Claude chat.
-type chatStreamChan chan tea.Msg
 
 // App is the root Bubbletea model for the PR dashboard.
 type App struct {
@@ -147,7 +26,7 @@ type App struct {
 	helpOverlay HelpOverlayModel
 
 	// GitHub client (nil until GHClientReadyMsg)
-	ghClient *github.Client
+	ghClient GitHubService
 
 	// Currently selected PR (nil until a PR is selected)
 	selectedPR *SelectedPR
@@ -267,84 +146,10 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case PRSelectedMsg:
-		title := ""
-		if item, ok := m.prList.list.SelectedItem().(PRItem); ok {
-			title = item.title
-		}
-		m.selectedPR = &SelectedPR{
-			Owner:   msg.Owner,
-			Repo:    msg.Repo,
-			Number:  msg.Number,
-			Title:   title,
-			HTMLURL: msg.HTMLURL,
-		}
-		m.streamChan = nil                 // stop listening to old stream
-		m.diffFiles = nil                  // clear old diff data
-		m.chatPanel.SetAnalysisResult(nil) // clear old analysis
-		m.chatPanel.ClearChat()            // clear old chat
-		m.chatPanel.ClearComments()        // clear old comments
-		if m.chatService != nil {
-			m.chatService.ClearSession(msg.Owner, msg.Repo, msg.Number)
-		}
-		m.statusBar.SetSelectedPR(msg.Number)
-		m.prList.SetSelectedPR(msg.Number)
-		m.prList.SetCIStatus("")
-		m.prList.SetReviewDecision("")
-		m.diffViewer.SetLoading(msg.Number)
-		if m.ghClient != nil {
-			m.chatPanel.SetCommentsLoading()
-			return m, tea.Batch(
-				fetchDiffCmd(m.ghClient, msg.Owner, msg.Repo, msg.Number),
-				fetchPRDetailCmd(m.ghClient, msg.Owner, msg.Repo, msg.Number),
-				fetchCommentsCmd(m.ghClient, msg.Owner, msg.Repo, msg.Number),
-				fetchCIStatusCmd(m.ghClient, msg.Owner, msg.Repo, msg.Number),
-				fetchReviewsCmd(m.ghClient, msg.Owner, msg.Repo, msg.Number),
-				m.diffViewer.spinner.Tick,
-				m.chatPanel.spinner.Tick,
-			)
-		}
-		return m, nil
+		return m.selectPR(msg.Owner, msg.Repo, msg.Number, msg.HTMLURL, false)
 
 	case PRSelectedAndAdvanceMsg:
-		// Same as PRSelectedMsg but also advances focus to the center panel.
-		title := ""
-		if item, ok := m.prList.list.SelectedItem().(PRItem); ok {
-			title = item.title
-		}
-		m.selectedPR = &SelectedPR{
-			Owner:   msg.Owner,
-			Repo:    msg.Repo,
-			Number:  msg.Number,
-			Title:   title,
-			HTMLURL: msg.HTMLURL,
-		}
-		m.streamChan = nil
-		m.diffFiles = nil
-		m.chatPanel.SetAnalysisResult(nil)
-		m.chatPanel.ClearChat()
-		m.chatPanel.ClearComments()
-		if m.chatService != nil {
-			m.chatService.ClearSession(msg.Owner, msg.Repo, msg.Number)
-		}
-		m.statusBar.SetSelectedPR(msg.Number)
-		m.prList.SetSelectedPR(msg.Number)
-		m.prList.SetCIStatus("")
-		m.prList.SetReviewDecision("")
-		m.diffViewer.SetLoading(msg.Number)
-		m.showAndFocusPanel(PanelCenter)
-		if m.ghClient != nil {
-			m.chatPanel.SetCommentsLoading()
-			return m, tea.Batch(
-				fetchDiffCmd(m.ghClient, msg.Owner, msg.Repo, msg.Number),
-				fetchPRDetailCmd(m.ghClient, msg.Owner, msg.Repo, msg.Number),
-				fetchCommentsCmd(m.ghClient, msg.Owner, msg.Repo, msg.Number),
-				fetchCIStatusCmd(m.ghClient, msg.Owner, msg.Repo, msg.Number),
-				fetchReviewsCmd(m.ghClient, msg.Owner, msg.Repo, msg.Number),
-				m.diffViewer.spinner.Tick,
-				m.chatPanel.spinner.Tick,
-			)
-		}
-		return m, nil
+		return m.selectPR(msg.Owner, msg.Repo, msg.Number, msg.HTMLURL, true)
 
 	case HunkSelectedAndAdvanceMsg:
 		m.showAndFocusPanel(PanelRight)
@@ -654,137 +459,49 @@ func (m App) View() string {
 	return base
 }
 
-// -- Async commands --
-
-// initGHClientCmd creates the GitHub client in a goroutine.
-func initGHClientCmd() tea.Msg {
-	client, err := github.NewClient()
-	if err != nil {
-		return GHClientErrorMsg{Err: err}
+// selectPR handles shared setup when a PR is selected: resets panel state,
+// kicks off data fetches, and optionally advances focus to the diff viewer.
+func (m App) selectPR(owner, repo string, number int, htmlURL string, advance bool) (tea.Model, tea.Cmd) {
+	title := ""
+	if item, ok := m.prList.list.SelectedItem().(PRItem); ok {
+		title = item.title
 	}
-	return GHClientReadyMsg{Client: client}
-}
-
-// fetchPRsCmd returns a command that fetches both PR lists.
-func fetchPRsCmd(client *github.Client) tea.Cmd {
-	return func() tea.Msg {
-		ctx := context.Background()
-
-		toReview, err := client.GetPRsForReview(ctx)
-		if err != nil {
-			return PRsErrorMsg{Err: err}
-		}
-
-		myPRs, err := client.GetMyPRs(ctx)
-		if err != nil {
-			return PRsErrorMsg{Err: err}
-		}
-
-		return PRsLoadedMsg{
-			ToReview: toReview,
-			MyPRs:    myPRs,
-		}
+	m.selectedPR = &SelectedPR{
+		Owner:   owner,
+		Repo:    repo,
+		Number:  number,
+		Title:   title,
+		HTMLURL: htmlURL,
 	}
-}
-
-// convertPRItems converts github.PRItem slice to list.Item slice.
-func convertPRItems(prs []github.PRItem) []list.Item {
-	items := make([]list.Item, len(prs))
-	for i, pr := range prs {
-		items[i] = PRItem{
-			number:   pr.Number,
-			title:    pr.Title,
-			repo:     pr.Repo.Name,
-			owner:    pr.Repo.Owner,
-			repoFull: pr.Repo.FullName,
-			author:   pr.Author.Login,
-			htmlURL:  pr.HTMLURL,
-		}
+	m.streamChan = nil                 // stop listening to old stream
+	m.diffFiles = nil                  // clear old diff data
+	m.chatPanel.SetAnalysisResult(nil) // clear old analysis
+	m.chatPanel.ClearChat()            // clear old chat
+	m.chatPanel.ClearComments()        // clear old comments
+	if m.chatService != nil {
+		m.chatService.ClearSession(owner, repo, number)
 	}
-	return items
-}
-
-// fetchDiffCmd returns a command that fetches PR file diffs.
-func fetchDiffCmd(client *github.Client, owner, repo string, number int) tea.Cmd {
-	return func() tea.Msg {
-		ctx := context.Background()
-		files, err := client.GetPRFiles(ctx, owner, repo, number)
-		if err != nil {
-			return DiffLoadedMsg{PRNumber: number, Err: err}
-		}
-		return DiffLoadedMsg{PRNumber: number, Files: files}
+	m.statusBar.SetSelectedPR(number)
+	m.prList.SetSelectedPR(number)
+	m.prList.SetCIStatus("")
+	m.prList.SetReviewDecision("")
+	m.diffViewer.SetLoading(number)
+	if advance {
+		m.showAndFocusPanel(PanelCenter)
 	}
-}
-
-// fetchPRDetailCmd returns a command that fetches PR detail (title, body, etc.).
-func fetchPRDetailCmd(client *github.Client, owner, repo string, number int) tea.Cmd {
-	return func() tea.Msg {
-		ctx := context.Background()
-		detail, err := client.GetPRDetail(ctx, owner, repo, number)
-		if err != nil {
-			return PRDetailLoadedMsg{PRNumber: number, Err: err}
-		}
-		return PRDetailLoadedMsg{PRNumber: number, Detail: detail}
+	if m.ghClient != nil {
+		m.chatPanel.SetCommentsLoading()
+		return m, tea.Batch(
+			fetchDiffCmd(m.ghClient, owner, repo, number),
+			fetchPRDetailCmd(m.ghClient, owner, repo, number),
+			fetchCommentsCmd(m.ghClient, owner, repo, number),
+			fetchCIStatusCmd(m.ghClient, owner, repo, number),
+			fetchReviewsCmd(m.ghClient, owner, repo, number),
+			m.diffViewer.spinner.Tick,
+			m.chatPanel.spinner.Tick,
+		)
 	}
-}
-
-// fetchCommentsCmd returns a command that fetches PR comments (issue-level + inline).
-func fetchCommentsCmd(client *github.Client, owner, repo string, number int) tea.Cmd {
-	return func() tea.Msg {
-		ctx := context.Background()
-
-		comments, commErr := client.GetComments(ctx, owner, repo, number)
-		inline, inlineErr := client.GetInlineComments(ctx, owner, repo, number)
-
-		// Report first error if any
-		if commErr != nil {
-			return CommentsLoadedMsg{PRNumber: number, Err: commErr}
-		}
-		if inlineErr != nil {
-			return CommentsLoadedMsg{PRNumber: number, Err: inlineErr}
-		}
-
-		return CommentsLoadedMsg{
-			PRNumber:       number,
-			Comments:       comments,
-			InlineComments: inline,
-		}
-	}
-}
-
-// fetchCIStatusCmd returns a command that fetches CI check status for a PR.
-func fetchCIStatusCmd(client *github.Client, owner, repo string, number int) tea.Cmd {
-	return func() tea.Msg {
-		ctx := context.Background()
-		status, err := client.GetCIStatus(ctx, owner, repo, "", number)
-		return CIStatusLoadedMsg{PRNumber: number, Status: status, Err: err}
-	}
-}
-
-// fetchReviewsCmd returns a command that fetches review status for a PR.
-func fetchReviewsCmd(client *github.Client, owner, repo string, number int) tea.Cmd {
-	return func() tea.Msg {
-		ctx := context.Background()
-		summary, err := client.GetReviews(ctx, owner, repo, number)
-		return ReviewsLoadedMsg{PRNumber: number, Summary: summary, Err: err}
-	}
-}
-
-// openBrowserCmd returns a command that opens a URL in the default browser.
-func openBrowserCmd(url string) tea.Cmd {
-	return func() tea.Msg {
-		var cmd *exec.Cmd
-		switch runtime.GOOS {
-		case "darwin":
-			cmd = exec.Command("open", url)
-		case "windows":
-			cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
-		default: // linux, freebsd, etc.
-			cmd = exec.Command("xdg-open", url)
-		}
-		_ = cmd.Start()
-		return nil
-	}
+	return m, nil
 }
 
 // -- Layout & panel helpers --
@@ -1004,28 +721,6 @@ func (m App) handleConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// approvePRCmd returns a command that approves a PR.
-func approvePRCmd(client *github.Client, owner, repo string, number int) tea.Cmd {
-	return func() tea.Msg {
-		err := client.ApprovePR(context.Background(), owner, repo, number, "")
-		if err != nil {
-			return PRApproveErrMsg{PRNumber: number, Err: err}
-		}
-		return PRApproveDoneMsg{PRNumber: number}
-	}
-}
-
-// closePRCmd returns a command that closes a PR without merging.
-func closePRCmd(client *github.Client, owner, repo string, number int) tea.Cmd {
-	return func() tea.Msg {
-		err := client.ClosePR(context.Background(), owner, repo, number)
-		if err != nil {
-			return PRCloseErrMsg{PRNumber: number, Err: err}
-		}
-		return PRCloseDoneMsg{PRNumber: number}
-	}
-}
-
 // handleChatSend validates state and kicks off streaming Claude chat.
 func (m App) handleChatSend(message string) (tea.Model, tea.Cmd) {
 	if m.selectedPR == nil {
@@ -1088,90 +783,3 @@ func (m App) handleCommentPost(body string) (tea.Model, tea.Cmd) {
 	}
 }
 
-// listenForChatStream returns a tea.Cmd that reads the next message from the streaming channel.
-func listenForChatStream(ch chatStreamChan) tea.Cmd {
-	return func() tea.Msg {
-		msg, ok := <-ch
-		if !ok {
-			return nil
-		}
-		return msg
-	}
-}
-
-// buildChatContext constructs the PR context string for chat from metadata + diff.
-func buildChatContext(pr *SelectedPR, files []github.PRFile) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "PR #%d: \"%s\" in %s/%s\n", pr.Number, pr.Title, pr.Owner, pr.Repo)
-	if len(files) > 0 {
-		b.WriteString("\nChanges in this PR:\n\n")
-		b.WriteString(buildDiffContent(files))
-	} else {
-		b.WriteString("\n(Diff not yet loaded)")
-	}
-	return b.String()
-}
-
-// analyzeDiffCmd returns a command that runs Claude analysis with inline diff content.
-func analyzeDiffCmd(analyzer *claude.Analyzer, pr *SelectedPR, files []github.PRFile, diffHash string) tea.Cmd {
-	return func() tea.Msg {
-		ctx := context.Background()
-
-		diffContent := buildDiffContent(files)
-
-		input := claude.AnalyzeDiffInput{
-			Owner:       pr.Owner,
-			Repo:        pr.Repo,
-			PRNumber:    pr.Number,
-			PRTitle:     pr.Title,
-			DiffContent: diffContent,
-		}
-
-		result, err := analyzer.AnalyzeDiff(ctx, input, nil)
-		if err != nil {
-			return AnalysisErrorMsg{Err: err}
-		}
-
-		return AnalysisCompleteMsg{
-			PRNumber: pr.Number,
-			DiffHash: diffHash,
-			Result:   result,
-		}
-	}
-}
-
-// buildSelectedHunkContext constructs PR context using only selected hunks.
-func buildSelectedHunkContext(pr *SelectedPR, selectedDiff string) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "PR #%d: \"%s\" in %s/%s\n", pr.Number, pr.Title, pr.Owner, pr.Repo)
-	b.WriteString("\nSelected hunks from this PR:\n\n")
-	b.WriteString(selectedDiff)
-	return b.String()
-}
-
-// buildDiffContent constructs a unified diff string from PR files.
-func buildDiffContent(files []github.PRFile) string {
-	var b strings.Builder
-	for _, f := range files {
-		b.WriteString(fmt.Sprintf("--- a/%s\n", f.Filename))
-		b.WriteString(fmt.Sprintf("+++ b/%s\n", f.Filename))
-		if f.Patch != "" {
-			b.WriteString(f.Patch)
-			b.WriteString("\n")
-		} else {
-			b.WriteString("(binary or too large to display)\n")
-		}
-		b.WriteString("\n")
-	}
-	return b.String()
-}
-
-// diffContentHash computes a short hash of the diff content for cache staleness checks.
-func diffContentHash(files []github.PRFile) string {
-	h := sha256.New()
-	for _, f := range files {
-		h.Write([]byte(f.Filename))
-		h.Write([]byte(f.Patch))
-	}
-	return fmt.Sprintf("%x", h.Sum(nil))[:16]
-}

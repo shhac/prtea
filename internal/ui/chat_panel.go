@@ -33,37 +33,6 @@ const (
 	ChatTabComments
 )
 
-// ModeChangedMsg is sent when the chat panel changes modes.
-type ModeChangedMsg struct {
-	Mode ChatMode
-}
-
-// ChatSendMsg is emitted when the user sends a chat message.
-type ChatSendMsg struct {
-	Message string
-}
-
-// ChatResponseMsg is sent when Claude responds to a chat message.
-type ChatResponseMsg struct {
-	Content string
-	Err     error
-}
-
-// ChatStreamChunkMsg carries a streaming text chunk from Claude.
-type ChatStreamChunkMsg struct {
-	Content string
-}
-
-// CommentPostMsg is emitted when the user wants to post a PR comment.
-type CommentPostMsg struct {
-	Body string
-}
-
-// CommentPostedMsg is sent after a comment has been posted (or failed).
-type CommentPostedMsg struct {
-	Err error
-}
-
 // ChatPanelModel manages the chat/analysis panel.
 type ChatPanelModel struct {
 	viewport  viewport.Model

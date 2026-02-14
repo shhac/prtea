@@ -47,14 +47,6 @@ func (i PRItem) Description() string {
 	return fmt.Sprintf("%s · %s", i.author, i.repo)
 }
 
-// PRSelectedMsg is sent when the user selects a PR.
-type PRSelectedMsg struct {
-	Owner   string
-	Repo    string
-	Number  int
-	HTMLURL string
-}
-
 // prItemDelegate renders PR list items with distinct cursor and selected states.
 // The cursor (Bubbletea's Index()) uses the stock left-border style.
 // The "selected" PR (loaded in diff/chat) gets a ▸ marker prefix.

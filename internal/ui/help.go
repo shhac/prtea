@@ -19,9 +19,6 @@ type HelpOverlayModel struct {
 	ready    bool
 }
 
-// HelpClosedMsg is sent when the help overlay is dismissed.
-type HelpClosedMsg struct{}
-
 func NewHelpOverlayModel() HelpOverlayModel {
 	return HelpOverlayModel{}
 }
