@@ -18,14 +18,16 @@ type ChatService struct {
 	timeout    time.Duration
 	mu         sync.Mutex
 	sessions   map[string]*ChatSession
+	store      *ChatStore // optional persistent store
 }
 
-// NewChatService creates a ChatService.
-func NewChatService(claudePath string, timeout time.Duration) *ChatService {
+// NewChatService creates a ChatService with optional persistent storage.
+func NewChatService(claudePath string, timeout time.Duration, store *ChatStore) *ChatService {
 	return &ChatService{
 		claudePath: claudePath,
 		timeout:    timeout,
 		sessions:   make(map[string]*ChatSession),
+		store:      store,
 	}
 }
 
@@ -40,12 +42,53 @@ type ChatInput struct {
 	Message      string
 }
 
-// ClearSession removes the chat history for a PR.
+// ClearSession removes the chat history for a PR (in memory and on disk).
 func (cs *ChatService) ClearSession(owner, repo string, prNumber int) {
 	key := sessionKey(owner, repo, prNumber)
 	cs.mu.Lock()
 	delete(cs.sessions, key)
 	cs.mu.Unlock()
+	if cs.store != nil {
+		_ = cs.store.Delete(owner, repo, prNumber)
+	}
+}
+
+// SaveSession persists the current session for a PR to disk.
+// Called when switching PRs so the conversation can be restored later.
+func (cs *ChatService) SaveSession(owner, repo string, prNumber int) {
+	if cs.store == nil {
+		return
+	}
+	key := sessionKey(owner, repo, prNumber)
+	cs.mu.Lock()
+	session, ok := cs.sessions[key]
+	cs.mu.Unlock()
+	if ok && len(session.Messages) > 0 {
+		_ = cs.store.Put(owner, repo, prNumber, session.Messages)
+	}
+}
+
+// GetSessionMessages returns the messages for a PR session (from memory or disk).
+// Used by the UI to restore chat history when returning to a PR.
+func (cs *ChatService) GetSessionMessages(owner, repo string, prNumber int) []ChatMessage {
+	key := sessionKey(owner, repo, prNumber)
+	cs.mu.Lock()
+	session, ok := cs.sessions[key]
+	cs.mu.Unlock()
+	if ok {
+		return session.Messages
+	}
+	// Try loading from disk
+	if cs.store != nil {
+		if cached, err := cs.store.Get(owner, repo, prNumber); err == nil && cached != nil {
+			// Restore into memory
+			cs.mu.Lock()
+			cs.sessions[key] = &ChatSession{Messages: cached.Messages}
+			cs.mu.Unlock()
+			return cached.Messages
+		}
+	}
+	return nil
 }
 
 func (cs *ChatService) getOrCreateSession(input ChatInput) *ChatSession {
@@ -55,6 +98,17 @@ func (cs *ChatService) getOrCreateSession(input ChatInput) *ChatSession {
 
 	session, ok := cs.sessions[key]
 	if !ok {
+		// Try loading from disk
+		if cs.store != nil {
+			if cached, err := cs.store.Get(input.Owner, input.Repo, input.PRNumber); err == nil && cached != nil {
+				session = &ChatSession{
+					PRContext: input.PRContext,
+					Messages:  cached.Messages,
+				}
+				cs.sessions[key] = session
+				return session
+			}
+		}
 		session = &ChatSession{
 			PRContext: input.PRContext,
 		}
@@ -63,21 +117,86 @@ func (cs *ChatService) getOrCreateSession(input ChatInput) *ChatSession {
 	return session
 }
 
+// Token budget constants.
+const (
+	// maxPromptTokens is the soft limit for the total prompt size.
+	// Set conservatively below Claude's 200K context to leave room for the response.
+	maxPromptTokens = 100_000
+
+	// maxHistoryMessages is the maximum number of recent messages to keep.
+	// Older messages are dropped to stay within the token budget.
+	maxHistoryMessages = 16
+)
+
+// estimateTokens returns a rough token count for a string.
+// Code and diffs average ~3 chars per token; prose ~4 chars.
+// We use 3 as a conservative estimate (overestimates slightly for prose).
+func estimateTokens(s string) int {
+	return len(s) / 3
+}
+
 func buildChatPrompt(session *ChatSession, input ChatInput) string {
 	var b strings.Builder
 
-	b.WriteString("You are helping review a pull request. Here is the context:\n\n")
-	b.WriteString(input.PRContext)
+	// System instruction (always included)
+	systemPrefix := "You are helping review a pull request. Here is the context:\n\n"
+	b.WriteString(systemPrefix)
 
+	var instruction string
 	if input.HunksSelected {
-		b.WriteString("\n\nThe user has selected specific code hunks from the diff above. " +
+		instruction = "\n\nThe user has selected specific code hunks from the diff above. " +
 			"Focus your answer primarily on these selected hunks. " +
-			"Explain what the selected code does, flag potential issues, and suggest improvements.\n")
+			"Explain what the selected code does, flag potential issues, and suggest improvements.\n"
 	} else {
-		b.WriteString("\n\nAnswer questions about this PR based on the diff and metadata provided above.\n")
+		instruction = "\n\nAnswer questions about this PR based on the diff and metadata provided above.\n"
 	}
 
-	for _, msg := range session.Messages {
+	currentMsg := fmt.Sprintf("\nUser: %s\n\nRespond helpfully and concisely.", input.Message)
+
+	// Calculate fixed token costs
+	fixedTokens := estimateTokens(systemPrefix) + estimateTokens(instruction) + estimateTokens(currentMsg)
+	contextTokens := estimateTokens(input.PRContext)
+
+	// Determine which messages to include (most recent first, up to budget)
+	messages := session.Messages
+	if len(messages) > maxHistoryMessages {
+		messages = messages[len(messages)-maxHistoryMessages:]
+	}
+
+	// Further trim messages if total exceeds token budget
+	historyTokens := 0
+	for _, msg := range messages {
+		historyTokens += estimateTokens(msg.Content) + 10 // 10 for "User: " / "Assistant: " prefix
+	}
+
+	totalTokens := fixedTokens + contextTokens + historyTokens
+	if totalTokens > maxPromptTokens && len(messages) > 2 {
+		// Drop oldest messages until we fit (keep at least the last 2 messages)
+		for totalTokens > maxPromptTokens && len(messages) > 2 {
+			dropped := messages[0]
+			messages = messages[1:]
+			totalTokens -= estimateTokens(dropped.Content) + 10
+		}
+	}
+
+	// If still over budget after trimming history, truncate the diff context
+	prContext := input.PRContext
+	if totalTokens > maxPromptTokens {
+		// Calculate how many tokens we can afford for the context
+		availableContextTokens := maxPromptTokens - fixedTokens - historyTokens
+		if availableContextTokens < 0 {
+			availableContextTokens = 0
+		}
+		maxContextChars := availableContextTokens * 3 // reverse the estimation
+		if maxContextChars > 0 && maxContextChars < len(prContext) {
+			prContext = prContext[:maxContextChars] + "\n\n[... diff truncated to fit context window ...]"
+		}
+	}
+
+	b.WriteString(prContext)
+	b.WriteString(instruction)
+
+	for _, msg := range messages {
 		if msg.Role == "user" {
 			fmt.Fprintf(&b, "\nUser: %s", msg.Content)
 		} else {
@@ -85,7 +204,7 @@ func buildChatPrompt(session *ChatSession, input ChatInput) string {
 		}
 	}
 
-	fmt.Fprintf(&b, "\nUser: %s\n\nRespond helpfully and concisely.", input.Message)
+	b.WriteString(currentMsg)
 
 	return b.String()
 }
@@ -210,6 +329,11 @@ func (cs *ChatService) ChatStream(ctx context.Context, input ChatInput, onChunk 
 		ChatMessage{Role: "assistant", Content: finalText},
 	)
 	cs.mu.Unlock()
+
+	// Persist to disk after each exchange
+	if cs.store != nil {
+		_ = cs.store.Put(input.Owner, input.Repo, input.PRNumber, session.Messages)
+	}
 
 	return finalText, nil
 }

@@ -56,6 +56,13 @@ var diffFocusedHunkStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("99")).
 // Focused hunk gutter marker (▎ in accent color)
 var diffFocusGutterStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("62"))
 
+// Search match highlight backgrounds
+var (
+	diffSearchMatchBg        = lipgloss.Color("58")  // dark olive for all matches
+	diffSearchCurrentMatchBg = lipgloss.Color("178") // bright gold for current match
+	diffSearchInfoStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
+)
+
 // PR list styles
 var (
 	prTitleStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
@@ -174,6 +181,9 @@ func formatUserError(err string) string {
 		return "Request timed out.\nCheck your connection and try again."
 	case strings.Contains(lower, "no such host") || strings.Contains(lower, "connection refused"):
 		return "Network error.\nCheck your internet connection."
+	case strings.Contains(lower, "context length") || strings.Contains(lower, "too many tokens") ||
+		strings.Contains(lower, "maximum context") || strings.Contains(lower, "token limit"):
+		return "Context window exceeded.\nPress 'c' to clear chat history, or select specific hunks (s) to reduce context."
 	default:
 		return err
 	}
