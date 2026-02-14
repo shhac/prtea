@@ -1,6 +1,11 @@
 package ui
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/charmbracelet/bubbles/viewport"
+	"github.com/shhac/prtea/internal/github"
+)
 
 func TestParsePatchHunks_SingleHunk(t *testing.T) {
 	patch := `@@ -1,3 +1,4 @@
@@ -80,5 +85,160 @@ func TestParsePatchHunks_NoHunkHeaders(t *testing.T) {
 	hunks := parsePatchHunks(0, "no_headers.go", "just some text\nno hunks here")
 	if len(hunks) != 0 {
 		t.Errorf("got %d hunks, want 0", len(hunks))
+	}
+}
+
+// newTestDiffViewer creates a DiffViewerModel with a ready viewport for testing.
+func newTestDiffViewer(width, height int) DiffViewerModel {
+	m := NewDiffViewerModel()
+	m.viewport = viewport.New(width, height)
+	m.ready = true
+	m.width = width + 4
+	m.height = height + 5
+	return m
+}
+
+func TestParseAllHunks(t *testing.T) {
+	m := newTestDiffViewer(80, 24)
+	m.files = []github.PRFile{
+		{
+			Filename: "a.go", Status: "modified", Additions: 1, Deletions: 1,
+			Patch: "@@ -1,3 +1,3 @@\n-old\n+new\n ctx",
+		},
+		{
+			Filename: "b.go", Status: "added", Additions: 2, Deletions: 0,
+			Patch: "@@ -0,0 +1,2 @@\n+line1\n+line2",
+		},
+		{
+			Filename: "c.bin", Status: "modified", Additions: 0, Deletions: 0,
+			Patch: "", // binary — no patch
+		},
+	}
+	m.parseAllHunks()
+
+	if len(m.hunks) != 2 {
+		t.Fatalf("got %d hunks, want 2", len(m.hunks))
+	}
+	if m.hunks[0].Filename != "a.go" {
+		t.Errorf("hunks[0].Filename = %q, want %q", m.hunks[0].Filename, "a.go")
+	}
+	if m.hunks[0].FileIndex != 0 {
+		t.Errorf("hunks[0].FileIndex = %d, want 0", m.hunks[0].FileIndex)
+	}
+	if m.hunks[1].Filename != "b.go" {
+		t.Errorf("hunks[1].Filename = %q, want %q", m.hunks[1].Filename, "b.go")
+	}
+	if m.hunks[1].FileIndex != 1 {
+		t.Errorf("hunks[1].FileIndex = %d, want 1", m.hunks[1].FileIndex)
+	}
+}
+
+func TestBuildCachedLines_ComputesOffsetsAndRanges(t *testing.T) {
+	m := newTestDiffViewer(80, 24)
+	m.files = []github.PRFile{
+		{
+			Filename: "a.go", Status: "modified", Additions: 1, Deletions: 1,
+			Patch: "@@ -1,3 +1,3 @@\n-old\n+new\n ctx",
+		},
+		{
+			Filename: "b.go", Status: "added", Additions: 2, Deletions: 0,
+			Patch: "@@ -0,0 +1,2 @@\n+line1\n+line2",
+		},
+	}
+	m.parseAllHunks()
+	m.buildCachedLines()
+
+	if m.cachedLines == nil {
+		t.Fatal("cachedLines should not be nil")
+	}
+	if len(m.fileOffsets) != 2 {
+		t.Fatalf("fileOffsets len = %d, want 2", len(m.fileOffsets))
+	}
+	if len(m.hunkOffsets) != 2 {
+		t.Fatalf("hunkOffsets len = %d, want 2", len(m.hunkOffsets))
+	}
+	if len(m.hunkLineRanges) != 2 {
+		t.Fatalf("hunkLineRanges len = %d, want 2", len(m.hunkLineRanges))
+	}
+
+	// File offsets should be ordered
+	if m.fileOffsets[0] >= m.fileOffsets[1] {
+		t.Errorf("fileOffsets[0]=%d should be < fileOffsets[1]=%d", m.fileOffsets[0], m.fileOffsets[1])
+	}
+	// Hunk offsets should be ordered
+	if m.hunkOffsets[0] >= m.hunkOffsets[1] {
+		t.Errorf("hunkOffsets[0]=%d should be < hunkOffsets[1]=%d", m.hunkOffsets[0], m.hunkOffsets[1])
+	}
+
+	// Each hunk range should cover exactly as many lines as hunk.Lines
+	for i, hr := range m.hunkLineRanges {
+		rangeSize := hr[1] - hr[0]
+		wantSize := len(m.hunks[i].Lines)
+		if rangeSize != wantSize {
+			t.Errorf("hunkLineRanges[%d] range=%d, want %d (Lines count)", i, rangeSize, wantSize)
+		}
+	}
+}
+
+func TestBuildCachedLines_EmptyFiles(t *testing.T) {
+	m := newTestDiffViewer(80, 24)
+	m.files = []github.PRFile{}
+	m.parseAllHunks()
+	m.buildCachedLines()
+
+	if m.cachedLines == nil {
+		t.Fatal("cachedLines should not be nil for empty files")
+	}
+	if len(m.hunks) != 0 {
+		t.Errorf("hunks should be empty, got %d", len(m.hunks))
+	}
+}
+
+func TestBuildCachedLines_NoPatchFile(t *testing.T) {
+	m := newTestDiffViewer(80, 24)
+	m.files = []github.PRFile{
+		{Filename: "binary.dat", Status: "modified", Patch: ""},
+	}
+	m.parseAllHunks()
+	m.buildCachedLines()
+
+	if len(m.hunks) != 0 {
+		t.Errorf("hunks should be empty for no-patch file, got %d", len(m.hunks))
+	}
+	// Should have file header, separator, and "(diff not available)" lines
+	if len(m.cachedLines) < 3 {
+		t.Errorf("cachedLines should have at least 3 lines, got %d", len(m.cachedLines))
+	}
+}
+
+func TestRenderHunkLines_FocusAndSelection(t *testing.T) {
+	m := newTestDiffViewer(80, 24)
+	m.files = []github.PRFile{
+		{
+			Filename: "a.go", Status: "modified", Additions: 1, Deletions: 1,
+			Patch: "@@ -1,2 +1,2 @@\n-old\n+new",
+		},
+	}
+	m.parseAllHunks()
+
+	// Unfocused, unselected
+	m.focusedHunkIdx = 99
+	lines := m.renderHunkLines(0)
+	if len(lines) != 3 {
+		t.Fatalf("got %d lines, want 3", len(lines))
+	}
+
+	// Focused hunk — should have gutter marker
+	m.focusedHunkIdx = 0
+	lines = m.renderHunkLines(0)
+	if len(lines) != 3 {
+		t.Fatalf("got %d lines, want 3", len(lines))
+	}
+
+	// Selected hunk
+	m.selectedHunks = map[int]bool{0: true}
+	lines = m.renderHunkLines(0)
+	if len(lines) != 3 {
+		t.Fatalf("got %d lines, want 3", len(lines))
 	}
 }

@@ -57,6 +57,18 @@ func parsePatchHunks(fileIndex int, filename string, patch string) []DiffHunk {
 	return hunks
 }
 
+// parseAllHunks parses hunks from all files once and populates m.hunks.
+func (m *DiffViewerModel) parseAllHunks() {
+	m.hunks = nil
+	for i, f := range m.files {
+		if f.Patch == "" {
+			continue
+		}
+		fileHunks := parsePatchHunks(i, f.Filename, f.Patch)
+		m.hunks = append(m.hunks, fileHunks...)
+	}
+}
+
 // DiffViewerModel manages the diff viewer panel.
 type DiffViewerModel struct {
 	viewport  viewport.Model
@@ -80,6 +92,10 @@ type DiffViewerModel struct {
 	hunkOffsets    []int        // viewport line offset where each hunk starts
 	focusedHunkIdx int          // explicitly tracked focused hunk
 	selectedHunks  map[int]bool // hunk index → selected
+
+	// Cached rendering — avoids re-parsing and re-styling on every scroll
+	cachedLines    []string // per-line styled output (nil = needs full rebuild)
+	hunkLineRanges [][2]int // [start, end) line indices in cachedLines per hunk
 
 	// PR info data (for PR Info tab)
 	prTitle   string
@@ -310,6 +326,7 @@ func (m *DiffViewerModel) SetSize(width, height int) {
 		m.viewport.Width = innerWidth
 		m.viewport.Height = innerHeight
 	}
+	m.cachedLines = nil // width change invalidates styled cache
 	m.refreshContent()
 }
 
@@ -327,6 +344,8 @@ func (m *DiffViewerModel) SetLoading(prNumber int) {
 	m.hunkOffsets = nil
 	m.focusedHunkIdx = 0
 	m.selectedHunks = nil
+	m.cachedLines = nil
+	m.hunkLineRanges = nil
 	m.currentFileIdx = 0
 	m.err = nil
 	m.prTitle = ""
@@ -349,6 +368,8 @@ func (m *DiffViewerModel) SetDiff(files []github.PRFile) {
 	m.currentFileIdx = 0
 	m.focusedHunkIdx = 0
 	m.selectedHunks = nil
+	m.parseAllHunks()
+	m.cachedLines = nil
 	m.refreshContent()
 	m.viewport.GotoTop()
 }
@@ -359,6 +380,7 @@ func (m *DiffViewerModel) SetError(err error) {
 	m.err = err
 	m.files = nil
 	m.fileOffsets = nil
+	m.cachedLines = nil
 	m.refreshContent()
 }
 
@@ -437,7 +459,8 @@ func (m *DiffViewerModel) refreshContent() {
 		return
 	}
 	if m.files != nil {
-		m.viewport.SetContent(m.renderRealDiff())
+		m.buildCachedLines()
+		m.viewport.SetContent(strings.Join(m.cachedLines, "\n"))
 		return
 	}
 	// No PR selected yet
@@ -721,123 +744,123 @@ func (m DiffViewerModel) renderCITab() string {
 	return b.String()
 }
 
-// renderRealDiff renders actual PR file diffs with syntax coloring and hunk selection.
-func (m *DiffViewerModel) renderRealDiff() string {
+// buildCachedLines renders all diff content into the cachedLines slice.
+// It computes fileOffsets, hunkOffsets, and hunkLineRanges from pre-parsed hunks.
+func (m *DiffViewerModel) buildCachedLines() {
 	if len(m.files) == 0 {
-		return renderEmptyState("No files changed in this PR", "")
+		m.cachedLines = []string{renderEmptyState("No files changed in this PR", "")}
+		m.hunkLineRanges = nil
+		return
 	}
 
 	innerWidth := m.viewport.Width
-	var b strings.Builder
+	lines := make([]string, 0, 256)
 	m.fileOffsets = make([]int, len(m.files))
-	m.hunks = nil
-	m.hunkOffsets = nil
-	lineCount := 0
+	m.hunkOffsets = make([]int, len(m.hunks))
+	m.hunkLineRanges = make([][2]int, len(m.hunks))
 	globalHunkIdx := 0
 
 	for i, f := range m.files {
 		if i > 0 {
-			b.WriteString("\n")
-			lineCount++
+			lines = append(lines, "")
 		}
 
 		// Track line offset where this file header starts
-		m.fileOffsets[i] = lineCount
+		m.fileOffsets[i] = len(lines)
 
 		// File header
-		b.WriteString(diffFileHeaderStyle.Render(fileStatusLabel(f)))
-		b.WriteString("\n")
-		lineCount++
+		lines = append(lines, diffFileHeaderStyle.Render(fileStatusLabel(f)))
 
 		// Separator
-		b.WriteString(strings.Repeat("─", min(innerWidth, 60)))
-		b.WriteString("\n")
-		lineCount++
+		lines = append(lines, strings.Repeat("─", min(innerWidth, 60)))
 
 		// Patch content
 		if f.Patch == "" {
-			b.WriteString(lipgloss.NewStyle().
+			lines = append(lines, lipgloss.NewStyle().
 				Foreground(lipgloss.Color("244")).
 				Italic(true).
 				Render("  (diff not available)"))
-			b.WriteString("\n")
-			lineCount++
 			continue
 		}
 
-		b.WriteString("\n")
-		lineCount++
+		lines = append(lines, "") // blank before hunks
 
-		// Parse and render hunks
-		fileHunks := parsePatchHunks(i, f.Filename, f.Patch)
-		for _, hunk := range fileHunks {
-			m.hunks = append(m.hunks, hunk)
-			m.hunkOffsets = append(m.hunkOffsets, lineCount)
-			selected := m.selectedHunks[globalHunkIdx]
-
-			isFocused := globalHunkIdx == m.focusedHunkIdx
-
-			for _, line := range hunk.Lines {
-				if line == "" {
-					if isFocused {
-						b.WriteString(diffFocusGutterStyle.Render("▎"))
-					}
-					b.WriteString("\n")
-					lineCount++
-					continue
-				}
-
-				// Gutter marker: ▎ for focused hunk, space for others
-				var gutter string
-				if isFocused {
-					gutter = diffFocusGutterStyle.Render("▎") + " "
-				} else {
-					gutter = "  "
-				}
-
-				var style lipgloss.Style
-				displayLine := line
-				switch {
-				case strings.HasPrefix(line, "@@"):
-					if isFocused {
-						style = diffFocusedHunkStyle
-						if selected {
-							displayLine = "✓ " + line
-						} else {
-							displayLine = "▶ " + line
-						}
-					} else {
-						style = diffHunkHeaderStyle
-						if selected {
-							displayLine = "✓ " + line
-						}
-					}
-				case strings.HasPrefix(line, "+"):
-					style = diffAddedStyle
-				case strings.HasPrefix(line, "-"):
-					style = diffRemovedStyle
-				case strings.HasPrefix(line, `\`):
-					style = lipgloss.NewStyle().
-						Foreground(lipgloss.Color("244")).
-						Italic(true)
-				default:
-					style = lipgloss.NewStyle()
-				}
-
-				if selected {
-					style = style.Background(diffSelectedBg)
-				}
-
-				b.WriteString(gutter + style.Render(displayLine))
-				b.WriteString("\n")
-				lineCount++
-			}
-
+		// Render pre-parsed hunks
+		for globalHunkIdx < len(m.hunks) && m.hunks[globalHunkIdx].FileIndex == i {
+			m.hunkOffsets[globalHunkIdx] = len(lines)
+			start := len(lines)
+			hunkLines := m.renderHunkLines(globalHunkIdx)
+			lines = append(lines, hunkLines...)
+			m.hunkLineRanges[globalHunkIdx] = [2]int{start, len(lines)}
 			globalHunkIdx++
 		}
 	}
 
-	return b.String()
+	m.cachedLines = lines
+}
+
+// renderHunkLines renders a single hunk's styled output lines.
+func (m *DiffViewerModel) renderHunkLines(hunkIdx int) []string {
+	hunk := m.hunks[hunkIdx]
+	selected := m.selectedHunks[hunkIdx]
+	isFocused := hunkIdx == m.focusedHunkIdx
+	lines := make([]string, 0, len(hunk.Lines))
+
+	for _, line := range hunk.Lines {
+		if line == "" {
+			if isFocused {
+				lines = append(lines, diffFocusGutterStyle.Render("▎"))
+			} else {
+				lines = append(lines, "")
+			}
+			continue
+		}
+
+		// Gutter marker: ▎ for focused hunk, space for others
+		var gutter string
+		if isFocused {
+			gutter = diffFocusGutterStyle.Render("▎") + " "
+		} else {
+			gutter = "  "
+		}
+
+		var style lipgloss.Style
+		displayLine := line
+		switch {
+		case strings.HasPrefix(line, "@@"):
+			if isFocused {
+				style = diffFocusedHunkStyle
+				if selected {
+					displayLine = "✓ " + line
+				} else {
+					displayLine = "▶ " + line
+				}
+			} else {
+				style = diffHunkHeaderStyle
+				if selected {
+					displayLine = "✓ " + line
+				}
+			}
+		case strings.HasPrefix(line, "+"):
+			style = diffAddedStyle
+		case strings.HasPrefix(line, "-"):
+			style = diffRemovedStyle
+		case strings.HasPrefix(line, `\`):
+			style = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("244")).
+				Italic(true)
+		default:
+			style = lipgloss.NewStyle()
+		}
+
+		if selected {
+			style = style.Background(diffSelectedBg)
+		}
+
+		lines = append(lines, gutter+style.Render(displayLine))
+	}
+
+	return lines
 }
 
 func fileStatusLabel(f github.PRFile) string {
