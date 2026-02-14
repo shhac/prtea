@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/list"
@@ -816,6 +817,8 @@ func (m App) refreshSelectedPR() (tea.Model, tea.Cmd) {
 	if m.ghClient == nil {
 		return m, nil
 	}
+
+	m.statusBar.SetTemporaryMessage(fmt.Sprintf("Refreshing PR #%d...", pr.Number), 2*time.Second)
 
 	return m, tea.Batch(
 		fetchDiffCmd(m.ghClient, pr.Owner, pr.Repo, pr.Number),

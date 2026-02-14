@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 )
@@ -13,6 +14,10 @@ type StatusBarModel struct {
 	focused    Panel
 	mode       AppMode
 	selectedPR int
+
+	// Temporary flash message (e.g. "Refreshing PR #123...")
+	statusMessage string
+	statusExpiry  time.Time
 }
 
 func NewStatusBarModel() StatusBarModel {
@@ -32,8 +37,19 @@ func (m *StatusBarModel) SetSelectedPR(number int) {
 	m.selectedPR = number
 }
 
+// SetTemporaryMessage shows a flash message in the status bar that auto-expires.
+func (m *StatusBarModel) SetTemporaryMessage(msg string, duration time.Duration) {
+	m.statusMessage = msg
+	m.statusExpiry = time.Now().Add(duration)
+}
+
 func (m StatusBarModel) View() string {
-	leftHints := m.keyHints()
+	var leftHints string
+	if m.statusMessage != "" && time.Now().Before(m.statusExpiry) {
+		leftHints = " " + m.statusMessage
+	} else {
+		leftHints = m.keyHints()
+	}
 	rightInfo := m.contextInfo()
 
 	leftRendered := statusBarAccentStyle.Render(leftHints)
