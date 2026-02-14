@@ -11,7 +11,10 @@ fi
 bump_type="$1"
 
 # Get current version from latest git tag
-current=$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo "0.0.0")
+current=$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//') || true
+if [ -z "$current" ]; then
+  current="0.0.0"
+fi
 IFS='.' read -r major minor patch <<EOF
 $current
 EOF
