@@ -38,13 +38,13 @@ func (s *AnalysisStore) Get(owner, repo string, number int) (*CachedAnalysis, er
 }
 
 // Put saves an analysis result to the cache.
-func (s *AnalysisStore) Put(owner, repo string, number int, headSHA string, result *AnalysisResult) error {
+func (s *AnalysisStore) Put(owner, repo string, number int, diffContentHash string, result *AnalysisResult) error {
 	if err := os.MkdirAll(s.cacheDir, 0o755); err != nil {
 		return fmt.Errorf("failed to create cache directory: %w", err)
 	}
 
 	cached := CachedAnalysis{
-		HeadSHA:    headSHA,
+		DiffContentHash: diffContentHash,
 		AnalyzedAt: time.Now(),
 		Result:     result,
 	}
@@ -70,12 +70,12 @@ func (s *AnalysisStore) Put(owner, repo string, number int, headSHA string, resu
 	return nil
 }
 
-// IsStale returns true if the cached analysis doesn't match the current head SHA.
-func (s *AnalysisStore) IsStale(cached *CachedAnalysis, currentHeadSHA string) bool {
+// IsStale returns true if the cached analysis doesn't match the current diff content hash.
+func (s *AnalysisStore) IsStale(cached *CachedAnalysis, currentDiffHash string) bool {
 	if cached == nil {
 		return true
 	}
-	return cached.HeadSHA != currentHeadSHA
+	return cached.DiffContentHash != currentDiffHash
 }
 
 func (s *AnalysisStore) cachePath(owner, repo string, number int) string {

@@ -25,8 +25,8 @@ func TestAnalysisStore_PutAndGet(t *testing.T) {
 	if got == nil {
 		t.Fatal("Get returned nil")
 	}
-	if got.HeadSHA != "abc123" {
-		t.Errorf("HeadSHA = %q, want %q", got.HeadSHA, "abc123")
+	if got.DiffContentHash != "abc123" {
+		t.Errorf("DiffContentHash = %q, want %q", got.DiffContentHash, "abc123")
 	}
 	if got.Result.Summary != result.Summary {
 		t.Errorf("Summary = %q, want %q", got.Result.Summary, result.Summary)
@@ -52,7 +52,7 @@ func TestAnalysisStore_IsStale(t *testing.T) {
 	store := NewAnalysisStore(t.TempDir())
 
 	cached := &CachedAnalysis{
-		HeadSHA:    "abc123",
+		DiffContentHash:    "abc123",
 		AnalyzedAt: time.Now(),
 		Result:     &AnalysisResult{Summary: "test"},
 	}
@@ -63,15 +63,15 @@ func TestAnalysisStore_IsStale(t *testing.T) {
 		}
 	})
 
-	t.Run("matching SHA is not stale", func(t *testing.T) {
+	t.Run("matching hash is not stale", func(t *testing.T) {
 		if store.IsStale(cached, "abc123") {
-			t.Error("matching SHA should not be stale")
+			t.Error("matching hash should not be stale")
 		}
 	})
 
-	t.Run("different SHA is stale", func(t *testing.T) {
+	t.Run("different hash is stale", func(t *testing.T) {
 		if !store.IsStale(cached, "def456") {
-			t.Error("different SHA should be stale")
+			t.Error("different hash should be stale")
 		}
 	})
 }
@@ -96,7 +96,7 @@ func TestAnalysisStore_Overwrite(t *testing.T) {
 	if got.Result.Summary != "second" {
 		t.Errorf("Summary = %q, want %q", got.Result.Summary, "second")
 	}
-	if got.HeadSHA != "sha2" {
-		t.Errorf("HeadSHA = %q, want %q", got.HeadSHA, "sha2")
+	if got.DiffContentHash != "sha2" {
+		t.Errorf("DiffContentHash = %q, want %q", got.DiffContentHash, "sha2")
 	}
 }

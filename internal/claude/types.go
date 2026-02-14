@@ -66,7 +66,7 @@ type ChatSession struct {
 
 // CachedAnalysis wraps an analysis result with cache metadata.
 type CachedAnalysis struct {
-	HeadSHA    string          `json:"headSha"`
+	DiffContentHash string          `json:"diffContentHash"`
 	AnalyzedAt time.Time       `json:"analyzedAt"`
 	Result     *AnalysisResult `json:"result"`
 }
