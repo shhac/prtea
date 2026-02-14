@@ -41,7 +41,7 @@ type PRItem struct {
 	htmlURL  string
 }
 
-func (i PRItem) FilterValue() string { return i.title }
+func (i PRItem) FilterValue() string { return i.title + " " + i.author + " " + i.repo }
 func (i PRItem) Title() string       { return fmt.Sprintf("#%d %s", i.number, i.title) }
 func (i PRItem) Description() string {
 	return fmt.Sprintf("%s · %s", i.author, i.repo)
@@ -187,7 +187,7 @@ func NewPRListModel() PRListModel {
 	l.SetShowTitle(false)
 	l.SetShowHelp(false)
 	l.SetShowStatusBar(false)
-	l.SetFilteringEnabled(false)
+	l.SetFilteringEnabled(true)
 	l.DisableQuitKeybindings()
 
 	return PRListModel{
@@ -280,6 +280,11 @@ func (m *PRListModel) SetItems(toReview, myPRs []list.Item) {
 	}
 }
 
+// IsFiltering returns true when the user is actively typing in the filter input.
+func (m PRListModel) IsFiltering() bool {
+	return m.list.FilterState() == list.Filtering
+}
+
 func (m PRListModel) Update(msg tea.Msg) (PRListModel, tea.Cmd) {
 	switch msg := msg.(type) {
 	case spinner.TickMsg:
@@ -290,6 +295,10 @@ func (m PRListModel) Update(msg tea.Msg) (PRListModel, tea.Cmd) {
 		}
 		return m, nil
 	case tea.KeyMsg:
+		// While filtering, let the inner list handle all keys
+		if m.IsFiltering() {
+			break
+		}
 		switch {
 		case key.Matches(msg, PRListKeys.PrevTab):
 			if m.activeTab == TabMyPRs {

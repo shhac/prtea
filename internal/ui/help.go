@@ -195,6 +195,7 @@ func (m HelpOverlayModel) renderHelpContent() string {
 			keys: []helpEntry{
 				{"h / l", "Prev/next tab"},
 				{"j / k", "Move up/down"},
+				{"/", "Filter PRs"},
 				{"Space", "Select PR"},
 				{"Enter", "Select PR + focus diff"},
 			},

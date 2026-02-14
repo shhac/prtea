@@ -357,6 +357,11 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateChatPanel(msg)
 		}
 
+		// While filtering the PR list, route all keys to the list
+		if m.focused == PanelLeft && m.prList.IsFiltering() {
+			return m.updateFocusedPanel(msg)
+		}
+
 		// Global key handling in navigation mode
 		switch {
 		case key.Matches(msg, GlobalKeys.Help):
