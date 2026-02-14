@@ -91,12 +91,13 @@ var GlobalKeys = GlobalKeyMap{
 
 // PRListKeyMap defines keys for the PR list panel.
 type PRListKeyMap struct {
-	Up      key.Binding
-	Down    key.Binding
-	Select  key.Binding
-	Filter  key.Binding
-	PrevTab key.Binding
-	NextTab key.Binding
+	Up               key.Binding
+	Down             key.Binding
+	Select           key.Binding
+	SelectAndAdvance key.Binding
+	Filter           key.Binding
+	PrevTab          key.Binding
+	NextTab          key.Binding
 }
 
 var PRListKeys = PRListKeyMap{
@@ -109,8 +110,12 @@ var PRListKeys = PRListKeyMap{
 		key.WithHelp("j", "down"),
 	),
 	Select: key.NewBinding(
-		key.WithKeys("enter", " "),
-		key.WithHelp("Enter/Space", "select"),
+		key.WithKeys(" "),
+		key.WithHelp("Space", "select"),
+	),
+	SelectAndAdvance: key.NewBinding(
+		key.WithKeys("enter"),
+		key.WithHelp("Enter", "select + focus diff"),
 	),
 	Filter: key.NewBinding(
 		key.WithKeys("/"),
@@ -128,19 +133,20 @@ var PRListKeys = PRListKeyMap{
 
 // DiffViewerKeyMap defines keys for the diff viewer panel.
 type DiffViewerKeyMap struct {
-	Up              key.Binding
-	Down            key.Binding
-	HalfDown        key.Binding
-	HalfUp          key.Binding
-	NextHunk        key.Binding
-	PrevHunk        key.Binding
-	Top             key.Binding
-	Bottom          key.Binding
-	PrevTab         key.Binding
-	NextTab         key.Binding
-	SelectHunk      key.Binding
-	SelectFileHunks key.Binding
-	ClearSelection  key.Binding
+	Up                    key.Binding
+	Down                  key.Binding
+	HalfDown              key.Binding
+	HalfUp                key.Binding
+	NextHunk              key.Binding
+	PrevHunk              key.Binding
+	Top                   key.Binding
+	Bottom                key.Binding
+	PrevTab               key.Binding
+	NextTab               key.Binding
+	SelectHunk            key.Binding
+	SelectHunkAndAdvance  key.Binding
+	SelectFileHunks       key.Binding
+	ClearSelection        key.Binding
 }
 
 var DiffViewerKeys = DiffViewerKeyMap{
@@ -185,8 +191,12 @@ var DiffViewerKeys = DiffViewerKeyMap{
 		key.WithHelp("l", "next tab"),
 	),
 	SelectHunk: key.NewBinding(
-		key.WithKeys("s", " ", "enter"),
+		key.WithKeys("s", " "),
 		key.WithHelp("s/Space", "select hunk"),
+	),
+	SelectHunkAndAdvance: key.NewBinding(
+		key.WithKeys("enter"),
+		key.WithHelp("Enter", "select hunk + focus chat"),
 	),
 	SelectFileHunks: key.NewBinding(
 		key.WithKeys("S"),

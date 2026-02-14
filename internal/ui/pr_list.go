@@ -305,6 +305,17 @@ func (m PRListModel) Update(msg tea.Msg) (PRListModel, tea.Cmd) {
 				}
 			}
 			return m, nil
+		case key.Matches(msg, PRListKeys.SelectAndAdvance):
+			if item, ok := m.list.SelectedItem().(PRItem); ok {
+				return m, func() tea.Msg {
+					return PRSelectedAndAdvanceMsg{
+						Owner:   item.owner,
+						Repo:    item.repo,
+						Number:  item.number,
+						HTMLURL: item.htmlURL,
+					}
+				}
+			}
 		case key.Matches(msg, PRListKeys.Select):
 			if item, ok := m.list.SelectedItem().(PRItem); ok {
 				return m, func() tea.Msg {

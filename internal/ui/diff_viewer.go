@@ -197,6 +197,22 @@ func (m DiffViewerModel) Update(msg tea.Msg) (DiffViewerModel, tea.Cmd) {
 			}
 			m.refreshContent()
 			return m, cmd
+		case key.Matches(msg, DiffViewerKeys.SelectHunkAndAdvance):
+			if m.activeTab == TabDiff && len(m.hunks) > 0 {
+				idx := m.focusedHunkIdx
+				if idx >= 0 && idx < len(m.hunks) {
+					if m.selectedHunks == nil {
+						m.selectedHunks = make(map[int]bool)
+					}
+					if m.selectedHunks[idx] {
+						delete(m.selectedHunks, idx)
+					} else {
+						m.selectedHunks[idx] = true
+					}
+					m.refreshContent()
+				}
+				return m, func() tea.Msg { return HunkSelectedAndAdvanceMsg{} }
+			}
 		case key.Matches(msg, DiffViewerKeys.SelectHunk):
 			if m.activeTab == TabDiff && len(m.hunks) > 0 {
 				idx := m.focusedHunkIdx

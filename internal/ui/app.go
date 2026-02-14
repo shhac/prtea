@@ -120,6 +120,17 @@ type PRCloseErrMsg struct {
 	Err      error
 }
 
+// PRSelectedAndAdvanceMsg is sent when ENTER selects a PR and should advance focus to the diff viewer.
+type PRSelectedAndAdvanceMsg struct {
+	Owner   string
+	Repo    string
+	Number  int
+	HTMLURL string
+}
+
+// HunkSelectedAndAdvanceMsg is sent when ENTER selects a hunk and should advance focus to the chat panel.
+type HunkSelectedAndAdvanceMsg struct{}
+
 // chatStreamChan carries streaming chunks and the final response from Claude chat.
 type chatStreamChan chan tea.Msg
 
@@ -289,6 +300,49 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				fetchReviewsCmd(m.ghClient, msg.Owner, msg.Repo, msg.Number),
 			)
 		}
+		return m, nil
+
+	case PRSelectedAndAdvanceMsg:
+		// Same as PRSelectedMsg but also advances focus to the center panel.
+		title := ""
+		if item, ok := m.prList.list.SelectedItem().(PRItem); ok {
+			title = item.title
+		}
+		m.selectedPR = &SelectedPR{
+			Owner:   msg.Owner,
+			Repo:    msg.Repo,
+			Number:  msg.Number,
+			Title:   title,
+			HTMLURL: msg.HTMLURL,
+		}
+		m.streamChan = nil
+		m.diffFiles = nil
+		m.chatPanel.SetAnalysisResult(nil)
+		m.chatPanel.ClearChat()
+		m.chatPanel.ClearComments()
+		if m.chatService != nil {
+			m.chatService.ClearSession(msg.Owner, msg.Repo, msg.Number)
+		}
+		m.statusBar.SetSelectedPR(msg.Number)
+		m.prList.SetSelectedPR(msg.Number)
+		m.prList.SetCIStatus("")
+		m.prList.SetReviewDecision("")
+		m.diffViewer.SetLoading(msg.Number)
+		m.showAndFocusPanel(PanelCenter)
+		if m.ghClient != nil {
+			m.chatPanel.SetCommentsLoading()
+			return m, tea.Batch(
+				fetchDiffCmd(m.ghClient, msg.Owner, msg.Repo, msg.Number),
+				fetchPRDetailCmd(m.ghClient, msg.Owner, msg.Repo, msg.Number),
+				fetchCommentsCmd(m.ghClient, msg.Owner, msg.Repo, msg.Number),
+				fetchCIStatusCmd(m.ghClient, msg.Owner, msg.Repo, msg.Number),
+				fetchReviewsCmd(m.ghClient, msg.Owner, msg.Repo, msg.Number),
+			)
+		}
+		return m, nil
+
+	case HunkSelectedAndAdvanceMsg:
+		m.showAndFocusPanel(PanelRight)
 		return m, nil
 
 	case DiffLoadedMsg:
