@@ -2,7 +2,9 @@ package ui
 
 import (
 	"fmt"
+	"strings"
 
+	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/viewport"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -114,6 +116,67 @@ func insertModeBadge() string {
 		Background(lipgloss.Color("42")).
 		Padding(0, 1).
 		Render("INSERT")
+}
+
+// newLoadingSpinner creates a consistently styled spinner for loading states.
+func newLoadingSpinner() spinner.Model {
+	s := spinner.New()
+	s.Spinner = spinner.Dot
+	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("62"))
+	return s
+}
+
+// renderEmptyState renders a consistent empty state message with optional action hint.
+func renderEmptyState(message, hint string) string {
+	msg := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("244")).
+		Padding(1, 2).
+		Render("— " + message)
+	if hint == "" {
+		return msg
+	}
+	h := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("240")).
+		Italic(true).
+		Padding(0, 2).
+		Render(hint)
+	return lipgloss.JoinVertical(lipgloss.Left, msg, h)
+}
+
+// renderErrorWithHint renders a consistent error message with retry hint.
+func renderErrorWithHint(errMsg, hint string) string {
+	msg := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("196")).
+		Bold(true).
+		Padding(1, 2).
+		Render(errMsg)
+	if hint == "" {
+		return msg
+	}
+	h := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("244")).
+		Padding(0, 2).
+		Render(hint)
+	return lipgloss.JoinVertical(lipgloss.Left, msg, h)
+}
+
+// formatUserError converts raw error strings into user-friendly messages.
+func formatUserError(err string) string {
+	lower := strings.ToLower(err)
+	switch {
+	case strings.Contains(lower, "gh cli not found"):
+		return "GitHub CLI (gh) not found.\nInstall from https://cli.github.com"
+	case strings.Contains(lower, "not authenticated") || strings.Contains(lower, "auth login"):
+		return "Not authenticated with GitHub.\nRun 'gh auth login' in your terminal."
+	case strings.Contains(lower, "rate limit"):
+		return "GitHub rate limit reached.\nWait a moment and try again."
+	case strings.Contains(lower, "timeout") || strings.Contains(lower, "deadline exceeded"):
+		return "Request timed out.\nCheck your connection and try again."
+	case strings.Contains(lower, "no such host") || strings.Contains(lower, "connection refused"):
+		return "Network error.\nCheck your internet connection."
+	default:
+		return err
+	}
 }
 
 // Scroll indicator style

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/bubbles/key"
+	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -66,6 +67,7 @@ type CommentPostedMsg struct {
 // ChatPanelModel manages the chat/analysis panel.
 type ChatPanelModel struct {
 	viewport  viewport.Model
+	spinner   spinner.Model
 	textInput textinput.Model
 	chatMode  ChatMode
 	activeTab ChatTab
@@ -109,6 +111,7 @@ func NewChatPanelModel() ChatPanelModel {
 	ti.CharLimit = 500
 
 	return ChatPanelModel{
+		spinner:   newLoadingSpinner(),
 		textInput: ti,
 		chatMode:  ChatModeNormal,
 		activeTab: ChatTabChat,
@@ -117,6 +120,13 @@ func NewChatPanelModel() ChatPanelModel {
 
 func (m ChatPanelModel) Update(msg tea.Msg) (ChatPanelModel, tea.Cmd) {
 	switch msg := msg.(type) {
+	case spinner.TickMsg:
+		if m.analysisLoading || m.commentsLoading {
+			var cmd tea.Cmd
+			m.spinner, cmd = m.spinner.Update(msg)
+			return m, cmd
+		}
+		return m, nil
 	case tea.KeyMsg:
 		if m.chatMode == ChatModeInsert {
 			switch {
@@ -458,8 +468,7 @@ func (m ChatPanelModel) renderHeader() string {
 
 func (m ChatPanelModel) renderMessages() string {
 	if len(m.messages) == 0 && !m.isWaiting && m.chatError == "" {
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("244")).
-			Render("No messages yet. Press Enter to start chatting.")
+		return renderEmptyState("No messages yet", "Press Enter to start chatting")
 	}
 
 	var b strings.Builder
@@ -524,7 +533,7 @@ func (m ChatPanelModel) renderMessages() string {
 		b.WriteString(lipgloss.NewStyle().
 			Foreground(lipgloss.Color("196")).
 			Bold(true).
-			Render("Error: " + m.chatError))
+			Render(formatUserError(m.chatError)))
 	}
 
 	return b.String()
@@ -535,20 +544,13 @@ func (m ChatPanelModel) renderAnalysis() string {
 		return lipgloss.NewStyle().
 			Foreground(lipgloss.Color("244")).
 			Padding(1, 0).
-			Render("Analyzing PR with Claude...\n\nThis may take a minute.")
+			Render(m.spinner.View() + " Analyzing PR with Claude...\n\nThis may take a minute.")
 	}
 	if m.analysisError != "" {
-		return lipgloss.NewStyle().
-			Foreground(lipgloss.Color("196")).
-			Bold(true).
-			Padding(1, 0).
-			Render(m.analysisError)
+		return renderErrorWithHint(formatUserError(m.analysisError), "Press 'a' to try again")
 	}
 	if m.analysisResult == nil {
-		return lipgloss.NewStyle().
-			Foreground(lipgloss.Color("244")).
-			Padding(1, 0).
-			Render("Press 'a' to analyze this PR with Claude.")
+		return renderEmptyState("No analysis yet", "Press 'a' to analyze this PR with Claude")
 	}
 	return m.renderAnalysisResult()
 }
@@ -558,20 +560,13 @@ func (m ChatPanelModel) renderComments() string {
 		return lipgloss.NewStyle().
 			Foreground(lipgloss.Color("244")).
 			Padding(1, 0).
-			Render("Loading comments...")
+			Render(m.spinner.View() + " Loading comments...")
 	}
 	if m.commentsError != "" {
-		return lipgloss.NewStyle().
-			Foreground(lipgloss.Color("196")).
-			Bold(true).
-			Padding(1, 0).
-			Render(m.commentsError)
+		return renderErrorWithHint(formatUserError(m.commentsError), "Press r to refresh")
 	}
 	if len(m.comments) == 0 && len(m.inlineComments) == 0 {
-		return lipgloss.NewStyle().
-			Foreground(lipgloss.Color("244")).
-			Padding(1, 0).
-			Render("No comments on this PR.")
+		return renderEmptyState("No comments on this PR", "Press Enter to be the first to comment")
 	}
 
 	innerWidth := m.width - 6

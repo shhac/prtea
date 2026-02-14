@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/bubbles/key"
+	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -59,6 +60,7 @@ func parsePatchHunks(fileIndex int, filename string, patch string) []DiffHunk {
 // DiffViewerModel manages the diff viewer panel.
 type DiffViewerModel struct {
 	viewport  viewport.Model
+	spinner   spinner.Model
 	activeTab DiffViewerTab
 	width     int
 	height    int
@@ -88,17 +90,28 @@ type DiffViewerModel struct {
 
 	// CI status data
 	ciStatus *github.CIStatus
+	ciError  string
 
 	// Review status data
 	reviewSummary *github.ReviewSummary
+	reviewError   string
 }
 
 func NewDiffViewerModel() DiffViewerModel {
-	return DiffViewerModel{}
+	return DiffViewerModel{
+		spinner: newLoadingSpinner(),
+	}
 }
 
 func (m DiffViewerModel) Update(msg tea.Msg) (DiffViewerModel, tea.Cmd) {
 	switch msg := msg.(type) {
+	case spinner.TickMsg:
+		if m.loading {
+			var cmd tea.Cmd
+			m.spinner, cmd = m.spinner.Update(msg)
+			return m, cmd
+		}
+		return m, nil
 	case tea.KeyMsg:
 		if !m.focused {
 			return m, nil
@@ -322,7 +335,9 @@ func (m *DiffViewerModel) SetLoading(prNumber int) {
 	m.prURL = ""
 	m.prInfoErr = ""
 	m.ciStatus = nil
+	m.ciError = ""
 	m.reviewSummary = nil
+	m.reviewError = ""
 	m.refreshContent()
 }
 
@@ -375,6 +390,18 @@ func (m *DiffViewerModel) SetReviewSummary(summary *github.ReviewSummary) {
 	m.refreshContent()
 }
 
+// SetCIError sets an error message for CI status loading.
+func (m *DiffViewerModel) SetCIError(err string) {
+	m.ciError = err
+	m.refreshContent()
+}
+
+// SetReviewError sets an error message for review status loading.
+func (m *DiffViewerModel) SetReviewError(err string) {
+	m.reviewError = err
+	m.refreshContent()
+}
+
 func (m *DiffViewerModel) refreshContent() {
 	if !m.ready {
 		return
@@ -398,21 +425,15 @@ func (m *DiffViewerModel) refreshContent() {
 			lipgloss.NewStyle().
 				Foreground(lipgloss.Color("244")).
 				Padding(1, 2).
-				Render(fmt.Sprintf("Loading diff for PR #%d...", m.prNumber)),
+				Render(m.spinner.View() + fmt.Sprintf(" Loading diff for PR #%d...", m.prNumber)),
 		)
 		return
 	}
 	if m.err != nil {
-		errMsg := lipgloss.NewStyle().
-			Foreground(lipgloss.Color("196")).
-			Bold(true).
-			Padding(1, 2).
-			Render(fmt.Sprintf("Error: %v", m.err))
-		hint := lipgloss.NewStyle().
-			Foreground(lipgloss.Color("244")).
-			Padding(0, 2).
-			Render("Select a PR to try again")
-		m.viewport.SetContent(lipgloss.JoinVertical(lipgloss.Left, errMsg, hint))
+		m.viewport.SetContent(renderErrorWithHint(
+			formatUserError(fmt.Sprintf("%v", m.err)),
+			"Press r to refresh",
+		))
 		return
 	}
 	if m.files != nil {
@@ -420,12 +441,7 @@ func (m *DiffViewerModel) refreshContent() {
 		return
 	}
 	// No PR selected yet
-	m.viewport.SetContent(
-		lipgloss.NewStyle().
-			Foreground(lipgloss.Color("244")).
-			Padding(1, 2).
-			Render("Select a PR to view its diff"),
-	)
+	m.viewport.SetContent(renderEmptyState("Select a PR to view its diff", "Use j/k to navigate, Enter to select"))
 }
 
 func (m DiffViewerModel) View() string {
@@ -483,25 +499,21 @@ func (m DiffViewerModel) renderTabs() string {
 
 func (m DiffViewerModel) renderPRInfo() string {
 	if m.prNumber == 0 {
-		return lipgloss.NewStyle().
-			Foreground(lipgloss.Color("244")).
-			Padding(1, 2).
-			Render("Select a PR to view its details")
+		return renderEmptyState("Select a PR to view its details", "Use j/k to navigate, Enter to select")
 	}
 
 	if m.prInfoErr != "" {
-		return lipgloss.NewStyle().
-			Foreground(lipgloss.Color("196")).
-			Bold(true).
-			Padding(1, 2).
-			Render(fmt.Sprintf("Error loading PR info: %s", m.prInfoErr))
+		return renderErrorWithHint(
+			formatUserError(m.prInfoErr),
+			"Press r to refresh",
+		)
 	}
 
 	if m.prTitle == "" {
 		return lipgloss.NewStyle().
 			Foreground(lipgloss.Color("244")).
 			Padding(1, 2).
-			Render(fmt.Sprintf("Loading PR #%d info...", m.prNumber))
+			Render(m.spinner.View() + fmt.Sprintf(" Loading PR #%d info...", m.prNumber))
 	}
 
 	innerWidth := m.viewport.Width
@@ -533,7 +545,14 @@ func (m DiffViewerModel) renderPRInfo() string {
 	}
 
 	// Reviews
-	if m.reviewSummary != nil {
+	if m.reviewError != "" {
+		b.WriteString("\n")
+		b.WriteString(sectionStyle.Render("Reviews"))
+		b.WriteString("\n")
+		errStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
+		b.WriteString(errStyle.Render(formatUserError(m.reviewError)))
+		b.WriteString("\n")
+	} else if m.reviewSummary != nil {
 		b.WriteString("\n")
 		b.WriteString(sectionStyle.Render("Reviews"))
 		b.WriteString("\n")
@@ -621,17 +640,18 @@ func (m DiffViewerModel) ciTabLabel() string {
 // renderCITab renders the full CI status view for the dedicated CI tab.
 func (m DiffViewerModel) renderCITab() string {
 	if m.prNumber == 0 {
-		return lipgloss.NewStyle().
-			Foreground(lipgloss.Color("244")).
-			Padding(1, 2).
-			Render("Select a PR to view CI status")
+		return renderEmptyState("Select a PR to view CI status", "Use j/k to navigate, Enter to select")
+	}
+
+	if m.ciError != "" {
+		return renderErrorWithHint(formatUserError(m.ciError), "Press r to refresh")
 	}
 
 	if m.ciStatus == nil {
 		return lipgloss.NewStyle().
 			Foreground(lipgloss.Color("244")).
 			Padding(1, 2).
-			Render(fmt.Sprintf("Loading CI status for PR #%d...", m.prNumber))
+			Render(m.spinner.View() + fmt.Sprintf(" Loading CI status for PR #%d...", m.prNumber))
 	}
 
 	sectionStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("33"))
@@ -704,10 +724,7 @@ func (m DiffViewerModel) renderCITab() string {
 // renderRealDiff renders actual PR file diffs with syntax coloring and hunk selection.
 func (m *DiffViewerModel) renderRealDiff() string {
 	if len(m.files) == 0 {
-		return lipgloss.NewStyle().
-			Foreground(lipgloss.Color("244")).
-			Padding(1, 2).
-			Render("No files changed in this PR.")
+		return renderEmptyState("No files changed in this PR", "")
 	}
 
 	innerWidth := m.viewport.Width

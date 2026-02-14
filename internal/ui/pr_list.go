@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/list"
+	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
@@ -155,6 +156,7 @@ func (d prItemDelegate) Render(w io.Writer, m list.Model, index int, item list.I
 // PRListModel manages the PR list panel.
 type PRListModel struct {
 	list      list.Model
+	spinner   spinner.Model
 	activeTab PRListTab
 	width     int
 	height    int
@@ -198,6 +200,7 @@ func NewPRListModel() PRListModel {
 
 	return PRListModel{
 		list:             l,
+		spinner:          newLoadingSpinner(),
 		activeTab:        TabToReview,
 		state:            stateLoading,
 		selectedPRNumber: selected,
@@ -287,6 +290,13 @@ func (m *PRListModel) SetItems(toReview, myPRs []list.Item) {
 
 func (m PRListModel) Update(msg tea.Msg) (PRListModel, tea.Cmd) {
 	switch msg := msg.(type) {
+	case spinner.TickMsg:
+		if m.state == stateLoading {
+			var cmd tea.Cmd
+			m.spinner, cmd = m.spinner.Update(msg)
+			return m, cmd
+		}
+		return m, nil
 	case tea.KeyMsg:
 		switch {
 		case key.Matches(msg, PRListKeys.PrevTab):
@@ -369,7 +379,11 @@ func (m PRListModel) View() string {
 	case stateError:
 		content = m.renderError()
 	case stateLoaded:
-		content = m.list.View()
+		if m.activeTabEmpty() {
+			content = m.renderEmpty()
+		} else {
+			content = m.list.View()
+		}
 	}
 
 	inner := lipgloss.JoinVertical(lipgloss.Left, header, content)
@@ -404,20 +418,30 @@ func (m PRListModel) renderLoading() string {
 	return lipgloss.NewStyle().
 		Foreground(lipgloss.Color("244")).
 		Padding(1, 2).
-		Render("Loading PRs...")
+		Render(m.spinner.View() + " Loading PRs...")
 }
 
 func (m PRListModel) renderError() string {
-	msg := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("196")).
-		Bold(true).
-		Padding(1, 2).
-		Render(m.errMsg)
+	return renderErrorWithHint(formatUserError(m.errMsg), "Press r to retry")
+}
 
-	hint := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("244")).
-		Padding(0, 2).
-		Render("Press r to retry")
+// activeTabEmpty returns true if the current tab has zero items after loading.
+func (m PRListModel) activeTabEmpty() bool {
+	switch m.activeTab {
+	case TabToReview:
+		return len(m.toReview) == 0
+	case TabMyPRs:
+		return len(m.myPRs) == 0
+	}
+	return false
+}
 
-	return lipgloss.JoinVertical(lipgloss.Left, msg, hint)
+func (m PRListModel) renderEmpty() string {
+	switch m.activeTab {
+	case TabToReview:
+		return renderEmptyState("No PRs awaiting your review", "")
+	case TabMyPRs:
+		return renderEmptyState("You haven't opened any PRs", "")
+	}
+	return ""
 }

@@ -11,6 +11,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/list"
+	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/shhac/prtea/internal/claude"
@@ -211,7 +212,7 @@ func NewApp() App {
 }
 
 func (m App) Init() tea.Cmd {
-	return initGHClientCmd
+	return tea.Batch(initGHClientCmd, m.prList.spinner.Tick)
 }
 
 func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -298,6 +299,8 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				fetchCommentsCmd(m.ghClient, msg.Owner, msg.Repo, msg.Number),
 				fetchCIStatusCmd(m.ghClient, msg.Owner, msg.Repo, msg.Number),
 				fetchReviewsCmd(m.ghClient, msg.Owner, msg.Repo, msg.Number),
+				m.diffViewer.spinner.Tick,
+				m.chatPanel.spinner.Tick,
 			)
 		}
 		return m, nil
@@ -337,6 +340,8 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				fetchCommentsCmd(m.ghClient, msg.Owner, msg.Repo, msg.Number),
 				fetchCIStatusCmd(m.ghClient, msg.Owner, msg.Repo, msg.Number),
 				fetchReviewsCmd(m.ghClient, msg.Owner, msg.Repo, msg.Number),
+				m.diffViewer.spinner.Tick,
+				m.chatPanel.spinner.Tick,
 			)
 		}
 		return m, nil
@@ -392,7 +397,9 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.selectedPR == nil || msg.PRNumber != m.selectedPR.Number {
 			return m, nil
 		}
-		if msg.Err == nil && msg.Status != nil {
+		if msg.Err != nil {
+			m.diffViewer.SetCIError(msg.Err.Error())
+		} else if msg.Status != nil {
 			m.diffViewer.SetCIStatus(msg.Status)
 			m.prList.SetCIStatus(msg.Status.OverallStatus)
 		}
@@ -403,7 +410,9 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.selectedPR == nil || msg.PRNumber != m.selectedPR.Number {
 			return m, nil
 		}
-		if msg.Err == nil && msg.Summary != nil {
+		if msg.Err != nil {
+			m.diffViewer.SetReviewError(msg.Err.Error())
+		} else if msg.Summary != nil {
 			m.diffViewer.SetReviewSummary(msg.Summary)
 			m.prList.SetReviewDecision(msg.Summary.ReviewDecision)
 		}
@@ -461,6 +470,18 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case PRCloseErrMsg:
 		m.statusBar.SetTemporaryMessage(fmt.Sprintf("✗ Close failed: %s", msg.Err), 5*time.Second)
 		return m, nil
+
+	case spinner.TickMsg:
+		// Route spinner ticks to all panels (each panel only processes its own spinner)
+		var cmds []tea.Cmd
+		var cmd tea.Cmd
+		m.prList, cmd = m.prList.Update(msg)
+		cmds = append(cmds, cmd)
+		m.diffViewer, cmd = m.diffViewer.Update(msg)
+		cmds = append(cmds, cmd)
+		m.chatPanel, cmd = m.chatPanel.Update(msg)
+		cmds = append(cmds, cmd)
+		return m, tea.Batch(cmds...)
 
 	case ChatSendMsg:
 		return m.handleChatSend(msg.Message)
@@ -907,16 +928,16 @@ func (m App) startAnalysis() (tea.Model, tea.Cmd) {
 	m.chatPanel.activeTab = ChatTabAnalysis
 	m.showAndFocusPanel(PanelRight)
 
-	return m, analyzeDiffCmd(m.analyzer, m.selectedPR, m.diffFiles, hash)
+	return m, tea.Batch(analyzeDiffCmd(m.analyzer, m.selectedPR, m.diffFiles, hash), m.chatPanel.spinner.Tick)
 }
 
 // refreshPRList re-fetches the PR lists (To Review + My PRs).
 func (m App) refreshPRList() (tea.Model, tea.Cmd) {
 	m.prList.SetLoading()
 	if m.ghClient != nil {
-		return m, fetchPRsCmd(m.ghClient)
+		return m, tea.Batch(fetchPRsCmd(m.ghClient), m.prList.spinner.Tick)
 	}
-	return m, initGHClientCmd
+	return m, tea.Batch(initGHClientCmd, m.prList.spinner.Tick)
 }
 
 // refreshSelectedPR re-fetches all data for the currently selected PR
