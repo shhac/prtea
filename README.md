@@ -96,6 +96,8 @@ Press `?` at any time to see the full keybinding reference.
 |-----|--------|
 | `h` / `l` | Prev/next tab |
 | `j` / `k` | Move up/down |
+| `/` | Filter PRs |
+| `Esc` | Clear filter |
 | `Space` | Select PR |
 | `Enter` | Select PR + focus diff |
 
