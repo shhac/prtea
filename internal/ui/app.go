@@ -39,7 +39,8 @@ type App struct {
 	chatService   *claude.ChatService
 	analysisStore *claude.AnalysisStore
 	analyzing     bool
-	streamChan    chatStreamChan // active chat streaming channel
+	streamChan    chatStreamChan      // active chat streaming channel
+	streamCancel  context.CancelFunc // cancels active stream goroutine
 
 	// Layout state
 	focused        Panel
@@ -322,6 +323,10 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case ChatClearMsg:
 		m.chatPanel.ClearChat()
+		if m.streamCancel != nil { // cancel active stream goroutine
+			m.streamCancel()
+			m.streamCancel = nil
+		}
 		m.streamChan = nil // stop any active stream
 		if m.chatService != nil && m.selectedPR != nil {
 			m.chatService.ClearSession(m.selectedPR.Owner, m.selectedPR.Repo, m.selectedPR.Number)
@@ -508,6 +513,10 @@ func (m App) selectPR(owner, repo string, number int, htmlURL string, advance bo
 		Number:  number,
 		Title:   title,
 		HTMLURL: htmlURL,
+	}
+	if m.streamCancel != nil { // cancel active stream goroutine
+		m.streamCancel()
+		m.streamCancel = nil
 	}
 	m.streamChan = nil                 // stop listening to old stream
 	m.diffFiles = nil                  // clear old diff data
@@ -752,20 +761,36 @@ func (m App) handleChatSend(message string) (tea.Model, tea.Cmd) {
 		Message:       message,
 	}
 
+	// Cancel any previous stream before starting a new one
+	if m.streamCancel != nil {
+		m.streamCancel()
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+
 	ch := make(chatStreamChan)
 	go func() {
 		defer close(ch)
-		response, err := m.chatService.ChatStream(context.Background(), input, func(text string) {
-			ch <- ChatStreamChunkMsg{Content: text}
+		response, err := m.chatService.ChatStream(ctx, input, func(text string) {
+			select {
+			case ch <- ChatStreamChunkMsg{Content: text}:
+			case <-ctx.Done():
+			}
 		})
 		if err != nil {
-			ch <- ChatResponseMsg{Err: err}
+			select {
+			case ch <- ChatResponseMsg{Err: err}:
+			case <-ctx.Done():
+			}
 		} else {
-			ch <- ChatResponseMsg{Content: response}
+			select {
+			case ch <- ChatResponseMsg{Content: response}:
+			case <-ctx.Done():
+			}
 		}
 	}()
 
 	m.streamChan = ch
+	m.streamCancel = cancel
 	return m, listenForChatStream(ch)
 }
 
