@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/spinner"
+	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -31,6 +32,16 @@ const (
 	ChatTabChat ChatTab = iota
 	ChatTabAnalysis
 	ChatTabComments
+	ChatTabReview
+)
+
+// ReviewFocus tracks which component has focus within the Review tab.
+type ReviewFocus int
+
+const (
+	ReviewFocusTextArea ReviewFocus = iota
+	ReviewFocusRadio
+	ReviewFocusSubmit
 )
 
 // ChatPanelModel manages the chat/analysis panel.
@@ -67,6 +78,12 @@ type ChatPanelModel struct {
 	commentsLoading bool
 	commentsError   string
 	commentPosting  bool // true while posting a comment
+
+	// Review tab state
+	reviewTextArea   textarea.Model
+	reviewAction     ReviewAction
+	reviewFocus      ReviewFocus
+	reviewSubmitting bool
 }
 
 type chatMessage struct {
@@ -79,11 +96,20 @@ func NewChatPanelModel() ChatPanelModel {
 	ti.Placeholder = "Ask about this PR..."
 	ti.CharLimit = 500
 
+	ta := textarea.New()
+	ta.Placeholder = "Review body (optional for approve)..."
+	ta.CharLimit = 65535
+	ta.SetHeight(5)
+	ta.ShowLineNumbers = false
+	ta.Blur()
+
 	return ChatPanelModel{
-		spinner:   newLoadingSpinner(),
-		textInput: ti,
-		chatMode:  ChatModeNormal,
-		activeTab: ChatTabChat,
+		spinner:      newLoadingSpinner(),
+		textInput:    ti,
+		chatMode:     ChatModeNormal,
+		activeTab:    ChatTabChat,
+		reviewTextArea: ta,
+		reviewAction: ReviewComment,
 	}
 }
 
@@ -97,6 +123,11 @@ func (m ChatPanelModel) Update(msg tea.Msg) (ChatPanelModel, tea.Cmd) {
 		}
 		return m, nil
 	case tea.KeyMsg:
+		// Review tab has its own input handling
+		if m.activeTab == ChatTabReview {
+			return m.updateReviewTab(msg)
+		}
+
 		if m.chatMode == ChatModeInsert {
 			switch {
 			case key.Matches(msg, ChatKeys.ExitInsert):
@@ -149,10 +180,15 @@ func (m ChatPanelModel) Update(msg tea.Msg) (ChatPanelModel, tea.Cmd) {
 			m.refreshViewport()
 			return m, nil
 		case key.Matches(msg, ChatKeys.NextTab):
-			if m.activeTab < ChatTabComments {
+			if m.activeTab < ChatTabReview {
 				m.activeTab++
 			}
 			m.refreshViewport()
+			return m, nil
+		case key.Matches(msg, ChatKeys.NewChat):
+			if m.activeTab == ChatTabChat {
+				return m, func() tea.Msg { return ChatClearMsg{} }
+			}
 			return m, nil
 		case msg.String() == "enter":
 			if m.activeTab == ChatTabAnalysis {
@@ -181,9 +217,9 @@ func (m ChatPanelModel) Update(msg tea.Msg) (ChatPanelModel, tea.Cmd) {
 func (m *ChatPanelModel) SetSize(width, height int) {
 	m.width = width
 	m.height = height
-	// Account for borders (2), header (2), input line (1), padding
+	// Account for borders (2), header (2), separator (1), input line (1), padding
 	innerWidth := width - 4
-	innerHeight := height - 7
+	innerHeight := height - 8
 	if innerWidth < 1 {
 		innerWidth = 1
 	}
@@ -192,6 +228,7 @@ func (m *ChatPanelModel) SetSize(width, height int) {
 	}
 
 	m.textInput.Width = innerWidth - 4
+	m.reviewTextArea.SetWidth(innerWidth)
 
 	if !m.ready {
 		m.viewport = viewport.New(innerWidth, innerHeight)
@@ -208,6 +245,9 @@ func (m *ChatPanelModel) SetFocused(focused bool) {
 	if !focused && m.chatMode == ChatModeInsert {
 		m.chatMode = ChatModeNormal
 		m.textInput.Blur()
+	}
+	if !focused {
+		m.reviewTextArea.Blur()
 	}
 }
 
@@ -355,8 +395,32 @@ func (m *ChatPanelModel) ClearComments() {
 	m.refreshViewport()
 }
 
+// ClearReview resets review state for a new PR.
+func (m *ChatPanelModel) ClearReview() {
+	m.reviewTextArea.Reset()
+	m.reviewAction = ReviewComment
+	m.reviewFocus = ReviewFocusTextArea
+	m.reviewSubmitting = false
+	m.reviewTextArea.Blur()
+}
+
+// SetReviewSubmitted clears the submitting state. On success, also resets the form.
+func (m *ChatPanelModel) SetReviewSubmitted(err error) {
+	m.reviewSubmitting = false
+	if err == nil {
+		m.reviewTextArea.Reset()
+		m.reviewAction = ReviewComment
+		m.reviewFocus = ReviewFocusTextArea
+		m.reviewTextArea.Blur()
+	}
+}
+
 func (m *ChatPanelModel) refreshViewport() {
 	if !m.ready {
+		return
+	}
+	if m.activeTab == ChatTabReview {
+		// Review tab doesn't use viewport for content
 		return
 	}
 	var content string
@@ -374,6 +438,14 @@ func (m *ChatPanelModel) refreshViewport() {
 func (m ChatPanelModel) View() string {
 	header := m.renderHeader()
 
+	if m.activeTab == ChatTabReview {
+		reviewContent := m.renderReview()
+		inner := lipgloss.JoinVertical(lipgloss.Left, header, reviewContent)
+		isInsert := m.reviewTextArea.Focused()
+		style := panelStyle(m.focused, isInsert, m.width-2, m.height-2)
+		return style.Render(inner)
+	}
+
 	var content string
 	if m.ready {
 		content = m.viewport.View()
@@ -381,12 +453,13 @@ func (m ChatPanelModel) View() string {
 		content = "Loading..."
 	}
 
+	separator := m.renderInputSeparator()
 	input := m.renderInput()
 	parts := []string{header, content}
 	if indicator := scrollIndicator(m.viewport, m.width-4); indicator != "" {
 		parts = append(parts, indicator)
 	}
-	parts = append(parts, input)
+	parts = append(parts, separator, input)
 	inner := lipgloss.JoinVertical(lipgloss.Left, parts...)
 
 	isInsert := m.chatMode == ChatModeInsert
@@ -404,6 +477,7 @@ func (m ChatPanelModel) renderHeader() string {
 		{ChatTabChat, "Chat"},
 		{ChatTabAnalysis, "Analysis"},
 		{ChatTabComments, "Comments"},
+		{ChatTabReview, "Review"},
 	}
 
 	for _, t := range tabNames {
@@ -726,30 +800,36 @@ func severityStyle(severity string) lipgloss.Style {
 	}
 }
 
+func (m ChatPanelModel) renderInputSeparator() string {
+	innerWidth := m.width - 6
+	if innerWidth < 1 {
+		innerWidth = 1
+	}
+	sepColor := lipgloss.Color("238")
+	if m.chatMode == ChatModeInsert {
+		sepColor = lipgloss.Color("42")
+	}
+	return lipgloss.NewStyle().
+		Foreground(sepColor).
+		Render(strings.Repeat("─", innerWidth))
+}
+
 func (m ChatPanelModel) renderInput() string {
-	// Analysis tab doesn't have text input
+	// Review and Analysis tabs don't use the shared text input
+	if m.activeTab == ChatTabReview {
+		return ""
+	}
 	if m.activeTab == ChatTabAnalysis {
-		return lipgloss.NewStyle().
-			Foreground(lipgloss.Color("240")).
-			Render("> ") + lipgloss.NewStyle().
-			Foreground(lipgloss.Color("240")).
-			Italic(true).
-			Render("press 'a' to analyze")
+		dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Italic(true)
+		return dimStyle.Render("> press 'a' to analyze")
 	}
 
-	var prefix string
 	if m.chatMode == ChatModeInsert {
-		prefix = lipgloss.NewStyle().
+		prefix := lipgloss.NewStyle().
 			Foreground(lipgloss.Color("42")).
 			Bold(true).
 			Render("> ")
-	} else {
-		prefix = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("240")).
-			Render("> ")
-	}
 
-	if m.chatMode == ChatModeInsert {
 		if m.activeTab == ChatTabComments && m.commentPosting {
 			return prefix + lipgloss.NewStyle().
 				Foreground(lipgloss.Color("244")).
@@ -765,14 +845,218 @@ func (m ChatPanelModel) renderInput() string {
 		return prefix + m.textInput.View()
 	}
 
-	hint := "press Enter to chat"
+	// Normal mode — show hint with dimmed styling
+	prefix := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("245")).
+		Render("> ")
+	hint := "Enter to chat"
 	if m.activeTab == ChatTabComments {
-		hint = "press Enter to comment"
+		hint = "Enter to comment"
 	}
 	return prefix + lipgloss.NewStyle().
-		Foreground(lipgloss.Color("240")).
+		Foreground(lipgloss.Color("245")).
 		Italic(true).
 		Render(hint)
+}
+
+// updateReviewTab handles all key events when the Review tab is active.
+func (m ChatPanelModel) updateReviewTab(msg tea.KeyMsg) (ChatPanelModel, tea.Cmd) {
+	// When textarea is focused, it captures all keys except ESC and Tab
+	if m.reviewTextArea.Focused() {
+		switch msg.String() {
+		case "esc":
+			m.reviewTextArea.Blur()
+			return m, func() tea.Msg { return ModeChangedMsg{Mode: ChatModeNormal} }
+		case "tab":
+			m.reviewTextArea.Blur()
+			m.reviewFocus = ReviewFocusRadio
+			return m, func() tea.Msg { return ModeChangedMsg{Mode: ChatModeNormal} }
+		default:
+			var cmd tea.Cmd
+			m.reviewTextArea, cmd = m.reviewTextArea.Update(msg)
+			return m, cmd
+		}
+	}
+
+	// Normal mode within review tab
+	switch {
+	case key.Matches(msg, ChatKeys.PrevTab):
+		if m.activeTab > ChatTabChat {
+			m.activeTab--
+		}
+		m.refreshViewport()
+		return m, nil
+	case key.Matches(msg, ChatKeys.NextTab):
+		if m.activeTab < ChatTabReview {
+			m.activeTab++
+		}
+		m.refreshViewport()
+		return m, nil
+	}
+
+	switch m.reviewFocus {
+	case ReviewFocusTextArea:
+		switch msg.String() {
+		case "enter":
+			m.reviewTextArea.Focus()
+			return m, func() tea.Msg { return ModeChangedMsg{Mode: ChatModeInsert} }
+		case "tab":
+			m.reviewFocus = ReviewFocusRadio
+			return m, nil
+		case "j", "down":
+			m.reviewFocus = ReviewFocusRadio
+			return m, nil
+		}
+
+	case ReviewFocusRadio:
+		switch msg.String() {
+		case "j", "down":
+			if m.reviewAction < ReviewRequestChanges {
+				m.reviewAction++
+			} else {
+				m.reviewFocus = ReviewFocusSubmit
+			}
+			return m, nil
+		case "k", "up":
+			if m.reviewAction > ReviewApprove {
+				m.reviewAction--
+			} else {
+				m.reviewFocus = ReviewFocusTextArea
+			}
+			return m, nil
+		case "tab":
+			m.reviewFocus = ReviewFocusSubmit
+			return m, nil
+		case "shift+tab":
+			m.reviewFocus = ReviewFocusTextArea
+			return m, nil
+		}
+
+	case ReviewFocusSubmit:
+		switch msg.String() {
+		case "enter":
+			if m.reviewSubmitting {
+				return m, nil
+			}
+			body := strings.TrimSpace(m.reviewTextArea.Value())
+			// Validate: request changes and comment require a body
+			if m.reviewAction == ReviewRequestChanges && body == "" {
+				return m, nil // TODO: could show error
+			}
+			if m.reviewAction == ReviewComment && body == "" {
+				return m, nil
+			}
+			m.reviewSubmitting = true
+			action := m.reviewAction
+			return m, func() tea.Msg {
+				return ReviewSubmitMsg{Action: action, Body: body}
+			}
+		case "tab":
+			m.reviewFocus = ReviewFocusTextArea
+			return m, nil
+		case "shift+tab":
+			m.reviewFocus = ReviewFocusRadio
+			return m, nil
+		case "k", "up":
+			m.reviewFocus = ReviewFocusRadio
+			return m, nil
+		}
+	}
+
+	return m, nil
+}
+
+// renderReview renders the Review tab content: textarea, radio options, submit button.
+func (m ChatPanelModel) renderReview() string {
+	innerWidth := m.width - 6
+	if innerWidth < 10 {
+		innerWidth = 10
+	}
+
+	var b strings.Builder
+
+	// 1. Review body textarea
+	label := reviewLabelStyle.Render("Review Body")
+	if m.reviewFocus == ReviewFocusTextArea && !m.reviewTextArea.Focused() {
+		label += lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Italic(true).Render("  press Enter to edit")
+	}
+	b.WriteString(label)
+	b.WriteString("\n")
+	b.WriteString(m.reviewTextArea.View())
+	b.WriteString("\n\n")
+
+	// 2. Review action radio group
+	b.WriteString(reviewLabelStyle.Render("Action"))
+	b.WriteString("\n")
+
+	actions := []struct {
+		action ReviewAction
+		label  string
+		active lipgloss.Style
+	}{
+		{ReviewApprove, "Approve", reviewApproveStyle},
+		{ReviewComment, "Comment", reviewCommentStyle},
+		{ReviewRequestChanges, "Request Changes", reviewRequestChangesStyle},
+	}
+
+	for _, a := range actions {
+		indicator := "  ( ) "
+		if m.reviewAction == a.action {
+			indicator = "  (●) "
+		}
+
+		var line string
+		if m.reviewAction == a.action {
+			line = indicator + a.active.Render(a.label)
+		} else {
+			line = indicator + reviewOptionDimStyle.Render(a.label)
+		}
+
+		// Highlight the focused radio group
+		if m.reviewFocus == ReviewFocusRadio && m.reviewAction == a.action {
+			line = lipgloss.NewStyle().Bold(true).Render(line)
+		}
+
+		b.WriteString(line)
+		b.WriteString("\n")
+	}
+	b.WriteString("\n")
+
+	// 3. Submit button
+	actionLabels := map[ReviewAction]string{
+		ReviewApprove:        "Approve",
+		ReviewComment:        "Comment",
+		ReviewRequestChanges: "Request Changes",
+	}
+
+	buttonText := fmt.Sprintf("[ Submit: %s ]", actionLabels[m.reviewAction])
+	if m.reviewSubmitting {
+		buttonText = "[ Submitting... ]"
+	}
+
+	if m.reviewFocus == ReviewFocusSubmit && !m.reviewSubmitting {
+		// Focused submit button gets the action's color
+		var style lipgloss.Style
+		switch m.reviewAction {
+		case ReviewApprove:
+			style = reviewSubmitFocusedStyle.
+				Foreground(lipgloss.Color("0")).
+				Background(lipgloss.Color("42"))
+		case ReviewRequestChanges:
+			style = reviewSubmitFocusedStyle.
+				Foreground(lipgloss.Color("255")).
+				Background(lipgloss.Color("196"))
+		default:
+			style = reviewSubmitFocusedStyle.
+				Foreground(lipgloss.Color("252")).
+				Background(lipgloss.Color("62"))
+		}
+		b.WriteString("  " + style.Render(buttonText))
+	} else {
+		b.WriteString("  " + reviewSubmitDimStyle.Render(buttonText))
+	}
+
+	return b.String()
 }
 
 // renderMarkdown renders markdown text with glamour for terminal display.
