@@ -10,9 +10,9 @@ Three-panel TUI built with [Bubbletea](https://github.com/charmbracelet/bubblete
 
 - **Three-panel layout** — PR list, diff viewer, and AI chat side by side with toggleable panels and zoom
 - **AI-powered analysis** — one-key PR analysis with risk assessment, architecture impact, and line-level comments
-- **Interactive chat** — ask Claude questions about the PR with streaming markdown responses
-- **Hunk selection** — select specific diff hunks to focus AI analysis on what matters
-- **PR actions** — approve or close PRs with confirmation, right from the terminal
+- **Interactive chat** — ask Claude questions about the PR with streaming markdown responses and hunk-specific context
+- **Hunk selection** — select specific diff hunks to focus AI chat and analysis on what matters
+- **Review submission** — approve, request changes, or leave review comments with an integrated Review tab
 - **CI status** — dedicated tab showing check results grouped by status
 - **Review status** — per-reviewer approval breakdown with visual badges
 - **Comments** — read and post PR comments with full markdown rendering
@@ -63,7 +63,7 @@ Launch from any directory. The PR list loads your review requests and authored P
 2. Press `Enter` to select a PR and jump to the diff viewer
 3. Navigate the diff with `j`/`k`, jump between hunks with `n`/`N`
 4. Press `a` to run AI analysis, or select specific hunks with `s` and press `Enter` to chat about them
-5. Approve with `A` or close with `X` when you're done
+5. Switch to the Review tab with `l` and submit your review (approve, comment, or request changes)
 
 ## Keybindings
 
@@ -79,8 +79,6 @@ Press `?` at any time to see the full keybinding reference.
 | `z` | Zoom focused panel |
 | `r` | Refresh (PR list / selected PR) |
 | `a` | Analyze PR |
-| `A` | Approve PR |
-| `X` | Close PR |
 | `o` | Open in browser |
 | `?` | Toggle help |
 | `q` | Quit |
@@ -93,7 +91,6 @@ Press `?` at any time to see the full keybinding reference.
 | `j` / `k` | Move up/down |
 | `Space` | Select PR |
 | `Enter` | Select PR + focus diff |
-| `/` | Filter |
 
 ### Diff Viewer
 
@@ -113,8 +110,9 @@ Press `?` at any time to see the full keybinding reference.
 
 | Key | Action |
 |-----|--------|
-| `h` / `l` | Prev/next tab (Chat, Analysis, Comments) |
+| `h` / `l` | Prev/next tab (Chat, Analysis, Comments, Review) |
 | `j` / `k` | Scroll history |
+| `C` | New chat (clear conversation) |
 | `Enter` | Enter insert mode |
 
 ### Chat (Insert Mode)
@@ -123,6 +121,15 @@ Press `?` at any time to see the full keybinding reference.
 |-----|--------|
 | `Enter` | Send message |
 | `Esc` | Exit insert mode |
+
+### Review Tab
+
+| Key | Action |
+|-----|--------|
+| `Enter` | Edit review body / submit review |
+| `Esc` | Exit textarea |
+| `Tab` / `Shift+Tab` | Cycle focus (textarea, action, submit) |
+| `j` / `k` | Cycle review action (approve, comment, request changes) |
 
 ## Configuration
 
