@@ -11,16 +11,14 @@ import (
 
 // Config holds application configuration.
 type Config struct {
-	ReposPath      string `json:"reposPath"`
-	ClaudeTimeout  int    `json:"claudeTimeoutMs"`
-	PollInterval   int    `json:"pollIntervalMs"`
+	ClaudeTimeout int `json:"claudeTimeoutMs"`
+	PollInterval  int `json:"pollIntervalMs"`
 }
 
 // Defaults
 const (
 	DefaultClaudeTimeoutMs = 120000
 	DefaultPollIntervalMs  = 60000
-	DefaultReposPath       = "~/repos"
 )
 
 // DefaultConfigDir returns the platform-appropriate config directory.
@@ -121,38 +119,18 @@ func (c *Config) ClaudeTimeoutDuration() time.Duration {
 	return time.Duration(c.ClaudeTimeout) * time.Millisecond
 }
 
-// ExpandedReposPath returns ReposPath with ~ expanded to home directory.
-func (c *Config) ExpandedReposPath() string {
-	return expandHome(c.ReposPath)
-}
-
 func defaults() *Config {
 	return &Config{
-		ReposPath:     DefaultReposPath,
 		ClaudeTimeout: DefaultClaudeTimeoutMs,
 		PollInterval:  DefaultPollIntervalMs,
 	}
 }
 
 func applyDefaults(cfg *Config) {
-	if cfg.ReposPath == "" {
-		cfg.ReposPath = DefaultReposPath
-	}
 	if cfg.ClaudeTimeout == 0 {
 		cfg.ClaudeTimeout = DefaultClaudeTimeoutMs
 	}
 	if cfg.PollInterval == 0 {
 		cfg.PollInterval = DefaultPollIntervalMs
 	}
-}
-
-func expandHome(path string) string {
-	if len(path) < 2 || path[:2] != "~/" {
-		return path
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return path
-	}
-	return filepath.Join(home, path[2:])
 }

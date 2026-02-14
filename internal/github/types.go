@@ -80,7 +80,6 @@ type CIStatus struct {
 
 // Review represents an individual PR review.
 type Review struct {
-	ID          int64
 	Author      User
 	State       string // "APPROVED", "CHANGES_REQUESTED", "COMMENTED", "DISMISSED", "PENDING"
 	Body        string
@@ -104,11 +103,9 @@ type ReviewSummary struct {
 
 // Comment represents an issue-level PR comment.
 type Comment struct {
-	ID        int64
 	Author    User
 	Body      string
 	CreatedAt time.Time
-	UpdatedAt time.Time
 }
 
 // InlineComment represents a review comment on a specific file/line.

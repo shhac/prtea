@@ -16,9 +16,6 @@ func TestDefaults(t *testing.T) {
 	if cfg.PollInterval != DefaultPollIntervalMs {
 		t.Errorf("PollInterval = %d, want %d", cfg.PollInterval, DefaultPollIntervalMs)
 	}
-	if cfg.ReposPath != DefaultReposPath {
-		t.Errorf("ReposPath = %q, want %q", cfg.ReposPath, DefaultReposPath)
-	}
 }
 
 func TestApplyDefaults(t *testing.T) {
@@ -31,21 +28,14 @@ func TestApplyDefaults(t *testing.T) {
 		if cfg.PollInterval != DefaultPollIntervalMs {
 			t.Errorf("PollInterval = %d, want %d", cfg.PollInterval, DefaultPollIntervalMs)
 		}
-		if cfg.ReposPath != DefaultReposPath {
-			t.Errorf("ReposPath = %q, want %q", cfg.ReposPath, DefaultReposPath)
-		}
 	})
 
 	t.Run("preserves non-zero values", func(t *testing.T) {
 		cfg := &Config{
-			ReposPath:     "/custom/path",
 			ClaudeTimeout: 60000,
 			PollInterval:  30000,
 		}
 		applyDefaults(cfg)
-		if cfg.ReposPath != "/custom/path" {
-			t.Errorf("ReposPath = %q, want /custom/path", cfg.ReposPath)
-		}
 		if cfg.ClaudeTimeout != 60000 {
 			t.Errorf("ClaudeTimeout = %d, want 60000", cfg.ClaudeTimeout)
 		}
@@ -64,40 +54,6 @@ func TestClaudeTimeoutDuration(t *testing.T) {
 	}
 }
 
-func TestExpandHome(t *testing.T) {
-	t.Run("expands tilde", func(t *testing.T) {
-		got := expandHome("~/repos")
-		if got == "~/repos" {
-			t.Error("tilde should have been expanded")
-		}
-		if got[len(got)-6:] != "/repos" {
-			t.Errorf("expected path ending in /repos, got %q", got)
-		}
-	})
-
-	t.Run("no tilde", func(t *testing.T) {
-		got := expandHome("/absolute/path")
-		if got != "/absolute/path" {
-			t.Errorf("got %q, want /absolute/path", got)
-		}
-	})
-
-	t.Run("empty string", func(t *testing.T) {
-		got := expandHome("")
-		if got != "" {
-			t.Errorf("got %q, want empty", got)
-		}
-	})
-
-	t.Run("just tilde", func(t *testing.T) {
-		// "~" alone has length < 2 or doesn't start with "~/"
-		got := expandHome("~")
-		if got != "~" {
-			t.Errorf("got %q, want ~", got)
-		}
-	})
-}
-
 func TestSaveAndLoadRoundTrip(t *testing.T) {
 	tmpDir := t.TempDir()
 
@@ -105,7 +61,6 @@ func TestSaveAndLoadRoundTrip(t *testing.T) {
 	configPath := filepath.Join(tmpDir, "config.json")
 
 	cfg := &Config{
-		ReposPath:     "/home/alice/repos",
 		ClaudeTimeout: 90000,
 		PollInterval:  45000,
 	}
@@ -129,9 +84,6 @@ func TestSaveAndLoadRoundTrip(t *testing.T) {
 		t.Fatalf("unmarshal failed: %v", err)
 	}
 
-	if loaded.ReposPath != cfg.ReposPath {
-		t.Errorf("ReposPath = %q, want %q", loaded.ReposPath, cfg.ReposPath)
-	}
 	if loaded.ClaudeTimeout != cfg.ClaudeTimeout {
 		t.Errorf("ClaudeTimeout = %d, want %d", loaded.ClaudeTimeout, cfg.ClaudeTimeout)
 	}

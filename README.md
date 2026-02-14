@@ -146,7 +146,6 @@ Config file location: `~/.config/prtea/config.json`
 
 ```json
 {
-  "reposPath": "~/repos",
   "claudeTimeoutMs": 120000,
   "pollIntervalMs": 60000
 }
@@ -154,7 +153,6 @@ Config file location: `~/.config/prtea/config.json`
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `reposPath` | `~/repos` | Path to local repository clones |
 | `claudeTimeoutMs` | `120000` | AI analysis timeout in milliseconds |
 | `pollIntervalMs` | `60000` | Auto-refresh interval in milliseconds |
 
@@ -200,7 +198,6 @@ internal/ui/              Bubbletea UI layer (panels, layout, styles, keys)
 internal/github/          GitHub API client (gh CLI based, with CommandRunner injection)
 internal/claude/          Claude CLI subprocess (analysis + chat + caching)
 internal/config/          Config file management
-internal/git/             Git operations (clone, fetch, SHA lookup)
 ```
 
 ## License

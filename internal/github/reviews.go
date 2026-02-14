@@ -3,6 +3,7 @@ package github
 import (
 	"context"
 	"fmt"
+	"sort"
 	"time"
 )
 
@@ -107,5 +108,8 @@ func deduplicateReviews(reviews []ghReview) []ghReview {
 	for _, r := range latest {
 		result = append(result, r)
 	}
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].SubmittedAt.Before(result[j].SubmittedAt)
+	})
 	return result
 }
