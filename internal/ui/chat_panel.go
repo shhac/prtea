@@ -251,13 +251,19 @@ func (m *ChatPanelModel) SetAnalysisError(err string) {
 }
 
 // AppendStreamChunk appends a text chunk during streaming and refreshes the viewport.
+// Only auto-scrolls if the user was already at the bottom, so scrolling up
+// to read earlier messages is not disrupted by incoming tokens.
 func (m *ChatPanelModel) AppendStreamChunk(chunk string) {
 	m.streamingContent += chunk
+	wasAtBottom := m.viewport.AtBottom()
 	m.refreshViewport()
-	m.viewport.GotoBottom()
+	if wasAtBottom {
+		m.viewport.GotoBottom()
+	}
 }
 
 // AddResponse appends a Claude response and clears the waiting state.
+// Only auto-scrolls if the user was already at the bottom.
 func (m *ChatPanelModel) AddResponse(content string) {
 	m.messages = append(m.messages, chatMessage{
 		role:    "assistant",
@@ -266,17 +272,24 @@ func (m *ChatPanelModel) AddResponse(content string) {
 	m.isWaiting = false
 	m.chatError = ""
 	m.streamingContent = ""
+	wasAtBottom := m.viewport.AtBottom()
 	m.refreshViewport()
-	m.viewport.GotoBottom()
+	if wasAtBottom {
+		m.viewport.GotoBottom()
+	}
 }
 
 // SetChatError sets a chat error and clears the waiting state.
+// Only auto-scrolls if the user was already at the bottom.
 func (m *ChatPanelModel) SetChatError(err string) {
 	m.chatError = err
 	m.isWaiting = false
 	m.streamingContent = ""
+	wasAtBottom := m.viewport.AtBottom()
 	m.refreshViewport()
-	m.viewport.GotoBottom()
+	if wasAtBottom {
+		m.viewport.GotoBottom()
+	}
 }
 
 // ClearChat resets chat messages and state for a new PR.
