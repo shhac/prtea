@@ -4,21 +4,22 @@ import "github.com/charmbracelet/bubbles/key"
 
 // GlobalKeyMap defines keys available in navigation mode regardless of focused panel.
 type GlobalKeyMap struct {
-	Quit        key.Binding
-	Help        key.Binding
-	Tab         key.Binding
-	ShiftTab    key.Binding
-	Panel1      key.Binding
-	Panel2      key.Binding
-	Panel3      key.Binding
-	Analyze     key.Binding
-	AIReview    key.Binding
-	OpenBrowser key.Binding
+	Quit         key.Binding
+	Help         key.Binding
+	Tab          key.Binding
+	ShiftTab     key.Binding
+	Panel1       key.Binding
+	Panel2       key.Binding
+	Panel3       key.Binding
+	Analyze      key.Binding
+	OpenBrowser  key.Binding
 	Refresh      key.Binding
 	ToggleLeft   key.Binding
 	ToggleCenter key.Binding
 	ToggleRight  key.Binding
 	Zoom         key.Binding
+	CommandMode  key.Binding
+	ExCommand    key.Binding
 }
 
 var GlobalKeys = GlobalKeyMap{
@@ -54,10 +55,6 @@ var GlobalKeys = GlobalKeyMap{
 		key.WithKeys("a"),
 		key.WithHelp("a", "analyze"),
 	),
-	AIReview: key.NewBinding(
-		key.WithKeys("R"),
-		key.WithHelp("R", "AI review"),
-	),
 	OpenBrowser: key.NewBinding(
 		key.WithKeys("o"),
 		key.WithHelp("o", "open in browser"),
@@ -81,6 +78,14 @@ var GlobalKeys = GlobalKeyMap{
 	Zoom: key.NewBinding(
 		key.WithKeys("z"),
 		key.WithHelp("z", "zoom panel"),
+	),
+	CommandMode: key.NewBinding(
+		key.WithKeys("ctrl+p"),
+		key.WithHelp("Ctrl+P", "quick palette"),
+	),
+	ExCommand: key.NewBinding(
+		key.WithKeys(":"),
+		key.WithHelp(":", "command mode"),
 	),
 }
 

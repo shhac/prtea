@@ -239,6 +239,21 @@ type StatusBarClearMsg struct {
 	Seq int
 }
 
+// -- Command mode --
+
+// CommandExecuteMsg is sent when a command should be executed.
+type CommandExecuteMsg struct {
+	Name string
+}
+
+// CommandModeExitMsg is sent when command mode is dismissed without executing.
+type CommandModeExitMsg struct{}
+
+// CommandNotFoundMsg is sent when an unrecognized command is entered.
+type CommandNotFoundMsg struct {
+	Input string
+}
+
 // -- Internal streaming --
 
 // chatStreamChan carries streaming chunks and the final response from Claude chat.

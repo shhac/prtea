@@ -16,6 +16,7 @@ const (
 	ModeNavigation AppMode = iota
 	ModeInsert
 	ModeOverlay
+	ModeCommand
 )
 
 // Layout constants

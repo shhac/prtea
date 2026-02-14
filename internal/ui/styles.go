@@ -232,6 +232,39 @@ var (
 		Bold(true)
 )
 
+// Command palette styles
+var (
+	cmdPaletteTitleStyle = lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("252")).
+		Background(lipgloss.Color("62"))
+	cmdPaletteDividerStyle = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("240"))
+	cmdPaletteKeyStyle = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("214")).
+		Bold(true)
+	cmdPaletteDescStyle = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("252"))
+	cmdPaletteSelectedStyle = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("42")).
+		Bold(true)
+	cmdPaletteMarkerStyle = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("42"))
+	cmdPaletteAliasStyle = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("244")).
+		Italic(true)
+	cmdPaletteHintStyle = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("244"))
+	cmdPaletteErrorStyle = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("196")).
+		Italic(true)
+	cmdPalettePromptStyle = lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("62"))
+	cmdPaletteInputTextStyle = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("252"))
+)
+
 // Scroll indicator style
 var scrollIndicatorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
 

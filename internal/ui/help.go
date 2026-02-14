@@ -183,8 +183,9 @@ func (m HelpOverlayModel) renderHelpContent() string {
 				{"z", "Zoom focused panel"},
 				{"r", "Refresh (PR list / selected PR)"},
 				{"a", "Analyze PR"},
-				{"R", "AI review (generate + pre-fill)"},
 				{"o", "Open in browser"},
+				{"Ctrl+P", "Quick command palette"},
+				{":", "Command mode"},
 				{"?", "Toggle this help"},
 				{"q", "Quit"},
 			},
@@ -245,13 +246,31 @@ func (m HelpOverlayModel) renderHelpContent() string {
 			panel: PanelRight,
 			match: false,
 			keys: []helpEntry{
-				{"R", "Generate AI review with inline comments"},
 				{"Tab", "Next field (body → action → submit)"},
 				{"Shift+Tab", "Previous field"},
 				{"Enter", "Activate text area / submit review"},
 				{"Esc", "Deactivate text area"},
 				{"j / k", "Change review action"},
 			},
+		},
+		{
+			title: "Command Mode",
+			panel: -1,
+			match: false,
+			keys: []helpEntry{
+				{"Ctrl+P", "Open quick palette (single keypress)"},
+				{":", "Open full command mode (type + Enter)"},
+				{"Esc", "Cancel / close palette"},
+				{"Tab", "Autocomplete (full mode)"},
+				{"Up / Down", "Navigate suggestions (full mode)"},
+				{"Enter", "Execute command (full mode)"},
+			},
+		},
+		{
+			title: "Available Commands",
+			panel: -1,
+			match: false,
+			keys: availableCommandEntries(),
 		},
 	}
 
@@ -294,6 +313,22 @@ func (m HelpOverlayModel) renderHelpContent() string {
 type helpEntry struct {
 	key  string
 	desc string
+}
+
+// availableCommandEntries builds help entries from the command registry.
+func availableCommandEntries() []helpEntry {
+	var entries []helpEntry
+	for _, cmd := range commandRegistry {
+		label := cmd.Name
+		if len(cmd.Aliases) > 0 {
+			label += " (" + strings.Join(cmd.Aliases, ", ") + ")"
+		}
+		if cmd.QuickKey != "" {
+			label += " [" + cmd.QuickKey + "]"
+		}
+		entries = append(entries, helpEntry{key: label, desc: cmd.Description})
+	}
+	return entries
 }
 
 func padRight(s string, width int) string {

@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -24,6 +25,7 @@ type App struct {
 
 	// Overlays
 	helpOverlay HelpOverlayModel
+	commandMode CommandModeModel
 
 	// GitHub client (nil until GHClientReadyMsg)
 	ghClient GitHubService
@@ -87,6 +89,7 @@ func NewApp() App {
 		chatPanel:     NewChatPanelModel(),
 		statusBar:     NewStatusBarModel(),
 		helpOverlay:   NewHelpOverlayModel(),
+		commandMode:   NewCommandModeModel(),
 		focused:       PanelLeft,
 		panelVisible:  [3]bool{true, true, true},
 		mode:          ModeNavigation,
@@ -109,6 +112,7 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m.helpOverlay.SetSize(m.width, m.height)
+		m.commandMode.SetSize(m.width, m.height)
 		// Auto-collapse right panel on first render if terminal is narrow
 		if !m.initialized {
 			m.initialized = true
@@ -144,6 +148,20 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.mode = ModeNavigation
 		m.statusBar.SetState(m.focused, m.mode)
 		return m, nil
+
+	case CommandExecuteMsg:
+		m.mode = ModeNavigation
+		m.statusBar.SetState(m.focused, m.mode)
+		return m.executeCommand(msg.Name)
+
+	case CommandModeExitMsg:
+		m.mode = ModeNavigation
+		m.statusBar.SetState(m.focused, m.mode)
+		return m, nil
+
+	case CommandNotFoundMsg:
+		clearCmd := m.statusBar.SetTemporaryMessage(fmt.Sprintf("Unknown command: %s", msg.Input), 2*time.Second)
+		return m, clearCmd
 
 	case ModeChangedMsg:
 		if msg.Mode == ChatModeInsert {
@@ -404,6 +422,13 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateChatPanel(msg)
 		}
 
+		// Command mode captures all keys
+		if m.mode == ModeCommand {
+			var cmd tea.Cmd
+			m.commandMode, cmd = m.commandMode.Update(msg)
+			return m, cmd
+		}
+
 		// While filtering the PR list, route all keys to the list
 		if m.focused == PanelLeft && m.prList.IsFiltering() {
 			return m.updateFocusedPanel(msg)
@@ -488,14 +513,25 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, GlobalKeys.Analyze):
 			return m.startAnalysis()
 
-		case key.Matches(msg, GlobalKeys.AIReview):
-			return m.startAIReview()
-
 		case key.Matches(msg, GlobalKeys.Refresh):
 			if m.focused == PanelLeft {
 				return m.refreshPRList()
 			}
 			return m.refreshSelectedPR()
+
+		case key.Matches(msg, GlobalKeys.CommandMode):
+			m.mode = ModeCommand
+			m.commandMode.SetSize(m.width, m.height)
+			cmd := m.commandMode.Open(true)
+			m.statusBar.SetState(m.focused, m.mode)
+			return m, cmd
+
+		case key.Matches(msg, GlobalKeys.ExCommand):
+			m.mode = ModeCommand
+			m.commandMode.SetSize(m.width, m.height)
+			cmd := m.commandMode.Open(false)
+			m.statusBar.SetState(m.focused, m.mode)
+			return m, cmd
 
 		}
 
@@ -539,6 +575,11 @@ func (m App) View() string {
 	// Render help overlay on top if active
 	if m.helpOverlay.IsVisible() {
 		return m.helpOverlay.View()
+	}
+
+	// Render command palette at the bottom if active
+	if m.commandMode.IsActive() {
+		return m.renderCommandOverlay(base)
 	}
 
 	return base
@@ -934,5 +975,101 @@ func (m App) handleCommentPost(body string) (tea.Model, tea.Cmd) {
 		err := client.PostComment(context.Background(), pr.Owner, pr.Repo, pr.Number, body)
 		return CommentPostedMsg{Err: err}
 	}
+}
+
+// executeCommand dispatches a named command from the command palette.
+func (m App) executeCommand(name string) (tea.Model, tea.Cmd) {
+	switch name {
+	case "analyze":
+		return m.startAnalysis()
+	case "review":
+		return m.startAIReview()
+	case "open":
+		if m.selectedPR != nil && m.selectedPR.HTMLURL != "" {
+			return m, openBrowserCmd(m.selectedPR.HTMLURL)
+		}
+		return m, nil
+	case "approve":
+		m.chatPanel.activeTab = ChatTabReview
+		m.showAndFocusPanel(PanelRight)
+		return m, nil
+	case "refresh":
+		if m.focused == PanelLeft {
+			return m.refreshPRList()
+		}
+		return m.refreshSelectedPR()
+	case "new":
+		return m, func() tea.Msg { return ChatClearMsg{} }
+	case "quit":
+		return m, tea.Quit
+	case "help":
+		m.mode = ModeOverlay
+		m.helpOverlay.SetSize(m.width, m.height)
+		m.helpOverlay.Show(m.focused)
+		m.statusBar.SetState(m.focused, m.mode)
+		return m, nil
+	case "zoom":
+		m.toggleZoom()
+		return m, nil
+	case "prs":
+		m.showAndFocusPanel(PanelLeft)
+		return m, nil
+	case "diff":
+		m.showAndFocusPanel(PanelCenter)
+		return m, nil
+	case "chat":
+		m.showAndFocusPanel(PanelRight)
+		return m, nil
+	case "toggle left":
+		if m.zoomed {
+			m.exitZoom()
+		}
+		m.togglePanel(PanelLeft)
+		return m, nil
+	case "toggle center":
+		if m.zoomed {
+			m.exitZoom()
+		}
+		m.togglePanel(PanelCenter)
+		return m, nil
+	case "toggle right":
+		if m.zoomed {
+			m.exitZoom()
+		}
+		m.togglePanel(PanelRight)
+		return m, nil
+	default:
+		input := name
+		return m, func() tea.Msg { return CommandNotFoundMsg{Input: input} }
+	}
+}
+
+// renderCommandOverlay composites the command palette at the bottom of the base view.
+func (m App) renderCommandOverlay(base string) string {
+	overlay := m.commandMode.View()
+	if overlay == "" {
+		return base
+	}
+
+	overlayLines := strings.Split(overlay, "\n")
+	baseLines := strings.Split(base, "\n")
+
+	overlayH := len(overlayLines)
+	if overlayH > len(baseLines) {
+		overlayH = len(baseLines)
+	}
+
+	start := len(baseLines) - overlayH
+	for i := 0; i < len(overlayLines) && start+i < len(baseLines); i++ {
+		line := overlayLines[i]
+		// Pad to full width to cover base content underneath
+		lineWidth := lipgloss.Width(line)
+		if lineWidth < m.width {
+			line += strings.Repeat(" ", m.width-lineWidth)
+		}
+		baseLines[start+i] = line
+	}
+
+	return strings.Join(baseLines, "\n")
 }
 

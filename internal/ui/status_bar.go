@@ -146,6 +146,8 @@ func (m StatusBarModel) contextInfo() string {
 		modeStr = " INSERT "
 	case ModeOverlay:
 		modeStr = " OVERLAY "
+	case ModeCommand:
+		modeStr = " COMMAND "
 	default:
 		modeStr = " NAV "
 	}
