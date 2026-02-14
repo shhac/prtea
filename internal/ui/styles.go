@@ -179,6 +179,37 @@ func formatUserError(err string) string {
 	}
 }
 
+// Review tab styles
+var (
+	reviewApproveStyle = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("0")).
+		Background(lipgloss.Color("42")).
+		Bold(true).
+		Padding(0, 1)
+	reviewCommentStyle = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("252")).
+		Background(lipgloss.Color("62")).
+		Bold(true).
+		Padding(0, 1)
+	reviewRequestChangesStyle = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("255")).
+		Background(lipgloss.Color("196")).
+		Bold(true).
+		Padding(0, 1)
+	reviewOptionDimStyle = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("244")).
+		Padding(0, 1)
+	reviewSubmitFocusedStyle = lipgloss.NewStyle().
+		Bold(true).
+		Padding(0, 2)
+	reviewSubmitDimStyle = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("244")).
+		Padding(0, 2)
+	reviewLabelStyle = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("244")).
+		Bold(true)
+)
+
 // Scroll indicator style
 var scrollIndicatorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
 
