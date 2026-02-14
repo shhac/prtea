@@ -12,6 +12,7 @@ type GlobalKeyMap struct {
 	Panel2      key.Binding
 	Panel3      key.Binding
 	Analyze     key.Binding
+	AIReview    key.Binding
 	OpenBrowser key.Binding
 	Refresh      key.Binding
 	ToggleLeft   key.Binding
@@ -52,6 +53,10 @@ var GlobalKeys = GlobalKeyMap{
 	Analyze: key.NewBinding(
 		key.WithKeys("a"),
 		key.WithHelp("a", "analyze"),
+	),
+	AIReview: key.NewBinding(
+		key.WithKeys("R"),
+		key.WithHelp("R", "AI review"),
 	),
 	OpenBrowser: key.NewBinding(
 		key.WithKeys("o"),
@@ -132,6 +137,7 @@ type DiffViewerKeyMap struct {
 	SelectHunkAndAdvance  key.Binding
 	SelectFileHunks       key.Binding
 	ClearSelection        key.Binding
+	Search                key.Binding
 }
 
 var DiffViewerKeys = DiffViewerKeyMap{
@@ -190,6 +196,10 @@ var DiffViewerKeys = DiffViewerKeyMap{
 	ClearSelection: key.NewBinding(
 		key.WithKeys("c"),
 		key.WithHelp("c", "clear selection"),
+	),
+	Search: key.NewBinding(
+		key.WithKeys("/"),
+		key.WithHelp("/", "search"),
 	),
 }
 

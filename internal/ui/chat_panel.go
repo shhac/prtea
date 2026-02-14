@@ -85,6 +85,11 @@ type ChatPanelModel struct {
 	reviewFocus      ReviewFocus
 	reviewSubmitting bool
 
+	// AI review state
+	aiReviewResult   *claude.ReviewAnalysis
+	aiReviewLoading  bool
+	aiReviewError    string
+
 	// Cached glamour renderer (recreated when width changes)
 	glamourRenderer *glamour.TermRenderer
 	glamourWidth    int
@@ -120,7 +125,7 @@ func NewChatPanelModel() ChatPanelModel {
 func (m ChatPanelModel) Update(msg tea.Msg) (ChatPanelModel, tea.Cmd) {
 	switch msg := msg.(type) {
 	case spinner.TickMsg:
-		if m.analysisLoading || m.commentsLoading {
+		if m.analysisLoading || m.commentsLoading || m.aiReviewLoading {
 			var cmd tea.Cmd
 			m.spinner, cmd = m.spinner.Update(msg)
 			return m, cmd
@@ -415,6 +420,51 @@ func (m *ChatPanelModel) ClearReview() {
 	m.reviewFocus = ReviewFocusTextArea
 	m.reviewSubmitting = false
 	m.reviewTextArea.Blur()
+	m.aiReviewResult = nil
+	m.aiReviewLoading = false
+	m.aiReviewError = ""
+}
+
+// SetAIReviewLoading puts the review tab into AI review loading state.
+func (m *ChatPanelModel) SetAIReviewLoading() {
+	m.aiReviewLoading = true
+	m.aiReviewError = ""
+	m.aiReviewResult = nil
+}
+
+// SetAIReviewResult pre-populates the review form with AI-generated content.
+func (m *ChatPanelModel) SetAIReviewResult(result *claude.ReviewAnalysis) {
+	m.aiReviewLoading = false
+	m.aiReviewError = ""
+	m.aiReviewResult = result
+
+	// Pre-populate the review form
+	m.reviewTextArea.SetValue(result.Body)
+
+	switch result.Action {
+	case "approve":
+		m.reviewAction = ReviewApprove
+	case "request_changes":
+		m.reviewAction = ReviewRequestChanges
+	default:
+		m.reviewAction = ReviewComment
+	}
+
+	m.reviewFocus = ReviewFocusTextArea
+}
+
+// SetAIReviewError sets an error message for AI review generation.
+func (m *ChatPanelModel) SetAIReviewError(err string) {
+	m.aiReviewLoading = false
+	m.aiReviewError = err
+	m.aiReviewResult = nil
+}
+
+// ClearAIReview resets AI review state.
+func (m *ChatPanelModel) ClearAIReview() {
+	m.aiReviewResult = nil
+	m.aiReviewLoading = false
+	m.aiReviewError = ""
 }
 
 // SetReviewSubmitted clears the submitting state. On success, also resets the form.
@@ -425,6 +475,9 @@ func (m *ChatPanelModel) SetReviewSubmitted(err error) {
 		m.reviewAction = ReviewComment
 		m.reviewFocus = ReviewFocusTextArea
 		m.reviewTextArea.Blur()
+		m.aiReviewResult = nil
+		m.aiReviewLoading = false
+		m.aiReviewError = ""
 	}
 }
 
@@ -971,8 +1024,13 @@ func (m ChatPanelModel) updateReviewTab(msg tea.KeyMsg) (ChatPanelModel, tea.Cmd
 			}
 			m.reviewSubmitting = true
 			action := m.reviewAction
+			// Include AI inline comments if available
+			var inlineComments []claude.InlineReviewComment
+			if m.aiReviewResult != nil {
+				inlineComments = m.aiReviewResult.Comments
+			}
 			return m, func() tea.Msg {
-				return ReviewSubmitMsg{Action: action, Body: body}
+				return ReviewSubmitMsg{Action: action, Body: body, InlineComments: inlineComments}
 			}
 		case "tab":
 			m.reviewFocus = ReviewFocusTextArea
@@ -997,6 +1055,35 @@ func (m ChatPanelModel) renderReview() string {
 	}
 
 	var b strings.Builder
+
+	// AI review status banner
+	if m.aiReviewLoading {
+		b.WriteString(lipgloss.NewStyle().
+			Foreground(lipgloss.Color("244")).
+			Render(m.spinner.View() + " Generating AI review..."))
+		b.WriteString("\n\n")
+	} else if m.aiReviewError != "" {
+		b.WriteString(lipgloss.NewStyle().
+			Foreground(lipgloss.Color("196")).
+			Bold(true).
+			Render("AI review failed: " + formatUserError(m.aiReviewError)))
+		b.WriteString("\n")
+		b.WriteString(lipgloss.NewStyle().
+			Foreground(lipgloss.Color("244")).
+			Italic(true).
+			Render("Press R to retry"))
+		b.WriteString("\n\n")
+	} else if m.aiReviewResult != nil {
+		badge := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("0")).
+			Background(lipgloss.Color("75")).
+			Bold(true).
+			Padding(0, 1).
+			Render("AI REVIEW")
+		commentCount := fmt.Sprintf(" %d inline comments", len(m.aiReviewResult.Comments))
+		b.WriteString(badge + lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render(commentCount))
+		b.WriteString("\n\n")
+	}
 
 	// 1. Review body textarea
 	label := reviewLabelStyle.Render("Review Body")

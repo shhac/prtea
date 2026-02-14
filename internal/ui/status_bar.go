@@ -15,7 +15,9 @@ type StatusBarModel struct {
 	focused    Panel
 	mode       AppMode
 	selectedPR int
-	filtering  bool // true when PR list filter input is active
+	filtering      bool   // true when PR list filter input is active
+	diffSearching  bool   // true when diff viewer search input is active
+	diffSearchInfo string // e.g. "3/17" when search has matches
 
 	// Temporary flash message (e.g. "Refreshing PR #123...")
 	statusMessage string
@@ -41,6 +43,16 @@ func (m *StatusBarModel) SetState(focused Panel, mode AppMode) {
 // SetFiltering updates whether the PR list filter input is active.
 func (m *StatusBarModel) SetFiltering(filtering bool) {
 	m.filtering = filtering
+}
+
+// SetDiffSearching updates whether the diff viewer search input is active.
+func (m *StatusBarModel) SetDiffSearching(searching bool) {
+	m.diffSearching = searching
+}
+
+// SetDiffSearchInfo updates the diff search match info (e.g. "3/17").
+func (m *StatusBarModel) SetDiffSearchInfo(info string) {
+	m.diffSearchInfo = info
 }
 
 func (m *StatusBarModel) SetSelectedPR(number int) {
@@ -113,7 +125,13 @@ func (m StatusBarModel) keyHints() string {
 	case PanelLeft:
 		return " [h/l]tab [j/k]move [/]filter [Enter]select [r]refresh [Tab]panel [z]zoom [?]help"
 	case PanelCenter:
-		return " [h/l]tab [j/k]scroll [n/N]hunk [s/Space]select [S]file [c]clear [r]refresh [Tab]panel [z]zoom [?]help"
+		if m.diffSearching {
+			return " [Esc]cancel [Enter]confirm [type]search"
+		}
+		if m.diffSearchInfo != "" {
+			return " [n/N]next/prev match [Esc]clear search [/]new search [Tab]panel [?]help"
+		}
+		return " [h/l]tab [j/k]scroll [n/N]hunk [s/Space]select [S]file [c]clear [/]search [r]refresh [Tab]panel [z]zoom [?]help"
 	case PanelRight:
 		return " [h/l]tab [j/k]scroll [Enter]insert [C]new chat [r]refresh [Tab]panel [z]zoom [?]help"
 	default:

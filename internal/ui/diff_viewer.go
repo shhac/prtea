@@ -6,9 +6,11 @@ import (
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/spinner"
+	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/shhac/prtea/internal/claude"
 	"github.com/shhac/prtea/internal/github"
 )
 
@@ -57,6 +59,20 @@ func parsePatchHunks(fileIndex int, filename string, patch string) []DiffHunk {
 	return hunks
 }
 
+// matchPos represents a single search match position within a line.
+type matchPos struct {
+	startCol int
+	endCol   int
+}
+
+// searchMatch identifies a single search match globally across all hunks.
+type searchMatch struct {
+	hunkIdx    int
+	lineInHunk int
+	startCol   int
+	endCol     int
+}
+
 // parseAllHunks parses hunks from all files once and populates m.hunks.
 func (m *DiffViewerModel) parseAllHunks() {
 	m.hunks = nil
@@ -101,6 +117,18 @@ type DiffViewerModel struct {
 	lastRenderedFocus int          // focusedHunkIdx at last cache update
 	dirtyHunks        map[int]bool // hunk indices needing re-render in cache
 
+	// AI inline comment state
+	aiInlineComments      []claude.InlineReviewComment
+	aiCommentsByFileLine  map[string][]claude.InlineReviewComment // "path:line" → comments
+
+	// Search state
+	searchMode          bool
+	searchInput         textinput.Model
+	searchTerm          string
+	searchMatches       []searchMatch
+	searchMatchIdx      int
+	searchMatchesByHunk map[int]map[int][]matchPos // hunkIdx → lineInHunk → match positions
+
 	// PR info data (for PR Info tab)
 	prTitle   string
 	prBody    string
@@ -118,8 +146,12 @@ type DiffViewerModel struct {
 }
 
 func NewDiffViewerModel() DiffViewerModel {
+	si := textinput.New()
+	si.Prompt = ""
+	si.CharLimit = 100
 	return DiffViewerModel{
-		spinner: newLoadingSpinner(),
+		spinner:     newLoadingSpinner(),
+		searchInput: si,
 	}
 }
 
@@ -136,6 +168,76 @@ func (m DiffViewerModel) Update(msg tea.Msg) (DiffViewerModel, tea.Cmd) {
 		if !m.focused {
 			return m, nil
 		}
+
+		// Search mode: capture all keys for the search input
+		if m.searchMode {
+			switch msg.String() {
+			case "esc":
+				m.searchMode = false
+				m.searchInput.Blur()
+				if m.searchInput.Value() == "" {
+					m.clearSearch()
+				}
+				m.cachedLines = nil
+				m.refreshContent()
+				return m, nil
+			case "enter":
+				m.searchMode = false
+				m.searchInput.Blur()
+				m.refreshContent()
+				return m, nil
+			default:
+				var cmd tea.Cmd
+				m.searchInput, cmd = m.searchInput.Update(msg)
+				newTerm := m.searchInput.Value()
+				if newTerm != m.searchTerm {
+					m.searchTerm = newTerm
+					m.computeSearchMatches()
+					m.cachedLines = nil
+					m.refreshContent()
+				}
+				return m, cmd
+			}
+		}
+
+		// Active search (not typing): n/N navigate matches, Esc clears
+		if m.activeTab == TabDiff && m.searchTerm != "" {
+			switch {
+			case key.Matches(msg, DiffViewerKeys.NextHunk):
+				if len(m.searchMatches) > 0 {
+					m.searchMatchIdx = (m.searchMatchIdx + 1) % len(m.searchMatches)
+					m.scrollToCurrentMatch()
+					m.cachedLines = nil
+					m.refreshContent()
+				}
+				return m, nil
+			case key.Matches(msg, DiffViewerKeys.PrevHunk):
+				if len(m.searchMatches) > 0 {
+					m.searchMatchIdx = (m.searchMatchIdx - 1 + len(m.searchMatches)) % len(m.searchMatches)
+					m.scrollToCurrentMatch()
+					m.cachedLines = nil
+					m.refreshContent()
+				}
+				return m, nil
+			}
+			if msg.String() == "esc" {
+				m.clearSearch()
+				m.cachedLines = nil
+				m.refreshContent()
+				return m, nil
+			}
+		}
+
+		// "/" enters search mode on diff tab
+		if m.activeTab == TabDiff && key.Matches(msg, DiffViewerKeys.Search) {
+			m.searchMode = true
+			m.searchInput.SetValue(m.searchTerm)
+			m.searchInput.CursorEnd()
+			cmd := m.searchInput.Focus()
+			m.refreshContent()
+			return m, cmd
+		}
+
 		switch {
 		case key.Matches(msg, DiffViewerKeys.PrevTab):
 			if m.activeTab > TabDiff {
@@ -358,6 +460,9 @@ func (m *DiffViewerModel) SetLoading(prNumber int) {
 	m.hunkLineRanges = nil
 	m.lastRenderedFocus = 0
 	m.dirtyHunks = nil
+	m.clearSearch()
+	m.aiInlineComments = nil
+	m.aiCommentsByFileLine = nil
 	m.currentFileIdx = 0
 	m.err = nil
 	m.prTitle = ""
@@ -380,6 +485,7 @@ func (m *DiffViewerModel) SetDiff(files []github.PRFile) {
 	m.currentFileIdx = 0
 	m.focusedHunkIdx = 0
 	m.selectedHunks = nil
+	m.clearSearch()
 	m.parseAllHunks()
 	m.cachedLines = nil
 	m.refreshContent()
@@ -436,10 +542,41 @@ func (m *DiffViewerModel) SetReviewError(err string) {
 	m.refreshContent()
 }
 
+// SetAIInlineComments stores AI-generated inline comments and rebuilds the diff cache.
+func (m *DiffViewerModel) SetAIInlineComments(comments []claude.InlineReviewComment) {
+	m.aiInlineComments = comments
+	m.aiCommentsByFileLine = make(map[string][]claude.InlineReviewComment)
+	for _, c := range comments {
+		key := fmt.Sprintf("%s:%d", c.Path, c.Line)
+		m.aiCommentsByFileLine[key] = append(m.aiCommentsByFileLine[key], c)
+	}
+	// Full cache invalidation since comment lines change hunk sizes
+	m.cachedLines = nil
+	m.refreshContent()
+}
+
+// ClearAIInlineComments removes all AI inline comments.
+func (m *DiffViewerModel) ClearAIInlineComments() {
+	m.aiInlineComments = nil
+	m.aiCommentsByFileLine = nil
+	m.cachedLines = nil
+	m.refreshContent()
+}
+
 func (m *DiffViewerModel) refreshContent() {
 	if !m.ready {
 		return
 	}
+
+	// Adjust viewport height for search bar
+	innerHeight := m.height - 5
+	if m.searchBarVisible() {
+		innerHeight--
+	}
+	if innerHeight < 1 {
+		innerHeight = 1
+	}
+	m.viewport.Height = innerHeight
 
 	// PR Info tab has its own content path
 	if m.activeTab == TabPRInfo {
@@ -506,6 +643,12 @@ func (m DiffViewerModel) View() string {
 	parts := []string{header, content}
 	if indicator := scrollIndicator(m.viewport, m.width-4); indicator != "" {
 		parts = append(parts, indicator)
+	}
+
+	if m.searchMode {
+		parts = append(parts, m.renderSearchBar())
+	} else if m.searchTerm != "" {
+		parts = append(parts, m.renderSearchInfo())
 	}
 
 	inner := lipgloss.JoinVertical(lipgloss.Left, parts...)
@@ -827,14 +970,32 @@ func (m *DiffViewerModel) buildCachedLines() {
 	m.dirtyHunks = nil
 }
 
+// parseHunkNewStart parses the new-side start line number from a @@ header.
+// For "@@ -7,6 +12,8 @@" it returns 12.
+func parseHunkNewStart(header string) int {
+	// Find the "+N" part in the @@ header
+	idx := strings.Index(header, "+")
+	if idx == -1 {
+		return 0
+	}
+	rest := header[idx+1:]
+	var n int
+	fmt.Sscanf(rest, "%d", &n)
+	return n
+}
+
 // renderHunkLines renders a single hunk's styled output lines.
 func (m *DiffViewerModel) renderHunkLines(hunkIdx int) []string {
 	hunk := m.hunks[hunkIdx]
 	selected := m.selectedHunks[hunkIdx]
 	isFocused := hunkIdx == m.focusedHunkIdx
+	hasAIComments := len(m.aiCommentsByFileLine) > 0
 	lines := make([]string, 0, len(hunk.Lines))
 
-	for _, line := range hunk.Lines {
+	// Track new-side line number for AI inline comment matching
+	newLine := 0
+
+	for lineIdx, line := range hunk.Lines {
 		if line == "" {
 			if isFocused {
 				lines = append(lines, diffFocusGutterStyle.Render("▎"))
@@ -842,6 +1003,20 @@ func (m *DiffViewerModel) renderHunkLines(hunkIdx int) []string {
 				lines = append(lines, "")
 			}
 			continue
+		}
+
+		// Update line number tracking
+		switch {
+		case strings.HasPrefix(line, "@@"):
+			newLine = parseHunkNewStart(line)
+		case strings.HasPrefix(line, "+"):
+			// newLine is consumed after rendering
+		case strings.HasPrefix(line, "-"):
+			// Removed lines don't advance new-side counter
+		case strings.HasPrefix(line, `\`):
+			// "\ No newline" — no counter change
+		default:
+			// Context line — advances new-side counter
 		}
 
 		// Gutter marker: ▎ for focused hunk, space for others
@@ -885,16 +1060,52 @@ func (m *DiffViewerModel) renderHunkLines(hunkIdx int) []string {
 			style = style.Background(diffSelectedBg)
 		}
 
-		lines = append(lines, gutter+style.Render(displayLine))
+		// Apply search highlights if matches exist on this line
+		if lineMatches := m.getLineSearchMatches(hunkIdx, lineIdx); len(lineMatches) > 0 {
+			prefixLen := len(displayLine) - len(line)
+			var currentMatchPos *matchPos
+			if len(m.searchMatches) > 0 && m.searchMatchIdx < len(m.searchMatches) {
+				cm := m.searchMatches[m.searchMatchIdx]
+				if cm.hunkIdx == hunkIdx && cm.lineInHunk == lineIdx {
+					currentMatchPos = &matchPos{startCol: cm.startCol, endCol: cm.endCol}
+				}
+			}
+			lines = append(lines, gutter+renderLineWithHighlights(displayLine, lineMatches, prefixLen, style, currentMatchPos))
+		} else {
+			lines = append(lines, gutter+style.Render(displayLine))
+		}
+
+		// Inject AI inline comments after matching lines (+ or context lines)
+		if hasAIComments && newLine > 0 && !strings.HasPrefix(line, "-") && !strings.HasPrefix(line, `\`) && !strings.HasPrefix(line, "@@") {
+			key := fmt.Sprintf("%s:%d", hunk.Filename, newLine)
+			if comments, ok := m.aiCommentsByFileLine[key]; ok {
+				for _, c := range comments {
+					prefix := aiCommentPrefixStyle.Render("  💬 ")
+					body := aiCommentStyle.Render(c.Body)
+					lines = append(lines, prefix+body)
+				}
+			}
+		}
+
+		// Advance new-side line counter for + and context lines
+		if !strings.HasPrefix(line, "-") && !strings.HasPrefix(line, `\`) && !strings.HasPrefix(line, "@@") {
+			newLine++
+		}
 	}
 
 	return lines
 }
 
 // rerenderHunkInCache re-renders a single hunk's styled lines in the cache.
-// The hunk's line count is stable (content doesn't change), so we replace in place.
+// When AI inline comments are present, line counts may differ from the source,
+// so we fall back to a full cache rebuild instead of in-place replacement.
 func (m *DiffViewerModel) rerenderHunkInCache(hunkIdx int) {
 	if hunkIdx < 0 || hunkIdx >= len(m.hunkLineRanges) {
+		return
+	}
+	// If AI comments are active, hunk line counts are unstable — force full rebuild
+	if len(m.aiCommentsByFileLine) > 0 {
+		m.cachedLines = nil
 		return
 	}
 	r := m.hunkLineRanges[hunkIdx]
@@ -1075,6 +1286,167 @@ func (m DiffViewerModel) GetSelectedHunkContent() string {
 			b.WriteString(line)
 			b.WriteString("\n")
 		}
+	}
+
+	return b.String()
+}
+
+// -- Search methods --
+
+// IsSearching returns true when the search input is actively being typed into.
+func (m DiffViewerModel) IsSearching() bool {
+	return m.searchMode
+}
+
+// SearchInfo returns a string like "3/17" indicating current match position,
+// or "No matches" if the search term has no results, or "" if no search is active.
+func (m DiffViewerModel) SearchInfo() string {
+	if m.searchTerm == "" {
+		return ""
+	}
+	if len(m.searchMatches) == 0 {
+		return "No matches"
+	}
+	return fmt.Sprintf("%d/%d", m.searchMatchIdx+1, len(m.searchMatches))
+}
+
+// HasActiveSearch returns true when a search term is active (matches may be navigated).
+func (m DiffViewerModel) HasActiveSearch() bool {
+	return m.searchTerm != ""
+}
+
+// clearSearch resets all search state.
+func (m *DiffViewerModel) clearSearch() {
+	m.searchMode = false
+	m.searchTerm = ""
+	m.searchMatches = nil
+	m.searchMatchesByHunk = nil
+	m.searchMatchIdx = 0
+	m.searchInput.SetValue("")
+	m.searchInput.Blur()
+}
+
+// searchBarVisible returns true when the search bar or info line should be shown.
+func (m DiffViewerModel) searchBarVisible() bool {
+	return m.searchMode || m.searchTerm != ""
+}
+
+// computeSearchMatches scans all hunks for case-insensitive matches of the search term.
+func (m *DiffViewerModel) computeSearchMatches() {
+	m.searchMatches = nil
+	m.searchMatchesByHunk = nil
+	m.searchMatchIdx = 0
+
+	if m.searchTerm == "" {
+		return
+	}
+
+	lowerTerm := strings.ToLower(m.searchTerm)
+	m.searchMatchesByHunk = make(map[int]map[int][]matchPos)
+
+	for hunkIdx, hunk := range m.hunks {
+		for lineIdx, line := range hunk.Lines {
+			lower := strings.ToLower(line)
+			start := 0
+			for {
+				idx := strings.Index(lower[start:], lowerTerm)
+				if idx == -1 {
+					break
+				}
+				absStart := start + idx
+				absEnd := absStart + len(lowerTerm)
+
+				m.searchMatches = append(m.searchMatches, searchMatch{
+					hunkIdx:    hunkIdx,
+					lineInHunk: lineIdx,
+					startCol:   absStart,
+					endCol:     absEnd,
+				})
+
+				if m.searchMatchesByHunk[hunkIdx] == nil {
+					m.searchMatchesByHunk[hunkIdx] = make(map[int][]matchPos)
+				}
+				m.searchMatchesByHunk[hunkIdx][lineIdx] = append(
+					m.searchMatchesByHunk[hunkIdx][lineIdx],
+					matchPos{startCol: absStart, endCol: absEnd},
+				)
+
+				start = absEnd
+			}
+		}
+	}
+}
+
+// scrollToCurrentMatch scrolls the viewport so the current search match is visible.
+func (m *DiffViewerModel) scrollToCurrentMatch() {
+	if len(m.searchMatches) == 0 || m.searchMatchIdx >= len(m.searchMatches) {
+		return
+	}
+	match := m.searchMatches[m.searchMatchIdx]
+	m.focusedHunkIdx = match.hunkIdx
+	m.scrollToFocusedHunk()
+}
+
+// getLineSearchMatches returns match positions for a specific line in a hunk.
+func (m *DiffViewerModel) getLineSearchMatches(hunkIdx, lineIdx int) []matchPos {
+	if m.searchMatchesByHunk == nil {
+		return nil
+	}
+	if lineMap, ok := m.searchMatchesByHunk[hunkIdx]; ok {
+		return lineMap[lineIdx]
+	}
+	return nil
+}
+
+// renderSearchBar renders the search input bar (shown during active search mode).
+func (m DiffViewerModel) renderSearchBar() string {
+	prompt := diffSearchInfoStyle.Render("/")
+	return prompt + m.searchInput.View()
+}
+
+// renderSearchInfo renders the search term and match count (shown when search is active but not typing).
+func (m DiffViewerModel) renderSearchInfo() string {
+	info := m.SearchInfo()
+	return diffSearchInfoStyle.Render(fmt.Sprintf(" /%s  %s ", m.searchTerm, info))
+}
+
+// renderLineWithHighlights renders a display line with search match highlights applied.
+// prefixLen is the number of bytes prepended to the raw line for display (e.g., "✓ ").
+// Match positions refer to the raw line; they are offset by prefixLen for the display line.
+func renderLineWithHighlights(displayLine string, matches []matchPos, prefixLen int, baseStyle lipgloss.Style, currentMatch *matchPos) string {
+	var b strings.Builder
+	lastEnd := 0
+
+	for _, mp := range matches {
+		start := mp.startCol + prefixLen
+		end := mp.endCol + prefixLen
+
+		if start > len(displayLine) {
+			continue
+		}
+		if end > len(displayLine) {
+			end = len(displayLine)
+		}
+
+		// Render text before this match
+		if start > lastEnd {
+			b.WriteString(baseStyle.Render(displayLine[lastEnd:start]))
+		}
+
+		// Determine highlight color
+		highlightBg := diffSearchMatchBg
+		if currentMatch != nil && mp.startCol == currentMatch.startCol && mp.endCol == currentMatch.endCol {
+			highlightBg = diffSearchCurrentMatchBg
+		}
+
+		highlightStyle := baseStyle.Background(highlightBg)
+		b.WriteString(highlightStyle.Render(displayLine[start:end]))
+		lastEnd = end
+	}
+
+	// Render remaining text after last match
+	if lastEnd < len(displayLine) {
+		b.WriteString(baseStyle.Render(displayLine[lastEnd:]))
 	}
 
 	return b.String()

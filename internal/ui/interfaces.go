@@ -23,4 +23,5 @@ type GitHubService interface {
 	ClosePR(ctx context.Context, owner, repo string, number int) error
 	RequestChangesPR(ctx context.Context, owner, repo string, number int, body string) error
 	CommentReviewPR(ctx context.Context, owner, repo string, number int, body string) error
+	SubmitReviewWithComments(ctx context.Context, owner, repo string, number int, event string, body string, comments []github.ReviewCommentPayload) error
 }

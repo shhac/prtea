@@ -63,6 +63,18 @@ var (
 	diffSearchInfoStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
 )
 
+// AI inline comment styles for diff viewer
+var (
+	aiCommentStyle = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("252")).
+		Background(lipgloss.Color("23")).
+		PaddingLeft(4)
+	aiCommentPrefixStyle = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("75")).
+		Background(lipgloss.Color("23")).
+		Bold(true)
+)
+
 // PR list styles
 var (
 	prTitleStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))

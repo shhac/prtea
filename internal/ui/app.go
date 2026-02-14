@@ -251,6 +251,29 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case AIReviewCompleteMsg:
+		if m.selectedPR != nil && msg.PRNumber == m.selectedPR.Number {
+			m.chatPanel.SetAIReviewResult(msg.Result)
+			m.diffViewer.SetAIInlineComments(msg.Result.Comments)
+			clearCmd := m.statusBar.SetTemporaryMessage(
+				fmt.Sprintf("AI review ready: %d inline comments", len(msg.Result.Comments)),
+				3*time.Second,
+			)
+			return m, clearCmd
+		}
+		return m, nil
+
+	case AIReviewErrorMsg:
+		if m.selectedPR != nil && msg.PRNumber == m.selectedPR.Number {
+			m.chatPanel.SetAIReviewError(msg.Err.Error())
+			clearCmd := m.statusBar.SetTemporaryMessage(
+				"AI review failed: "+formatUserError(msg.Err.Error()),
+				5*time.Second,
+			)
+			return m, clearCmd
+		}
+		return m, nil
+
 	case CommentPostMsg:
 		return m.handleCommentPost(msg.Body)
 
@@ -464,6 +487,9 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case key.Matches(msg, GlobalKeys.Analyze):
 			return m.startAnalysis()
+
+		case key.Matches(msg, GlobalKeys.AIReview):
+			return m.startAIReview()
 
 		case key.Matches(msg, GlobalKeys.Refresh):
 			if m.focused == PanelLeft {
@@ -721,6 +747,37 @@ func (m App) startAnalysis() (tea.Model, tea.Cmd) {
 	return m, tea.Batch(analyzeDiffCmd(m.analyzer, m.selectedPR, m.diffFiles, hash), m.chatPanel.spinner.Tick)
 }
 
+// startAIReview kicks off AI review generation and navigates to the Review tab.
+func (m App) startAIReview() (tea.Model, tea.Cmd) {
+	if m.selectedPR == nil {
+		m.chatPanel.SetAIReviewError("No PR selected. Select a PR first.")
+		m.chatPanel.activeTab = ChatTabReview
+		m.showAndFocusPanel(PanelRight)
+		return m, nil
+	}
+	if m.claudePath == "" {
+		m.chatPanel.SetAIReviewError("Claude CLI not found.\nInstall from https://docs.anthropic.com/en/docs/claude-code")
+		m.chatPanel.activeTab = ChatTabReview
+		m.showAndFocusPanel(PanelRight)
+		return m, nil
+	}
+	if m.chatPanel.aiReviewLoading {
+		return m, nil
+	}
+	if len(m.diffFiles) == 0 {
+		m.chatPanel.SetAIReviewError("No diff loaded. Select a PR to load its diff first.")
+		m.chatPanel.activeTab = ChatTabReview
+		m.showAndFocusPanel(PanelRight)
+		return m, nil
+	}
+
+	m.chatPanel.SetAIReviewLoading()
+	m.chatPanel.activeTab = ChatTabReview
+	m.showAndFocusPanel(PanelRight)
+
+	return m, tea.Batch(aiReviewCmd(m.analyzer, m.selectedPR, m.diffFiles), m.chatPanel.spinner.Tick)
+}
+
 // refreshPRList re-fetches the PR lists (To Review + My PRs).
 func (m App) refreshPRList() (tea.Model, tea.Cmd) {
 	m.prList.SetLoading()
@@ -844,7 +901,7 @@ func (m App) handleReviewSubmit(msg ReviewSubmitMsg) (tea.Model, tea.Cmd) {
 	}
 	clearCmd := m.statusBar.SetTemporaryMessage(fmt.Sprintf("%s PR #%d...", actionLabels[action], pr.Number), 3*time.Second)
 
-	return m, tea.Batch(clearCmd, submitReviewCmd(client, pr.Owner, pr.Repo, pr.Number, action, body))
+	return m, tea.Batch(clearCmd, submitReviewCmd(client, pr.Owner, pr.Repo, pr.Number, action, body, msg.InlineComments))
 }
 
 // refreshFetchDone decrements the pending refresh counter and, when all

@@ -152,8 +152,9 @@ const (
 
 // ReviewSubmitMsg is emitted by the chat panel when the user submits a review.
 type ReviewSubmitMsg struct {
-	Action ReviewAction
-	Body   string
+	Action         ReviewAction
+	Body           string
+	InlineComments []claude.InlineReviewComment // optional inline comments from AI review
 }
 
 // ReviewSubmitDoneMsg is sent when review submission succeeds.
@@ -172,6 +173,20 @@ type ReviewSubmitErrMsg struct {
 // (e.g. empty body for Request Changes or Comment).
 type ReviewValidationMsg struct {
 	Message string
+}
+
+// -- AI Review --
+
+// AIReviewCompleteMsg is sent when AI review generation finishes successfully.
+type AIReviewCompleteMsg struct {
+	PRNumber int
+	Result   *claude.ReviewAnalysis
+}
+
+// AIReviewErrorMsg is sent when AI review generation fails.
+type AIReviewErrorMsg struct {
+	PRNumber int
+	Err      error
 }
 
 // -- Chat panel --

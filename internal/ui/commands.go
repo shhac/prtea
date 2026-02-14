@@ -167,22 +167,77 @@ func closePRCmd(client GitHubService, owner, repo string, number int) tea.Cmd {
 	}
 }
 
-// submitReviewCmd returns a command that submits a PR review.
-func submitReviewCmd(client GitHubService, owner, repo string, number int, action ReviewAction, body string) tea.Cmd {
+// submitReviewCmd returns a command that submits a PR review, optionally with inline comments.
+func submitReviewCmd(client GitHubService, owner, repo string, number int, action ReviewAction, body string, inlineComments []claude.InlineReviewComment) tea.Cmd {
 	return func() tea.Msg {
+		ctx := context.Background()
 		var err error
-		switch action {
-		case ReviewApprove:
-			err = client.ApprovePR(context.Background(), owner, repo, number, body)
-		case ReviewComment:
-			err = client.CommentReviewPR(context.Background(), owner, repo, number, body)
-		case ReviewRequestChanges:
-			err = client.RequestChangesPR(context.Background(), owner, repo, number, body)
+
+		// If there are inline comments, use the REST API for the full review
+		if len(inlineComments) > 0 {
+			eventMap := map[ReviewAction]string{
+				ReviewApprove:        "APPROVE",
+				ReviewComment:        "COMMENT",
+				ReviewRequestChanges: "REQUEST_CHANGES",
+			}
+			comments := make([]github.ReviewCommentPayload, len(inlineComments))
+			for i, c := range inlineComments {
+				side := c.Side
+				if side == "" {
+					side = "RIGHT"
+				}
+				comments[i] = github.ReviewCommentPayload{
+					Path: c.Path,
+					Line: c.Line,
+					Side: side,
+					Body: c.Body,
+				}
+			}
+			err = client.SubmitReviewWithComments(ctx, owner, repo, number, eventMap[action], body, comments)
+		} else {
+			// No inline comments — use simple gh pr review
+			switch action {
+			case ReviewApprove:
+				err = client.ApprovePR(ctx, owner, repo, number, body)
+			case ReviewComment:
+				err = client.CommentReviewPR(ctx, owner, repo, number, body)
+			case ReviewRequestChanges:
+				err = client.RequestChangesPR(ctx, owner, repo, number, body)
+			}
 		}
+
 		if err != nil {
 			return ReviewSubmitErrMsg{PRNumber: number, Err: err}
 		}
 		return ReviewSubmitDoneMsg{PRNumber: number, Action: action}
+	}
+}
+
+// aiReviewCmd returns a command that runs Claude to generate an AI review with inline comments.
+func aiReviewCmd(analyzer *claude.Analyzer, pr *SelectedPR, files []github.PRFile) tea.Cmd {
+	return func() tea.Msg {
+		ctx := context.Background()
+
+		diffContent := buildDiffContent(files)
+
+		input := claude.ReviewInput{
+			Owner:       pr.Owner,
+			Repo:        pr.Repo,
+			PRNumber:    pr.Number,
+			PRTitle:     pr.Title,
+			PRBody:      "", // TODO: include PR body when available
+			DiffContent: diffContent,
+		}
+
+		result, err := analyzer.AnalyzeForReview(ctx, input, nil)
+		if err != nil {
+			return AIReviewErrorMsg{PRNumber: pr.Number, Err: err}
+		}
+
+		return AIReviewCompleteMsg{
+			PRNumber: pr.Number,
+			Result:   result,
+		}
 	}
 }
 
