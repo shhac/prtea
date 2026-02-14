@@ -45,7 +45,7 @@ func (c *Client) GetComments(ctx context.Context, owner, repo string, number int
 	repoFlag := owner + "/" + repo
 
 	var data ghPRComments
-	err := ghJSON(ctx, &data,
+	err := c.ghJSON(ctx, &data,
 		"pr", "view", fmt.Sprintf("%d", number),
 		"-R", repoFlag,
 		"--json", "comments",
@@ -74,7 +74,7 @@ func (c *Client) GetComments(ctx context.Context, owner, repo string, number int
 func (c *Client) GetInlineComments(ctx context.Context, owner, repo string, number int) ([]InlineComment, error) {
 	var raw []ghInlineComment
 	endpoint := fmt.Sprintf("repos/%s/%s/pulls/%d/comments", owner, repo, number)
-	if err := ghJSON(ctx, &raw, "api", endpoint, "--paginate"); err != nil {
+	if err := c.ghJSON(ctx, &raw, "api", endpoint, "--paginate"); err != nil {
 		return nil, fmt.Errorf("failed to list inline comments for PR #%d: %w", number, err)
 	}
 

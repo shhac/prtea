@@ -41,7 +41,7 @@ func (c *Client) GetReviews(ctx context.Context, owner, repo string, number int)
 	repoFlag := owner + "/" + repo
 
 	var data ghPRReviews
-	err := ghJSON(ctx, &data,
+	err := c.ghJSON(ctx, &data,
 		"pr", "view", fmt.Sprintf("%d", number),
 		"-R", repoFlag,
 		"--json", "reviews,latestReviews,reviewDecision,reviewRequests",

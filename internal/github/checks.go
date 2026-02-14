@@ -26,7 +26,7 @@ func (c *Client) GetCIStatus(ctx context.Context, owner, repo string, ref string
 	repoFlag := owner + "/" + repo
 
 	var data ghPRChecks
-	err := ghJSON(ctx, &data,
+	err := c.ghJSON(ctx, &data,
 		"pr", "view", fmt.Sprintf("%d", number),
 		"-R", repoFlag,
 		"--json", "statusCheckRollup",

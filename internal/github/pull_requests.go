@@ -52,7 +52,7 @@ type ghCompare struct {
 // GetPRsForReview returns open PRs where the authenticated user is requested as a reviewer.
 func (c *Client) GetPRsForReview(ctx context.Context) ([]PRItem, error) {
 	var results []ghSearchPR
-	err := ghJSON(ctx, &results,
+	err := c.ghJSON(ctx, &results,
 		"search", "prs",
 		"--review-requested=@me",
 		"--state=open",
@@ -68,7 +68,7 @@ func (c *Client) GetPRsForReview(ctx context.Context) ([]PRItem, error) {
 // GetMyPRs returns open PRs authored by the authenticated user.
 func (c *Client) GetMyPRs(ctx context.Context) ([]PRItem, error) {
 	var results []ghSearchPR
-	err := ghJSON(ctx, &results,
+	err := c.ghJSON(ctx, &results,
 		"search", "prs",
 		"--author=@me",
 		"--state=open",
@@ -86,7 +86,7 @@ func (c *Client) GetPRDetail(ctx context.Context, owner, repo string, number int
 	repoFlag := owner + "/" + repo
 
 	var pr ghPRView
-	err := ghJSON(ctx, &pr,
+	err := c.ghJSON(ctx, &pr,
 		"pr", "view", fmt.Sprintf("%d", number),
 		"-R", repoFlag,
 		"--json", "number,title,body,url,mergeable,mergeStateStatus,baseRefName,headRefName,headRefOid,author",
@@ -99,7 +99,7 @@ func (c *Client) GetPRDetail(ctx context.Context, owner, repo string, number int
 	behindBy := 0
 	var cmp ghCompare
 	endpoint := fmt.Sprintf("repos/%s/%s/compare/%s...%s", owner, repo, pr.HeadRefName, pr.BaseRefName)
-	if err := ghJSON(ctx, &cmp, "api", endpoint); err != nil {
+	if err := c.ghJSON(ctx, &cmp, "api", endpoint); err != nil {
 		behindBy = -1
 	} else {
 		behindBy = cmp.AheadBy

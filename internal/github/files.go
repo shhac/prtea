@@ -18,7 +18,7 @@ type ghFile struct {
 func (c *Client) GetPRFiles(ctx context.Context, owner, repo string, number int) ([]PRFile, error) {
 	var files []ghFile
 	endpoint := fmt.Sprintf("repos/%s/%s/pulls/%d/files", owner, repo, number)
-	if err := ghJSON(ctx, &files, "api", endpoint, "--paginate"); err != nil {
+	if err := c.ghJSON(ctx, &files, "api", endpoint, "--paginate"); err != nil {
 		return nil, fmt.Errorf("failed to list files for PR #%d: %w", number, err)
 	}
 

@@ -13,7 +13,7 @@ func (c *Client) ApprovePR(ctx context.Context, owner, repo string, number int, 
 		args = append(args, "-b", body)
 	}
 
-	if _, err := ghExec(ctx, args...); err != nil {
+	if _, err := c.ghExec(ctx, args...); err != nil {
 		return fmt.Errorf("failed to approve PR #%d: %w", number, err)
 	}
 	return nil
@@ -22,7 +22,7 @@ func (c *Client) ApprovePR(ctx context.Context, owner, repo string, number int, 
 // PostComment posts an issue-level comment on a PR.
 func (c *Client) PostComment(ctx context.Context, owner, repo string, number int, body string) error {
 	repoFlag := owner + "/" + repo
-	if _, err := ghExec(ctx, "pr", "comment", fmt.Sprintf("%d", number), "-R", repoFlag, "--body", body); err != nil {
+	if _, err := c.ghExec(ctx, "pr", "comment", fmt.Sprintf("%d", number), "-R", repoFlag, "--body", body); err != nil {
 		return fmt.Errorf("failed to post comment on PR #%d: %w", number, err)
 	}
 	return nil
@@ -31,7 +31,7 @@ func (c *Client) PostComment(ctx context.Context, owner, repo string, number int
 // ClosePR closes a PR without merging.
 func (c *Client) ClosePR(ctx context.Context, owner, repo string, number int) error {
 	repoFlag := owner + "/" + repo
-	if _, err := ghExec(ctx, "pr", "close", fmt.Sprintf("%d", number), "-R", repoFlag); err != nil {
+	if _, err := c.ghExec(ctx, "pr", "close", fmt.Sprintf("%d", number), "-R", repoFlag); err != nil {
 		return fmt.Errorf("failed to close PR #%d: %w", number, err)
 	}
 	return nil
