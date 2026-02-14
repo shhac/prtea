@@ -241,36 +241,19 @@ func aiReviewCmd(analyzer *claude.Analyzer, pr *SelectedPR, files []github.PRFil
 	}
 }
 
-// analyzeDiffCmd returns a command that runs Claude analysis with inline diff content.
-func analyzeDiffCmd(analyzer *claude.Analyzer, pr *SelectedPR, files []github.PRFile, diffHash string) tea.Cmd {
+// listenForChatStream returns a tea.Cmd that reads the next message from the streaming channel.
+func listenForChatStream(ch chatStreamChan) tea.Cmd {
 	return func() tea.Msg {
-		ctx := context.Background()
-
-		diffContent := buildDiffContent(files)
-
-		input := claude.AnalyzeDiffInput{
-			Owner:       pr.Owner,
-			Repo:        pr.Repo,
-			PRNumber:    pr.Number,
-			PRTitle:     pr.Title,
-			DiffContent: diffContent,
+		msg, ok := <-ch
+		if !ok {
+			return nil
 		}
-
-		result, err := analyzer.AnalyzeDiff(ctx, input, nil)
-		if err != nil {
-			return AnalysisErrorMsg{PRNumber: pr.Number, Err: err}
-		}
-
-		return AnalysisCompleteMsg{
-			PRNumber: pr.Number,
-			DiffHash: diffHash,
-			Result:   result,
-		}
+		return msg
 	}
 }
 
-// listenForChatStream returns a tea.Cmd that reads the next message from the streaming channel.
-func listenForChatStream(ch chatStreamChan) tea.Cmd {
+// listenForAnalysisStream returns a tea.Cmd that reads the next message from the analysis streaming channel.
+func listenForAnalysisStream(ch analysisStreamChan) tea.Cmd {
 	return func() tea.Msg {
 		msg, ok := <-ch
 		if !ok {

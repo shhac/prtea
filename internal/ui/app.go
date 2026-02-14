@@ -41,9 +41,11 @@ type App struct {
 	chatService   *claude.ChatService
 	analysisStore *claude.AnalysisStore
 	chatStore     *claude.ChatStore
-	analyzing     bool
-	streamChan    chatStreamChan      // active chat streaming channel
-	streamCancel  context.CancelFunc // cancels active stream goroutine
+	analyzing            bool
+	streamChan           chatStreamChan      // active chat streaming channel
+	streamCancel         context.CancelFunc  // cancels active stream goroutine
+	analysisStreamCh     analysisStreamChan  // active analysis streaming channel
+	analysisStreamCancel context.CancelFunc  // cancels active analysis stream
 
 	// Layout state
 	focused        Panel
@@ -250,8 +252,16 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.refreshFetchDone(msg.PRNumber)
 
+	case AnalysisStreamChunkMsg:
+		if m.analysisStreamCh == nil {
+			return m, nil
+		}
+		m.chatPanel.AppendAnalysisStreamChunk(msg.Content)
+		return m, listenForAnalysisStream(m.analysisStreamCh)
+
 	case AnalysisCompleteMsg:
 		m.analyzing = false
+		m.analysisStreamCh = nil
 		if m.selectedPR != nil && msg.PRNumber == m.selectedPR.Number {
 			m.chatPanel.SetAnalysisResult(msg.Result)
 			// Cache the result
@@ -264,6 +274,7 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case AnalysisErrorMsg:
 		m.analyzing = false
+		m.analysisStreamCh = nil
 		if m.selectedPR != nil && msg.PRNumber == m.selectedPR.Number {
 			m.chatPanel.SetAnalysisError(msg.Err.Error())
 		}
@@ -604,11 +615,17 @@ func (m App) selectPR(owner, repo string, number int, htmlURL string, advance bo
 		Title:   title,
 		HTMLURL: htmlURL,
 	}
-	if m.streamCancel != nil { // cancel active stream goroutine
+	if m.streamCancel != nil { // cancel active chat stream goroutine
 		m.streamCancel()
 		m.streamCancel = nil
 	}
-	m.streamChan = nil                 // stop listening to old stream
+	m.streamChan = nil // stop listening to old chat stream
+	if m.analysisStreamCancel != nil { // cancel active analysis stream
+		m.analysisStreamCancel()
+		m.analysisStreamCancel = nil
+	}
+	m.analysisStreamCh = nil           // stop listening to old analysis stream
+	m.analyzing = false
 	m.diffFiles = nil                  // clear old diff data
 	m.chatPanel.SetAnalysisResult(nil) // clear old analysis
 	m.chatPanel.ClearComments()        // clear old comments
@@ -779,13 +796,56 @@ func (m App) startAnalysis() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// Start async analysis
+	// Cancel any previous analysis stream
+	if m.analysisStreamCancel != nil {
+		m.analysisStreamCancel()
+	}
+
+	// Start async streaming analysis
 	m.analyzing = true
 	m.chatPanel.SetAnalysisLoading()
 	m.chatPanel.activeTab = ChatTabAnalysis
 	m.showAndFocusPanel(PanelRight)
 
-	return m, tea.Batch(analyzeDiffCmd(m.analyzer, m.selectedPR, m.diffFiles, hash), m.chatPanel.spinner.Tick)
+	pr := m.selectedPR
+	files := m.diffFiles
+	analyzer := m.analyzer
+	ctx, cancel := context.WithCancel(context.Background())
+	ch := make(analysisStreamChan)
+
+	go func() {
+		defer close(ch)
+		diffContent := buildDiffContent(files)
+		input := claude.AnalyzeDiffInput{
+			Owner:       pr.Owner,
+			Repo:        pr.Repo,
+			PRNumber:    pr.Number,
+			PRTitle:     pr.Title,
+			DiffContent: diffContent,
+		}
+
+		result, err := analyzer.AnalyzeDiffStream(ctx, input, func(text string) {
+			select {
+			case ch <- AnalysisStreamChunkMsg{Content: text}:
+			case <-ctx.Done():
+			}
+		})
+		if err != nil {
+			select {
+			case ch <- AnalysisErrorMsg{PRNumber: pr.Number, Err: err}:
+			case <-ctx.Done():
+			}
+		} else {
+			select {
+			case ch <- AnalysisCompleteMsg{PRNumber: pr.Number, DiffHash: hash, Result: result}:
+			case <-ctx.Done():
+			}
+		}
+	}()
+
+	m.analysisStreamCh = ch
+	m.analysisStreamCancel = cancel
+	return m, tea.Batch(listenForAnalysisStream(ch), m.chatPanel.spinner.Tick)
 }
 
 // startAIReview kicks off AI review generation and navigates to the Review tab.

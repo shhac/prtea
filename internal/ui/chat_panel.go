@@ -65,6 +65,7 @@ type ChatPanelModel struct {
 	analysisResult  *claude.AnalysisResult
 	analysisLoading bool
 	analysisError   string
+	analysisStream  StreamRenderer // progressive streaming for analysis
 
 	// Comments state
 	comments        []github.Comment
@@ -259,6 +260,7 @@ func (m *ChatPanelModel) SetAnalysisLoading() {
 	m.analysisLoading = true
 	m.analysisError = ""
 	m.analysisResult = nil
+	m.analysisStream.Reset()
 	m.refreshViewport()
 }
 
@@ -267,6 +269,7 @@ func (m *ChatPanelModel) SetAnalysisResult(result *claude.AnalysisResult) {
 	m.analysisResult = result
 	m.analysisLoading = false
 	m.analysisError = ""
+	m.analysisStream.Reset()
 	m.refreshViewport()
 }
 
@@ -275,6 +278,7 @@ func (m *ChatPanelModel) SetAnalysisError(err string) {
 	m.analysisError = err
 	m.analysisLoading = false
 	m.analysisResult = nil
+	m.analysisStream.Reset()
 	m.refreshViewport()
 }
 
@@ -287,6 +291,22 @@ func (m *ChatPanelModel) AppendStreamChunk(chunk string) {
 		innerWidth = 10
 	}
 	m.chatStream.Append(chunk, func(s string) string {
+		return m.renderMarkdown(s, innerWidth)
+	})
+	wasAtBottom := m.viewport.AtBottom()
+	m.refreshViewport()
+	if wasAtBottom {
+		m.viewport.GotoBottom()
+	}
+}
+
+// AppendAnalysisStreamChunk appends a text chunk during analysis streaming.
+func (m *ChatPanelModel) AppendAnalysisStreamChunk(chunk string) {
+	innerWidth := m.width - 6
+	if innerWidth < 10 {
+		innerWidth = 10
+	}
+	m.analysisStream.Append(chunk, func(s string) string {
 		return m.renderMarkdown(s, innerWidth)
 	})
 	wasAtBottom := m.viewport.AtBottom()
@@ -621,6 +641,19 @@ func (m *ChatPanelModel) renderMessages() string {
 
 func (m ChatPanelModel) renderAnalysis() string {
 	if m.analysisLoading {
+		innerWidth := m.width - 6
+		if innerWidth < 10 {
+			innerWidth = 10
+		}
+		if m.analysisStream.HasContent() {
+			var b strings.Builder
+			b.WriteString(lipgloss.NewStyle().
+				Foreground(lipgloss.Color("244")).
+				Render(m.spinner.View() + " Analyzing PR with Claude..."))
+			b.WriteString("\n\n")
+			b.WriteString(m.analysisStream.View(wordWrap, innerWidth))
+			return b.String()
+		}
 		return lipgloss.NewStyle().
 			Foreground(lipgloss.Color("244")).
 			Padding(1, 0).

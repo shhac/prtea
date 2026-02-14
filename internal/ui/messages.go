@@ -258,3 +258,11 @@ type CommandNotFoundMsg struct {
 
 // chatStreamChan carries streaming chunks and the final response from Claude chat.
 type chatStreamChan chan tea.Msg
+
+// analysisStreamChan carries streaming chunks and the final result from Claude analysis.
+type analysisStreamChan chan tea.Msg
+
+// AnalysisStreamChunkMsg carries a streaming text chunk during analysis.
+type AnalysisStreamChunkMsg struct {
+	Content string
+}
