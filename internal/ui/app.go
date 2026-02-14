@@ -52,6 +52,11 @@ type App struct {
 
 	// Mode
 	mode AppMode
+
+	// Refresh tracking: counts remaining fetches for a PR refresh.
+	// When it reaches 0, we show a success message.
+	refreshPending int
+	refreshPRNum   int // PR number being refreshed
 }
 
 // NewApp creates a new App model with default state.
@@ -165,7 +170,7 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.diffViewer.SetDiff(msg.Files)
 			m.diffFiles = msg.Files
 		}
-		return m, nil
+		return m, m.refreshFetchDone(msg.PRNumber)
 
 	case PRDetailLoadedMsg:
 		// Race guard: only apply if this is for the currently selected PR
@@ -182,7 +187,7 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				msg.Detail.HTMLURL,
 			)
 		}
-		return m, nil
+		return m, m.refreshFetchDone(msg.PRNumber)
 
 	case CommentsLoadedMsg:
 		// Race guard: only apply if this is for the currently selected PR
@@ -194,7 +199,7 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.chatPanel.SetComments(msg.Comments, msg.InlineComments)
 		}
-		return m, nil
+		return m, m.refreshFetchDone(msg.PRNumber)
 
 	case CIStatusLoadedMsg:
 		// Race guard: only apply if this is for the currently selected PR
@@ -207,7 +212,7 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.diffViewer.SetCIStatus(msg.Status)
 			m.prList.SetCIStatus(msg.Status.OverallStatus)
 		}
-		return m, nil
+		return m, m.refreshFetchDone(msg.PRNumber)
 
 	case ReviewsLoadedMsg:
 		// Race guard: only apply if this is for the currently selected PR
@@ -220,7 +225,7 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.diffViewer.SetReviewSummary(msg.Summary)
 			m.prList.SetReviewDecision(msg.Summary.ReviewDecision)
 		}
-		return m, nil
+		return m, m.refreshFetchDone(msg.PRNumber)
 
 	case AnalysisCompleteMsg:
 		m.analyzing = false
@@ -263,40 +268,44 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			ReviewRequestChanges: "Requested changes on",
 		}
 		label := actionLabels[msg.Action]
-		m.statusBar.SetTemporaryMessage(fmt.Sprintf("✓ %s PR #%d", label, msg.PRNumber), 3*time.Second)
+		clearCmd := m.statusBar.SetTemporaryMessage(fmt.Sprintf("✓ %s PR #%d", label, msg.PRNumber), 3*time.Second)
 		m.chatPanel.SetReviewSubmitted(nil)
-		return m, fetchReviewsCmd(m.ghClient, m.selectedPR.Owner, m.selectedPR.Repo, m.selectedPR.Number)
+		return m, tea.Batch(clearCmd, fetchReviewsCmd(m.ghClient, m.selectedPR.Owner, m.selectedPR.Repo, m.selectedPR.Number))
 
 	case ReviewSubmitErrMsg:
 		if m.selectedPR != nil && msg.PRNumber == m.selectedPR.Number {
 			m.chatPanel.SetReviewSubmitted(msg.Err)
 		}
-		m.statusBar.SetTemporaryMessage(fmt.Sprintf("✗ Review failed: %s", msg.Err), 5*time.Second)
-		return m, nil
+		clearCmd := m.statusBar.SetTemporaryMessage(fmt.Sprintf("✗ Review failed: %s", msg.Err), 5*time.Second)
+		return m, clearCmd
 
 	case PRApproveDoneMsg:
 		if m.selectedPR == nil || msg.PRNumber != m.selectedPR.Number {
 			return m, nil
 		}
-		m.statusBar.SetTemporaryMessage(fmt.Sprintf("✓ Approved PR #%d", msg.PRNumber), 3*time.Second)
-		return m, fetchReviewsCmd(m.ghClient, m.selectedPR.Owner, m.selectedPR.Repo, m.selectedPR.Number)
+		clearCmd := m.statusBar.SetTemporaryMessage(fmt.Sprintf("✓ Approved PR #%d", msg.PRNumber), 3*time.Second)
+		return m, tea.Batch(clearCmd, fetchReviewsCmd(m.ghClient, m.selectedPR.Owner, m.selectedPR.Repo, m.selectedPR.Number))
 
 	case PRApproveErrMsg:
-		m.statusBar.SetTemporaryMessage(fmt.Sprintf("✗ Approve failed: %s", msg.Err), 5*time.Second)
-		return m, nil
+		clearCmd := m.statusBar.SetTemporaryMessage(fmt.Sprintf("✗ Approve failed: %s", msg.Err), 5*time.Second)
+		return m, clearCmd
 
 	case PRCloseDoneMsg:
 		if m.selectedPR == nil || msg.PRNumber != m.selectedPR.Number {
 			return m, nil
 		}
-		m.statusBar.SetTemporaryMessage(fmt.Sprintf("✓ Closed PR #%d", msg.PRNumber), 3*time.Second)
+		clearCmd := m.statusBar.SetTemporaryMessage(fmt.Sprintf("✓ Closed PR #%d", msg.PRNumber), 3*time.Second)
 		if m.ghClient != nil {
-			return m, fetchPRsCmd(m.ghClient)
+			return m, tea.Batch(clearCmd, fetchPRsCmd(m.ghClient))
 		}
-		return m, nil
+		return m, clearCmd
 
 	case PRCloseErrMsg:
-		m.statusBar.SetTemporaryMessage(fmt.Sprintf("✗ Close failed: %s", msg.Err), 5*time.Second)
+		clearCmd := m.statusBar.SetTemporaryMessage(fmt.Sprintf("✗ Close failed: %s", msg.Err), 5*time.Second)
+		return m, clearCmd
+
+	case StatusBarClearMsg:
+		m.statusBar.ClearIfSeqMatch(msg.Seq)
 		return m, nil
 
 	case spinner.TickMsg:
@@ -317,8 +326,8 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.chatService != nil && m.selectedPR != nil {
 			m.chatService.ClearSession(m.selectedPR.Owner, m.selectedPR.Repo, m.selectedPR.Number)
 		}
-		m.statusBar.SetTemporaryMessage("Chat cleared", 2*time.Second)
-		return m, nil
+		clearCmd := m.statusBar.SetTemporaryMessage("Chat cleared", 2*time.Second)
+		return m, clearCmd
 
 	case ChatSendMsg:
 		return m.handleChatSend(msg.Message)
@@ -697,9 +706,15 @@ func (m App) refreshSelectedPR() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	m.statusBar.SetTemporaryMessage(fmt.Sprintf("Refreshing PR #%d...", pr.Number), 2*time.Second)
+	// Track 5 pending fetches so we can show a success message when all complete.
+	m.refreshPending = 5
+	m.refreshPRNum = pr.Number
+	// Show "Refreshing..." with a long safety-net timeout; it will be replaced
+	// by the success message once all fetches finish.
+	clearCmd := m.statusBar.SetTemporaryMessage(fmt.Sprintf("Refreshing PR #%d...", pr.Number), 30*time.Second)
 
 	return m, tea.Batch(
+		clearCmd,
 		fetchDiffCmd(m.ghClient, pr.Owner, pr.Repo, pr.Number),
 		fetchPRDetailCmd(m.ghClient, pr.Owner, pr.Repo, pr.Number),
 		fetchCommentsCmd(m.ghClient, pr.Owner, pr.Repo, pr.Number),
@@ -775,9 +790,22 @@ func (m App) handleReviewSubmit(msg ReviewSubmitMsg) (tea.Model, tea.Cmd) {
 		ReviewComment:        "Submitting comment on",
 		ReviewRequestChanges: "Requesting changes on",
 	}
-	m.statusBar.SetTemporaryMessage(fmt.Sprintf("%s PR #%d...", actionLabels[action], pr.Number), 3*time.Second)
+	clearCmd := m.statusBar.SetTemporaryMessage(fmt.Sprintf("%s PR #%d...", actionLabels[action], pr.Number), 3*time.Second)
 
-	return m, submitReviewCmd(client, pr.Owner, pr.Repo, pr.Number, action, body)
+	return m, tea.Batch(clearCmd, submitReviewCmd(client, pr.Owner, pr.Repo, pr.Number, action, body))
+}
+
+// refreshFetchDone decrements the pending refresh counter and, when all
+// fetches have completed, shows a brief success message in the status bar.
+func (m *App) refreshFetchDone(prNumber int) tea.Cmd {
+	if m.refreshPending <= 0 || prNumber != m.refreshPRNum {
+		return nil
+	}
+	m.refreshPending--
+	if m.refreshPending == 0 {
+		return m.statusBar.SetTemporaryMessage(fmt.Sprintf("Refreshed PR #%d", prNumber), 3*time.Second)
+	}
+	return nil
 }
 
 // handleCommentPost validates state and posts a comment on the selected PR.

@@ -211,6 +211,12 @@ type HunkSelectedAndAdvanceMsg struct{}
 // HelpClosedMsg is sent when the help overlay is dismissed.
 type HelpClosedMsg struct{}
 
+// StatusBarClearMsg is sent after a delay to clear the status bar temporary message.
+type StatusBarClearMsg struct {
+	// Seq is a monotonic counter to ensure only the latest clear fires.
+	Seq int
+}
+
 // -- Internal streaming --
 
 // chatStreamChan carries streaming chunks and the final response from Claude chat.

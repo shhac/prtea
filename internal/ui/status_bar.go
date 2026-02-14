@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -17,7 +18,10 @@ type StatusBarModel struct {
 
 	// Temporary flash message (e.g. "Refreshing PR #123...")
 	statusMessage string
-	statusExpiry  time.Time
+	// Monotonic counter: incremented on each SetTemporaryMessage call.
+	// StatusBarClearMsg carries the seq at time of scheduling; if it doesn't
+	// match current seq the clear is stale and ignored.
+	messageSeq int
 }
 
 func NewStatusBarModel() StatusBarModel {
@@ -37,15 +41,36 @@ func (m *StatusBarModel) SetSelectedPR(number int) {
 	m.selectedPR = number
 }
 
-// SetTemporaryMessage shows a flash message in the status bar that auto-expires.
-func (m *StatusBarModel) SetTemporaryMessage(msg string, duration time.Duration) {
+// SetTemporaryMessage shows a flash message in the status bar.
+// Returns a tea.Cmd that will send a StatusBarClearMsg after the given duration,
+// which the caller must include in the returned command batch.
+func (m *StatusBarModel) SetTemporaryMessage(msg string, duration time.Duration) tea.Cmd {
+	m.messageSeq++
 	m.statusMessage = msg
-	m.statusExpiry = time.Now().Add(duration)
+	seq := m.messageSeq
+	return tea.Tick(duration, func(_ time.Time) tea.Msg {
+		return StatusBarClearMsg{Seq: seq}
+	})
+}
+
+// ClearMessage explicitly clears the temporary message.
+func (m *StatusBarModel) ClearMessage() {
+	m.statusMessage = ""
+}
+
+// ClearIfSeqMatch clears the message only if the given seq matches the current one.
+// Returns true if the message was cleared.
+func (m *StatusBarModel) ClearIfSeqMatch(seq int) bool {
+	if seq == m.messageSeq {
+		m.statusMessage = ""
+		return true
+	}
+	return false
 }
 
 func (m StatusBarModel) View() string {
 	var leftHints string
-	if m.statusMessage != "" && time.Now().Before(m.statusExpiry) {
+	if m.statusMessage != "" {
 		leftHints = " " + m.statusMessage
 	} else {
 		leftHints = m.keyHints()
