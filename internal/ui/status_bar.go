@@ -15,9 +15,6 @@ type StatusBarModel struct {
 	mode       AppMode
 	selectedPR int
 
-	// Pending confirmation action (e.g. approve/close PR)
-	pendingAction ConfirmAction
-
 	// Temporary flash message (e.g. "Refreshing PR #123...")
 	statusMessage string
 	statusExpiry  time.Time
@@ -40,10 +37,6 @@ func (m *StatusBarModel) SetSelectedPR(number int) {
 	m.selectedPR = number
 }
 
-func (m *StatusBarModel) SetPendingAction(action ConfirmAction) {
-	m.pendingAction = action
-}
-
 // SetTemporaryMessage shows a flash message in the status bar that auto-expires.
 func (m *StatusBarModel) SetTemporaryMessage(msg string, duration time.Duration) {
 	m.statusMessage = msg
@@ -52,9 +45,7 @@ func (m *StatusBarModel) SetTemporaryMessage(msg string, duration time.Duration)
 
 func (m StatusBarModel) View() string {
 	var leftHints string
-	if m.pendingAction != ConfirmNone {
-		leftHints = m.confirmPrompt()
-	} else if m.statusMessage != "" && time.Now().Before(m.statusExpiry) {
+	if m.statusMessage != "" && time.Now().Before(m.statusExpiry) {
 		leftHints = " " + m.statusMessage
 	} else {
 		leftHints = m.keyHints()
@@ -78,34 +69,18 @@ func (m StatusBarModel) View() string {
 	return statusBarStyle.Width(m.width).Render(bar)
 }
 
-func (m StatusBarModel) confirmPrompt() string {
-	switch m.pendingAction {
-	case ConfirmApprove:
-		return fmt.Sprintf(" Approve PR #%d? [y]es / [n]o", m.selectedPR)
-	case ConfirmClose:
-		return fmt.Sprintf(" Close PR #%d? [y]es / [n]o", m.selectedPR)
-	default:
-		return ""
-	}
-}
-
 func (m StatusBarModel) keyHints() string {
 	if m.mode == ModeInsert {
 		return " [Enter]send [Esc]exit insert"
 	}
 
-	prActions := ""
-	if m.selectedPR > 0 {
-		prActions = " [A]approve [X]close"
-	}
-
 	switch m.focused {
 	case PanelLeft:
-		return " [h/l]tab [j/k]move [Enter]select [r]refresh" + prActions + " [Tab]panel [z]zoom [?]help"
+		return " [h/l]tab [j/k]move [Enter]select [r]refresh [Tab]panel [z]zoom [?]help"
 	case PanelCenter:
-		return " [h/l]tab [j/k]scroll [n/N]hunk [s/Space]select [S]file [c]clear [r]refresh" + prActions + " [Tab]panel [z]zoom [?]help"
+		return " [h/l]tab [j/k]scroll [n/N]hunk [s/Space]select [S]file [c]clear [r]refresh [Tab]panel [z]zoom [?]help"
 	case PanelRight:
-		return " [h/l]tab [j/k]scroll [Enter]insert [r]refresh" + prActions + " [Tab]panel [z]zoom [?]help"
+		return " [h/l]tab [j/k]scroll [Enter]insert [C]new chat [r]refresh [Tab]panel [z]zoom [?]help"
 	default:
 		return " [Tab]panel [?]help [q]quit"
 	}

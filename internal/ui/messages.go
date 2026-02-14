@@ -138,12 +138,44 @@ type PRCloseErrMsg struct {
 	Err      error
 }
 
+// -- Review submission --
+
+// ReviewAction represents the type of PR review to submit.
+type ReviewAction int
+
+const (
+	ReviewApprove        ReviewAction = iota
+	ReviewComment
+	ReviewRequestChanges
+)
+
+// ReviewSubmitMsg is emitted by the chat panel when the user submits a review.
+type ReviewSubmitMsg struct {
+	Action ReviewAction
+	Body   string
+}
+
+// ReviewSubmitDoneMsg is sent when review submission succeeds.
+type ReviewSubmitDoneMsg struct {
+	PRNumber int
+	Action   ReviewAction
+}
+
+// ReviewSubmitErrMsg is sent when review submission fails.
+type ReviewSubmitErrMsg struct {
+	PRNumber int
+	Err      error
+}
+
 // -- Chat panel --
 
 // ModeChangedMsg is sent when the chat panel changes modes.
 type ModeChangedMsg struct {
 	Mode ChatMode
 }
+
+// ChatClearMsg is emitted when the user wants to start a new chat.
+type ChatClearMsg struct{}
 
 // ChatSendMsg is emitted when the user sends a chat message.
 type ChatSendMsg struct {

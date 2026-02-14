@@ -183,8 +183,6 @@ func (m HelpOverlayModel) renderHelpContent() string {
 				{"z", "Zoom focused panel"},
 				{"r", "Refresh (PR list / selected PR)"},
 				{"a", "Analyze PR"},
-				{"A", "Approve PR"},
-				{"X", "Close PR"},
 				{"o", "Open in browser"},
 				{"?", "Toggle this help"},
 				{"q", "Quit"},
@@ -226,6 +224,7 @@ func (m HelpOverlayModel) renderHelpContent() string {
 				{"h / l", "Prev/next tab"},
 				{"j / k", "Scroll history"},
 				{"Enter", "Enter insert mode"},
+				{"C", "New chat (clear conversation)"},
 			},
 		},
 		{
@@ -235,6 +234,18 @@ func (m HelpOverlayModel) renderHelpContent() string {
 			keys: []helpEntry{
 				{"Enter", "Send message"},
 				{"Esc", "Exit insert mode"},
+			},
+		},
+		{
+			title: "Review Tab",
+			panel: PanelRight,
+			match: false,
+			keys: []helpEntry{
+				{"Tab", "Next field (body → action → submit)"},
+				{"Shift+Tab", "Previous field"},
+				{"Enter", "Activate text area / submit review"},
+				{"Esc", "Deactivate text area"},
+				{"j / k", "Change review action"},
 			},
 		},
 	}

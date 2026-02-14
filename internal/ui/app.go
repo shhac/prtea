@@ -51,8 +51,7 @@ type App struct {
 	initialized    bool    // whether first WindowSizeMsg has been processed
 
 	// Mode
-	mode          AppMode
-	pendingAction ConfirmAction
+	mode AppMode
 }
 
 // NewApp creates a new App model with default state.
@@ -251,6 +250,30 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case ReviewSubmitMsg:
+		return m.handleReviewSubmit(msg)
+
+	case ReviewSubmitDoneMsg:
+		if m.selectedPR == nil || msg.PRNumber != m.selectedPR.Number {
+			return m, nil
+		}
+		actionLabels := map[ReviewAction]string{
+			ReviewApprove:        "Approved",
+			ReviewComment:        "Commented on",
+			ReviewRequestChanges: "Requested changes on",
+		}
+		label := actionLabels[msg.Action]
+		m.statusBar.SetTemporaryMessage(fmt.Sprintf("✓ %s PR #%d", label, msg.PRNumber), 3*time.Second)
+		m.chatPanel.SetReviewSubmitted(nil)
+		return m, fetchReviewsCmd(m.ghClient, m.selectedPR.Owner, m.selectedPR.Repo, m.selectedPR.Number)
+
+	case ReviewSubmitErrMsg:
+		if m.selectedPR != nil && msg.PRNumber == m.selectedPR.Number {
+			m.chatPanel.SetReviewSubmitted(msg.Err)
+		}
+		m.statusBar.SetTemporaryMessage(fmt.Sprintf("✗ Review failed: %s", msg.Err), 5*time.Second)
+		return m, nil
+
 	case PRApproveDoneMsg:
 		if m.selectedPR == nil || msg.PRNumber != m.selectedPR.Number {
 			return m, nil
@@ -288,6 +311,15 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, cmd)
 		return m, tea.Batch(cmds...)
 
+	case ChatClearMsg:
+		m.chatPanel.ClearChat()
+		m.streamChan = nil // stop any active stream
+		if m.chatService != nil && m.selectedPR != nil {
+			m.chatService.ClearSession(m.selectedPR.Owner, m.selectedPR.Repo, m.selectedPR.Number)
+		}
+		m.statusBar.SetTemporaryMessage("Chat cleared", 2*time.Second)
+		return m, nil
+
 	case ChatSendMsg:
 		return m.handleChatSend(msg.Message)
 
@@ -323,11 +355,6 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// In insert mode, only Esc is handled globally (via chat panel)
 		if m.mode == ModeInsert {
 			return m.updateChatPanel(msg)
-		}
-
-		// Confirmation prompt captures y/n/Esc
-		if m.pendingAction != ConfirmNone {
-			return m.handleConfirmKey(msg)
 		}
 
 		// Global key handling in navigation mode
@@ -410,11 +437,6 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m.refreshSelectedPR()
 
-		case key.Matches(msg, GlobalKeys.Approve):
-			return m.promptConfirm(ConfirmApprove)
-
-		case key.Matches(msg, GlobalKeys.Close):
-			return m.promptConfirm(ConfirmClose)
 		}
 
 		// Delegate to focused panel
@@ -478,6 +500,7 @@ func (m App) selectPR(owner, repo string, number int, htmlURL string, advance bo
 	m.chatPanel.SetAnalysisResult(nil) // clear old analysis
 	m.chatPanel.ClearChat()            // clear old chat
 	m.chatPanel.ClearComments()        // clear old comments
+	m.chatPanel.ClearReview()          // clear old review
 	if m.chatService != nil {
 		m.chatService.ClearSession(owner, repo, number)
 	}
@@ -680,47 +703,6 @@ func (m App) refreshSelectedPR() (tea.Model, tea.Cmd) {
 	)
 }
 
-// promptConfirm enters the confirmation state for approve/close actions.
-func (m App) promptConfirm(action ConfirmAction) (tea.Model, tea.Cmd) {
-	if m.selectedPR == nil {
-		m.statusBar.SetTemporaryMessage("No PR selected", 2*time.Second)
-		return m, nil
-	}
-	if m.ghClient == nil {
-		m.statusBar.SetTemporaryMessage("GitHub client not ready", 2*time.Second)
-		return m, nil
-	}
-	m.pendingAction = action
-	m.statusBar.SetPendingAction(action)
-	return m, nil
-}
-
-// handleConfirmKey processes y/n/Esc during a pending confirmation.
-func (m App) handleConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	action := m.pendingAction
-	m.pendingAction = ConfirmNone
-	m.statusBar.SetPendingAction(ConfirmNone)
-
-	switch msg.String() {
-	case "y", "Y":
-		pr := m.selectedPR
-		client := m.ghClient
-		switch action {
-		case ConfirmApprove:
-			m.statusBar.SetTemporaryMessage(fmt.Sprintf("Approving PR #%d...", pr.Number), 3*time.Second)
-			return m, approvePRCmd(client, pr.Owner, pr.Repo, pr.Number)
-		case ConfirmClose:
-			m.statusBar.SetTemporaryMessage(fmt.Sprintf("Closing PR #%d...", pr.Number), 3*time.Second)
-			return m, closePRCmd(client, pr.Owner, pr.Repo, pr.Number)
-		}
-	case "n", "N", "esc":
-		m.statusBar.SetTemporaryMessage("Cancelled", 1*time.Second)
-	default:
-		// Any other key cancels silently
-	}
-	return m, nil
-}
-
 // handleChatSend validates state and kicks off streaming Claude chat.
 func (m App) handleChatSend(message string) (tea.Model, tea.Cmd) {
 	if m.selectedPR == nil {
@@ -733,18 +715,21 @@ func (m App) handleChatSend(message string) (tea.Model, tea.Cmd) {
 	}
 
 	var prContext string
+	var hunksSelected bool
 	if selected := m.diffViewer.GetSelectedHunkContent(); selected != "" {
-		prContext = buildSelectedHunkContext(m.selectedPR, selected)
+		prContext = buildSelectedHunkContext(m.selectedPR, m.diffFiles, selected)
+		hunksSelected = true
 	} else {
 		prContext = buildChatContext(m.selectedPR, m.diffFiles)
 	}
 
 	input := claude.ChatInput{
-		Owner:     m.selectedPR.Owner,
-		Repo:      m.selectedPR.Repo,
-		PRNumber:  m.selectedPR.Number,
-		PRContext: prContext,
-		Message:   message,
+		Owner:         m.selectedPR.Owner,
+		Repo:          m.selectedPR.Repo,
+		PRNumber:      m.selectedPR.Number,
+		PRContext:     prContext,
+		HunksSelected: hunksSelected,
+		Message:       message,
 	}
 
 	ch := make(chatStreamChan)
@@ -762,6 +747,32 @@ func (m App) handleChatSend(message string) (tea.Model, tea.Cmd) {
 
 	m.streamChan = ch
 	return m, listenForChatStream(ch)
+}
+
+// handleReviewSubmit validates state and dispatches the review action.
+func (m App) handleReviewSubmit(msg ReviewSubmitMsg) (tea.Model, tea.Cmd) {
+	if m.selectedPR == nil {
+		m.chatPanel.SetReviewSubmitted(fmt.Errorf("no PR selected"))
+		return m, nil
+	}
+	if m.ghClient == nil {
+		m.chatPanel.SetReviewSubmitted(fmt.Errorf("GitHub client not ready"))
+		return m, nil
+	}
+
+	pr := m.selectedPR
+	client := m.ghClient
+	action := msg.Action
+	body := msg.Body
+
+	actionLabels := map[ReviewAction]string{
+		ReviewApprove:        "Approving",
+		ReviewComment:        "Submitting comment on",
+		ReviewRequestChanges: "Requesting changes on",
+	}
+	m.statusBar.SetTemporaryMessage(fmt.Sprintf("%s PR #%d...", actionLabels[action], pr.Number), 3*time.Second)
+
+	return m, submitReviewCmd(client, pr.Owner, pr.Repo, pr.Number, action, body)
 }
 
 // handleCommentPost validates state and posts a comment on the selected PR.
