@@ -21,7 +21,6 @@ Three-panel TUI built with [Bubbletea](https://github.com/charmbracelet/bubblete
 
 ## Prerequisites
 
-- [Go](https://go.dev/) 1.25+
 - [GitHub CLI](https://cli.github.com/) (`gh`) — authenticated with `gh auth login`
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (`claude`) — optional, required for AI analysis and chat
 
@@ -40,6 +39,8 @@ brew install shhac/tap/prtea
 Download from the [releases page](https://github.com/shhac/prtea/releases), extract, and add to your `$PATH`.
 
 ### Build from Source
+
+Requires [Go](https://go.dev/) 1.25+.
 
 ```bash
 git clone https://github.com/shhac/prtea.git
