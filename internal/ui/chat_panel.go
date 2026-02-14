@@ -354,6 +354,15 @@ func (m *ChatPanelModel) ClearChat() {
 	m.refreshViewport()
 }
 
+// RestoreMessages restores chat history from a previous session (e.g., loaded from disk).
+func (m *ChatPanelModel) RestoreMessages(msgs []claude.ChatMessage) {
+	m.messages = make([]chatMessage, len(msgs))
+	for i, msg := range msgs {
+		m.messages[i] = chatMessage{role: msg.Role, content: msg.Content}
+	}
+	m.refreshViewport()
+}
+
 // SetCommentsLoading puts the comments tab into loading state.
 func (m *ChatPanelModel) SetCommentsLoading() {
 	m.commentsLoading = true
@@ -474,11 +483,17 @@ func (m ChatPanelModel) View() string {
 func (m ChatPanelModel) renderHeader() string {
 	var tabs []string
 
+	// Show message count on Chat tab when there are messages
+	chatLabel := "Chat"
+	if n := len(m.messages); n > 0 {
+		chatLabel = fmt.Sprintf("Chat (%d)", n)
+	}
+
 	tabNames := []struct {
 		tab  ChatTab
 		name string
 	}{
-		{ChatTabChat, "Chat"},
+		{ChatTabChat, chatLabel},
 		{ChatTabAnalysis, "Analysis"},
 		{ChatTabComments, "Comments"},
 		{ChatTabReview, "Review"},

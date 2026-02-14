@@ -38,6 +38,7 @@ type App struct {
 	analyzer      *claude.Analyzer
 	chatService   *claude.ChatService
 	analysisStore *claude.AnalysisStore
+	chatStore     *claude.ChatStore
 	analyzing     bool
 	streamChan    chatStreamChan      // active chat streaming channel
 	streamCancel  context.CancelFunc // cancels active stream goroutine
@@ -69,11 +70,13 @@ func NewApp() App {
 
 	claudePath, _ := claude.FindClaude()
 
+	chatStore := claude.NewChatStore(config.ChatCacheDir())
+
 	var analyzer *claude.Analyzer
 	var chatSvc *claude.ChatService
 	if claudePath != "" {
 		analyzer = claude.NewAnalyzer(claudePath, cfg.ClaudeTimeoutDuration(), config.PromptsDir())
-		chatSvc = claude.NewChatService(claudePath, cfg.ClaudeTimeoutDuration())
+		chatSvc = claude.NewChatService(claudePath, cfg.ClaudeTimeoutDuration(), chatStore)
 	}
 
 	store := claude.NewAnalysisStore(config.AnalysesCacheDir())
@@ -92,6 +95,7 @@ func NewApp() App {
 		analyzer:      analyzer,
 		chatService:   chatSvc,
 		analysisStore: store,
+		chatStore:     chatStore,
 	}
 }
 
@@ -382,6 +386,11 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateFocusedPanel(msg)
 		}
 
+		// While searching in the diff viewer, route all keys to the diff viewer
+		if m.focused == PanelCenter && m.diffViewer.IsSearching() {
+			return m.updateFocusedPanel(msg)
+		}
+
 		// Global key handling in navigation mode
 		switch {
 		case key.Matches(msg, GlobalKeys.Help):
@@ -495,6 +504,8 @@ func (m App) View() string {
 
 	panels := lipgloss.JoinHorizontal(lipgloss.Top, panelViews...)
 	m.statusBar.SetFiltering(m.focused == PanelLeft && m.prList.IsFiltering())
+	m.statusBar.SetDiffSearching(m.focused == PanelCenter && m.diffViewer.IsSearching())
+	m.statusBar.SetDiffSearchInfo(m.diffViewer.SearchInfo())
 	bar := m.statusBar.View()
 
 	base := lipgloss.JoinVertical(lipgloss.Left, panels, bar)
@@ -514,6 +525,11 @@ func (m App) selectPR(owner, repo string, number int, htmlURL string, advance bo
 	if item, ok := m.prList.list.SelectedItem().(PRItem); ok {
 		title = item.title
 	}
+	// Save current chat session before switching PRs
+	if m.chatService != nil && m.selectedPR != nil {
+		m.chatService.SaveSession(m.selectedPR.Owner, m.selectedPR.Repo, m.selectedPR.Number)
+	}
+
 	m.selectedPR = &SelectedPR{
 		Owner:   owner,
 		Repo:    repo,
@@ -528,11 +544,15 @@ func (m App) selectPR(owner, repo string, number int, htmlURL string, advance bo
 	m.streamChan = nil                 // stop listening to old stream
 	m.diffFiles = nil                  // clear old diff data
 	m.chatPanel.SetAnalysisResult(nil) // clear old analysis
-	m.chatPanel.ClearChat()            // clear old chat
 	m.chatPanel.ClearComments()        // clear old comments
 	m.chatPanel.ClearReview()          // clear old review
+
+	// Restore chat from previous session (memory or disk) instead of clearing
+	m.chatPanel.ClearChat()
 	if m.chatService != nil {
-		m.chatService.ClearSession(owner, repo, number)
+		if msgs := m.chatService.GetSessionMessages(owner, repo, number); len(msgs) > 0 {
+			m.chatPanel.RestoreMessages(msgs)
+		}
 	}
 	m.statusBar.SetSelectedPR(number)
 	m.prList.SetSelectedPR(number)

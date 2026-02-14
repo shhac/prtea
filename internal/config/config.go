@@ -96,6 +96,11 @@ func AnalysesCacheDir() string {
 	return filepath.Join(DefaultConfigDir(), "analyses")
 }
 
+// ChatCacheDir returns the path to the chat session cache directory.
+func ChatCacheDir() string {
+	return filepath.Join(DefaultConfigDir(), "chats")
+}
+
 // PromptsDir returns the path to the custom prompts directory.
 func PromptsDir() string {
 	return filepath.Join(DefaultConfigDir(), "prompts")
