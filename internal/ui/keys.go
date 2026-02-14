@@ -85,7 +85,6 @@ type PRListKeyMap struct {
 	Down             key.Binding
 	Select           key.Binding
 	SelectAndAdvance key.Binding
-	Filter           key.Binding
 	PrevTab          key.Binding
 	NextTab          key.Binding
 }
@@ -106,10 +105,6 @@ var PRListKeys = PRListKeyMap{
 	SelectAndAdvance: key.NewBinding(
 		key.WithKeys("enter"),
 		key.WithHelp("Enter", "select + focus diff"),
-	),
-	Filter: key.NewBinding(
-		key.WithKeys("/"),
-		key.WithHelp("/", "filter"),
 	),
 	PrevTab: key.NewBinding(
 		key.WithKeys("h", "left"),

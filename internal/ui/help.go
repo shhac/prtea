@@ -197,7 +197,6 @@ func (m HelpOverlayModel) renderHelpContent() string {
 				{"j / k", "Move up/down"},
 				{"Space", "Select PR"},
 				{"Enter", "Select PR + focus diff"},
-				{"/", "Filter"},
 			},
 		},
 		{
