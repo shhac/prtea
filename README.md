@@ -152,6 +152,27 @@ Add per-repository review instructions by creating markdown files in `~/.config/
 
 These are automatically included when analyzing PRs for that repository.
 
+## Development
+
+### Running Tests
+
+```bash
+go test ./...
+```
+
+Tests cover pure functions (panel layout, CI status computation, diff parsing, review deduplication) and mock-based GitHub client methods using injectable `CommandRunner`. No external services or `gh` CLI needed for tests.
+
+### Project Structure
+
+```
+cmd/prtea/main.go        Entry point
+internal/ui/              Bubbletea UI layer (panels, layout, styles, keys)
+internal/github/          GitHub API client (gh CLI based, with CommandRunner injection)
+internal/claude/          Claude CLI subprocess (analysis + chat + caching)
+internal/config/          Config file management
+internal/git/             Git operations (clone, fetch, SHA lookup)
+```
+
 ## License
 
 [MIT](LICENSE)
