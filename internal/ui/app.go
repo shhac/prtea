@@ -32,7 +32,8 @@ type App struct {
 
 	// Currently selected PR (nil until a PR is selected)
 	selectedPR *SelectedPR
-	diffFiles  []github.PRFile // stored for analysis context
+	diffFiles             []github.PRFile          // stored for analysis context
+	pendingInlineComments []PendingInlineComment   // unified pool of pending comments
 
 	// Claude integration
 	claudePath    string
@@ -284,7 +285,11 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case AIReviewCompleteMsg:
 		if m.selectedPR != nil && msg.PRNumber == m.selectedPR.Number {
 			m.chatPanel.SetAIReviewResult(msg.Result)
-			m.diffViewer.SetAIInlineComments(msg.Result.Comments)
+			// Merge AI comments into pending pool (replaces old AI comments, preserves user comments)
+			m.mergeAIComments(msg.Result.Comments)
+			m.diffViewer.ClearAIInlineComments()
+			m.diffViewer.SetPendingInlineComments(m.pendingInlineComments)
+			m.chatPanel.SetPendingCommentCount(len(m.pendingInlineComments))
 			clearCmd := m.statusBar.SetTemporaryMessage(
 				fmt.Sprintf("AI review ready: %d inline comments", len(msg.Result.Comments)),
 				3*time.Second,
@@ -303,6 +308,9 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, clearCmd
 		}
 		return m, nil
+
+	case InlineCommentAddMsg:
+		return m.handleInlineCommentAdd(msg)
 
 	case CommentPostMsg:
 		return m.handleCommentPost(msg.Body)
@@ -334,6 +342,10 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		label := actionLabels[msg.Action]
 		clearCmd := m.statusBar.SetTemporaryMessage(fmt.Sprintf("✓ %s PR #%d", label, msg.PRNumber), 3*time.Second)
 		m.chatPanel.SetReviewSubmitted(nil)
+		// Clear pending comments — they've been submitted
+		m.pendingInlineComments = nil
+		m.diffViewer.SetPendingInlineComments(nil)
+		m.chatPanel.SetPendingCommentCount(0)
 		return m, tea.Batch(clearCmd, fetchReviewsCmd(m.ghClient, m.selectedPR.Owner, m.selectedPR.Repo, m.selectedPR.Number))
 
 	case ReviewSubmitErrMsg:
@@ -448,6 +460,11 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// While searching in the diff viewer, route all keys to the diff viewer
 		if m.focused == PanelCenter && m.diffViewer.IsSearching() {
+			return m.updateFocusedPanel(msg)
+		}
+
+		// While commenting in the diff viewer, route all keys to the diff viewer
+		if m.focused == PanelCenter && m.diffViewer.IsCommenting() {
 			return m.updateFocusedPanel(msg)
 		}
 
@@ -628,6 +645,7 @@ func (m App) selectPR(owner, repo string, number int, htmlURL string, advance bo
 	m.analysisStreamCh = nil           // stop listening to old analysis stream
 	m.analyzing = false
 	m.diffFiles = nil                  // clear old diff data
+	m.pendingInlineComments = nil      // clear old pending comments
 	m.chatPanel.SetAnalysisResult(nil) // clear old analysis
 	m.chatPanel.ClearComments()        // clear old comments
 	m.chatPanel.ClearReview()          // clear old review
@@ -1003,7 +1021,12 @@ func (m App) handleReviewSubmit(msg ReviewSubmitMsg) (tea.Model, tea.Cmd) {
 	}
 	clearCmd := m.statusBar.SetTemporaryMessage(fmt.Sprintf("%s PR #%d...", actionLabels[action], pr.Number), 3*time.Second)
 
-	return m, tea.Batch(clearCmd, submitReviewCmd(client, pr.Owner, pr.Repo, pr.Number, action, body, msg.InlineComments))
+	// Use app's pending pool instead of msg.InlineComments
+	var inlineComments []claude.InlineReviewComment
+	for _, c := range m.pendingInlineComments {
+		inlineComments = append(inlineComments, c.InlineReviewComment)
+	}
+	return m, tea.Batch(clearCmd, submitReviewCmd(client, pr.Owner, pr.Repo, pr.Number, action, body, inlineComments))
 }
 
 // refreshFetchDone decrements the pending refresh counter and, when all
@@ -1038,6 +1061,91 @@ func (m App) handleCommentPost(body string) (tea.Model, tea.Cmd) {
 	}
 }
 
+// handleInlineCommentAdd manages the pending inline comment pool.
+func (m App) handleInlineCommentAdd(msg InlineCommentAddMsg) (tea.Model, tea.Cmd) {
+	if msg.Body == "" {
+		// Delete: remove the first pending comment at this path:line
+		removed := false
+		for i, c := range m.pendingInlineComments {
+			if c.Path == msg.Path && c.Line == msg.Line {
+				m.pendingInlineComments = append(m.pendingInlineComments[:i], m.pendingInlineComments[i+1:]...)
+				removed = true
+				break
+			}
+		}
+		m.diffViewer.SetPendingInlineComments(m.pendingInlineComments)
+		m.chatPanel.SetPendingCommentCount(len(m.pendingInlineComments))
+		if removed {
+			clearCmd := m.statusBar.SetTemporaryMessage(
+				fmt.Sprintf("Comment removed on %s:%d", msg.Path, msg.Line), 2*time.Second)
+			return m, clearCmd
+		}
+		return m, nil
+	}
+
+	// Check if editing existing comment at this path:line
+	found := false
+	for i, c := range m.pendingInlineComments {
+		if c.Path == msg.Path && c.Line == msg.Line {
+			m.pendingInlineComments[i].Body = msg.Body
+			m.pendingInlineComments[i].Source = "user"
+			found = true
+			break
+		}
+	}
+	if !found {
+		m.pendingInlineComments = append(m.pendingInlineComments, PendingInlineComment{
+			InlineReviewComment: claude.InlineReviewComment{
+				Path: msg.Path,
+				Line: msg.Line,
+				Side: "RIGHT",
+				Body: msg.Body,
+			},
+			Source: "user",
+		})
+	}
+	m.diffViewer.SetPendingInlineComments(m.pendingInlineComments)
+	m.chatPanel.SetPendingCommentCount(len(m.pendingInlineComments))
+	action := "added"
+	if found {
+		action = "updated"
+	}
+	clearCmd := m.statusBar.SetTemporaryMessage(
+		fmt.Sprintf("Comment %s on %s:%d", action, msg.Path, msg.Line), 2*time.Second)
+	return m, clearCmd
+}
+
+// mergeAIComments integrates AI review comments into the pending pool.
+// Old AI-sourced comments are replaced; user-sourced comments are preserved.
+func (m *App) mergeAIComments(aiComments []claude.InlineReviewComment) {
+	// Remove old AI-sourced comments
+	filtered := m.pendingInlineComments[:0]
+	for _, c := range m.pendingInlineComments {
+		if c.Source != "ai" {
+			filtered = append(filtered, c)
+		}
+	}
+	m.pendingInlineComments = filtered
+
+	// Build set of lines with user comments
+	userLines := make(map[string]bool)
+	for _, c := range m.pendingInlineComments {
+		key := fmt.Sprintf("%s:%d", c.Path, c.Line)
+		userLines[key] = true
+	}
+
+	// Add new AI comments, skipping lines that already have user comments
+	for _, c := range aiComments {
+		key := fmt.Sprintf("%s:%d", c.Path, c.Line)
+		if !userLines[key] {
+			m.pendingInlineComments = append(m.pendingInlineComments, PendingInlineComment{
+				InlineReviewComment: c,
+				Source:              "ai",
+			})
+		}
+	}
+}
+
 // executeCommand dispatches a named command from the command palette.
 func (m App) executeCommand(name string) (tea.Model, tea.Cmd) {
 	switch name {
@@ -1050,6 +1158,22 @@ func (m App) executeCommand(name string) (tea.Model, tea.Cmd) {
 			return m, openBrowserCmd(m.selectedPR.HTMLURL)
 		}
 		return m, nil
+	case "clear selection":
+		if m.diffViewer.activeTab == TabDiff && len(m.diffViewer.selectedHunks) > 0 {
+			for idx := range m.diffViewer.selectedHunks {
+				m.diffViewer.markHunkDirty(idx)
+			}
+			m.diffViewer.selectedHunks = nil
+			m.diffViewer.refreshContent()
+		}
+		return m, nil
+	case "comment":
+		if m.focused != PanelCenter || m.diffViewer.activeTab != TabDiff || len(m.diffViewer.hunks) == 0 {
+			clearCmd := m.statusBar.SetTemporaryMessage("Focus the diff viewer to add comments", 2*time.Second)
+			return m, clearCmd
+		}
+		cmd := m.diffViewer.EnterCommentMode()
+		return m, cmd
 	case "approve":
 		m.chatPanel.activeTab = ChatTabReview
 		m.showAndFocusPanel(PanelRight)

@@ -85,6 +85,9 @@ type ChatPanelModel struct {
 	aiReviewLoading  bool
 	aiReviewError    string
 
+	// Pending inline comment count (set by app)
+	pendingCommentCount int
+
 	// Cached glamour renderer (recreated when width changes)
 	glamourRenderer *glamour.TermRenderer
 	glamourWidth    int
@@ -419,6 +422,7 @@ func (m *ChatPanelModel) ClearReview() {
 	m.aiReviewResult = nil
 	m.aiReviewLoading = false
 	m.aiReviewError = ""
+	m.pendingCommentCount = 0
 }
 
 // SetAIReviewLoading puts the review tab into AI review loading state.
@@ -461,6 +465,11 @@ func (m *ChatPanelModel) ClearAIReview() {
 	m.aiReviewResult = nil
 	m.aiReviewLoading = false
 	m.aiReviewError = ""
+}
+
+// SetPendingCommentCount sets the number of pending inline comments for display in the review tab.
+func (m *ChatPanelModel) SetPendingCommentCount(n int) {
+	m.pendingCommentCount = n
 }
 
 // SetReviewSubmitted clears the submitting state. On success, also resets the form.
@@ -1022,13 +1031,9 @@ func (m ChatPanelModel) updateReviewTab(msg tea.KeyMsg) (ChatPanelModel, tea.Cmd
 			}
 			m.reviewSubmitting = true
 			action := m.reviewAction
-			// Include AI inline comments if available
-			var inlineComments []claude.InlineReviewComment
-			if m.aiReviewResult != nil {
-				inlineComments = m.aiReviewResult.Comments
-			}
+			// Inline comments are managed by app.pendingInlineComments
 			return m, func() tea.Msg {
-				return ReviewSubmitMsg{Action: action, Body: body, InlineComments: inlineComments}
+				return ReviewSubmitMsg{Action: action, Body: body}
 			}
 		case "tab":
 			m.reviewFocus = ReviewFocusTextArea
@@ -1078,8 +1083,20 @@ func (m ChatPanelModel) renderReview() string {
 			Bold(true).
 			Padding(0, 1).
 			Render("AI REVIEW")
-		commentCount := fmt.Sprintf(" %d inline comments", len(m.aiReviewResult.Comments))
-		b.WriteString(badge + lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render(commentCount))
+		b.WriteString(badge)
+		b.WriteString("\n\n")
+	}
+
+	// Pending inline comment count
+	if m.pendingCommentCount > 0 {
+		countText := fmt.Sprintf("📝 %d pending inline comment", m.pendingCommentCount)
+		if m.pendingCommentCount != 1 {
+			countText += "s"
+		}
+		countText += " will be submitted"
+		b.WriteString(lipgloss.NewStyle().
+			Foreground(lipgloss.Color("214")).
+			Render(countText))
 		b.WriteString("\n\n")
 	}
 

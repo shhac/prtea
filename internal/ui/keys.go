@@ -199,8 +199,9 @@ var DiffViewerKeys = DiffViewerKeyMap{
 		key.WithHelp("S", "select file hunks"),
 	),
 	ClearSelection: key.NewBinding(
-		key.WithKeys("c"),
-		key.WithHelp("c", "clear selection"),
+		key.WithKeys(),
+		key.WithHelp("", "clear selection"),
+		key.WithDisabled(),
 	),
 	Search: key.NewBinding(
 		key.WithKeys("/"),

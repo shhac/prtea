@@ -98,6 +98,18 @@ var (
 		Italic(true)
 )
 
+// Pending user inline comment styles for diff viewer
+var (
+	pendingCommentStyle = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("252")).
+		Background(lipgloss.Color("58")).
+		PaddingLeft(4)
+	pendingCommentPrefixStyle = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("214")).
+		Background(lipgloss.Color("58")).
+		Bold(true)
+)
+
 // PR list styles
 var (
 	prTitleStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))

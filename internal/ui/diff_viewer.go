@@ -131,6 +131,15 @@ type DiffViewerModel struct {
 	// GitHub inline comment state
 	ghCommentThreads map[string][]ghCommentThread // "path:line" → threaded comments
 
+	// Pending inline comment state (user + AI drafts)
+	pendingCommentsByFileLine map[string][]PendingInlineComment // "path:line" → comments
+
+	// Comment input mode
+	commentMode       bool
+	commentInput      textinput.Model
+	commentTargetFile string
+	commentTargetLine int
+
 	// Search state
 	searchMode          bool
 	searchInput         textinput.Model
@@ -160,9 +169,14 @@ func NewDiffViewerModel() DiffViewerModel {
 	si.Prompt = ""
 	si.CharLimit = 100
 
+	ci := textinput.New()
+	ci.Prompt = ""
+	ci.CharLimit = 500
+
 	return DiffViewerModel{
-		spinner:     newLoadingSpinner(),
-		searchInput: si,
+		spinner:      newLoadingSpinner(),
+		searchInput:  si,
+		commentInput: ci,
 	}
 }
 
@@ -178,6 +192,32 @@ func (m DiffViewerModel) Update(msg tea.Msg) (DiffViewerModel, tea.Cmd) {
 	case tea.KeyMsg:
 		if !m.focused {
 			return m, nil
+		}
+
+		// Comment mode: capture all keys for the comment input
+		if m.commentMode {
+			switch msg.String() {
+			case "esc":
+				m.commentMode = false
+				m.commentInput.SetValue("")
+				m.commentInput.Blur()
+				m.refreshContent()
+				return m, nil
+			case "enter":
+				body := strings.TrimSpace(m.commentInput.Value())
+				path := m.commentTargetFile
+				line := m.commentTargetLine
+				m.commentMode = false
+				m.commentInput.Blur()
+				m.refreshContent()
+				return m, func() tea.Msg {
+					return InlineCommentAddMsg{Path: path, Line: line, Body: body}
+				}
+			default:
+				var cmd tea.Cmd
+				m.commentInput, cmd = m.commentInput.Update(msg)
+				return m, cmd
+			}
 		}
 
 		// Search mode: capture all keys for the search input
@@ -472,9 +512,13 @@ func (m *DiffViewerModel) SetLoading(prNumber int) {
 	m.lastRenderedFocus = 0
 	m.dirtyHunks = nil
 	m.clearSearch()
+	m.commentMode = false
+	m.commentInput.SetValue("")
+	m.commentInput.Blur()
 	m.aiInlineComments = nil
 	m.aiCommentsByFileLine = nil
 	m.ghCommentThreads = nil
+	m.pendingCommentsByFileLine = nil
 	m.currentFileIdx = 0
 	m.err = nil
 	m.prTitle = ""
@@ -575,6 +619,52 @@ func (m *DiffViewerModel) ClearAIInlineComments() {
 	m.refreshContent()
 }
 
+// EnterCommentMode activates comment input mode targeting the focused hunk.
+func (m *DiffViewerModel) EnterCommentMode() tea.Cmd {
+	if len(m.hunks) == 0 || m.activeTab != TabDiff {
+		return nil
+	}
+	hunk := m.hunks[m.focusedHunkIdx]
+	m.commentTargetFile = hunk.Filename
+	m.commentTargetLine = parseHunkNewStart(hunk.Header)
+	m.commentMode = true
+
+	// Pre-fill if editing existing comment at this location
+	key := fmt.Sprintf("%s:%d", m.commentTargetFile, m.commentTargetLine)
+	if comments, ok := m.pendingCommentsByFileLine[key]; ok && len(comments) > 0 {
+		m.commentInput.SetValue(comments[0].Body)
+		m.commentInput.CursorEnd()
+	} else {
+		m.commentInput.SetValue("")
+	}
+
+	m.refreshContent()
+	return m.commentInput.Focus()
+}
+
+// IsCommenting returns true when the comment input is actively being typed into.
+func (m DiffViewerModel) IsCommenting() bool {
+	return m.commentMode
+}
+
+// SetPendingInlineComments stores pending comments and rebuilds the diff cache.
+func (m *DiffViewerModel) SetPendingInlineComments(comments []PendingInlineComment) {
+	m.pendingCommentsByFileLine = make(map[string][]PendingInlineComment)
+	for _, c := range comments {
+		key := fmt.Sprintf("%s:%d", c.Path, c.Line)
+		m.pendingCommentsByFileLine[key] = append(m.pendingCommentsByFileLine[key], c)
+	}
+	m.cachedLines = nil
+	m.refreshContent()
+}
+
+// renderCommentBar renders the comment input bar shown during comment mode.
+func (m DiffViewerModel) renderCommentBar() string {
+	target := fmt.Sprintf("%s:%d", m.commentTargetFile, m.commentTargetLine)
+	prompt := pendingCommentPrefixStyle.Render("📝 " + target + " > ")
+	return prompt + m.commentInput.View()
+}
+
 // SetGitHubInlineComments stores GitHub review comments, groups them into threads,
 // and rebuilds the diff cache so they render at their line positions.
 func (m *DiffViewerModel) SetGitHubInlineComments(comments []github.InlineComment) {
@@ -632,9 +722,12 @@ func (m *DiffViewerModel) refreshContent() {
 		return
 	}
 
-	// Adjust viewport height for search bar
+	// Adjust viewport height for search bar / comment bar
 	innerHeight := m.height - 5
 	if m.searchBarVisible() {
+		innerHeight--
+	}
+	if m.commentMode {
 		innerHeight--
 	}
 	if innerHeight < 1 {
@@ -713,6 +806,10 @@ func (m DiffViewerModel) View() string {
 		parts = append(parts, m.renderSearchBar())
 	} else if m.searchTerm != "" {
 		parts = append(parts, m.renderSearchInfo())
+	}
+
+	if m.commentMode {
+		parts = append(parts, m.renderCommentBar())
 	}
 
 	inner := lipgloss.JoinVertical(lipgloss.Left, parts...)
@@ -1055,6 +1152,7 @@ func (m *DiffViewerModel) renderHunkLines(hunkIdx int) []string {
 	isFocused := hunkIdx == m.focusedHunkIdx
 	hasAIComments := len(m.aiCommentsByFileLine) > 0
 	hasGHComments := len(m.ghCommentThreads) > 0
+	hasPendingComments := len(m.pendingCommentsByFileLine) > 0
 	lines := make([]string, 0, len(hunk.Lines))
 
 	// Track new-side line number for inline comment matching
@@ -1163,6 +1261,17 @@ func (m *DiffViewerModel) renderHunkLines(hunkIdx int) []string {
 					}
 				}
 			}
+
+			// Pending inline comments (user + AI drafts)
+			if hasPendingComments {
+				if comments, ok := m.pendingCommentsByFileLine[key]; ok {
+					for _, c := range comments {
+						prefix := pendingCommentPrefixStyle.Render("  📝 ")
+						body := pendingCommentStyle.Render(c.Body)
+						lines = append(lines, prefix+body)
+					}
+				}
+			}
 		}
 
 		// Advance new-side line counter for + and context lines
@@ -1204,7 +1313,7 @@ func (m *DiffViewerModel) rerenderHunkInCache(hunkIdx int) {
 		return
 	}
 	// If any inline comments are active, hunk line counts are unstable — force full rebuild
-	if len(m.aiCommentsByFileLine) > 0 || len(m.ghCommentThreads) > 0 {
+	if len(m.aiCommentsByFileLine) > 0 || len(m.ghCommentThreads) > 0 || len(m.pendingCommentsByFileLine) > 0 {
 		m.cachedLines = nil
 		return
 	}

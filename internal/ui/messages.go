@@ -254,6 +254,22 @@ type CommandNotFoundMsg struct {
 	Input string
 }
 
+// -- Inline comment authoring --
+
+// InlineCommentAddMsg is emitted by the diff viewer when the user saves an inline comment.
+type InlineCommentAddMsg struct {
+	Path string
+	Line int
+	Body string
+}
+
+// PendingInlineComment wraps an inline review comment with source tracking
+// to distinguish AI-generated comments from user-authored ones.
+type PendingInlineComment struct {
+	claude.InlineReviewComment
+	Source string // "ai" or "user"
+}
+
 // -- Internal streaming --
 
 // chatStreamChan carries streaming chunks and the final response from Claude chat.

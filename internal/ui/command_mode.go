@@ -26,11 +26,13 @@ var commandRegistry = []Command{
 	{Name: "quit", Aliases: []string{"q"}, QuickKey: "q", Description: "Quit prtea"},
 	{Name: "help", Aliases: []string{"h", "?"}, QuickKey: "?", Description: "Show help"},
 	{Name: "zoom", Aliases: []string{"z"}, QuickKey: "z", Description: "Zoom focused panel"},
+	{Name: "comment", Aliases: []string{"cm"}, QuickKey: "c", Description: "Add inline comment"},
 	// Panel toggles with quick keys
 	{Name: "toggle left", Aliases: []string{"tl"}, QuickKey: "1", Description: "Toggle left panel"},
 	{Name: "toggle center", Aliases: []string{"tc"}, QuickKey: "2", Description: "Toggle center panel"},
 	{Name: "toggle right", Aliases: []string{"tr"}, QuickKey: "3", Description: "Toggle right panel"},
 	// Full mode only
+	{Name: "clear selection", Aliases: []string{"cs"}, Description: "Clear hunk selection"},
 	{Name: "review", Aliases: []string{"rev"}, Description: "Generate AI review"},
 	{Name: "approve", Aliases: []string{"ap"}, Description: "Quick-approve PR"},
 	{Name: "refresh", Aliases: []string{"ref"}, Description: "Refresh current view"},
