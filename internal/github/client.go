@@ -70,6 +70,19 @@ func (c *Client) ghExec(ctx context.Context, args ...string) (string, error) {
 	return c.run(ctx, args...)
 }
 
+// ghExecWithStdin runs a gh CLI command with the given string piped to stdin.
+func (c *Client) ghExecWithStdin(ctx context.Context, stdin string, args ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, "gh", args...)
+	cmd.Stdin = strings.NewReader(stdin)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("gh %s failed: %s", strings.Join(args, " "), strings.TrimSpace(stderr.String()))
+	}
+	return stdout.String(), nil
+}
+
 // ghJSON runs a gh CLI command and unmarshals the JSON output into dest.
 func (c *Client) ghJSON(ctx context.Context, dest interface{}, args ...string) error {
 	out, err := c.ghExec(ctx, args...)
