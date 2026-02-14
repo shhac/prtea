@@ -186,6 +186,8 @@ func (m HelpOverlayModel) renderHelpContent() string {
 				{"z", "Zoom focused panel"},
 				{"r", "Refresh (PR list / selected PR)"},
 				{"a", "Analyze PR"},
+				{"A", "Approve PR"},
+				{"X", "Close PR"},
 				{"o", "Open in browser"},
 				{"?", "Toggle this help"},
 				{"q", "Quit"},

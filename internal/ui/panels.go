@@ -18,6 +18,15 @@ const (
 	ModeOverlay
 )
 
+// ConfirmAction represents a pending user confirmation.
+type ConfirmAction int
+
+const (
+	ConfirmNone    ConfirmAction = iota
+	ConfirmApprove
+	ConfirmClose
+)
+
 // Layout constants
 const (
 	minLeftWidth   = 20

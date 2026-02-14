@@ -18,6 +18,8 @@ type GlobalKeyMap struct {
 	ToggleCenter key.Binding
 	ToggleRight  key.Binding
 	Zoom         key.Binding
+	Approve      key.Binding
+	Close        key.Binding
 }
 
 var GlobalKeys = GlobalKeyMap{
@@ -76,6 +78,14 @@ var GlobalKeys = GlobalKeyMap{
 	Zoom: key.NewBinding(
 		key.WithKeys("z"),
 		key.WithHelp("z", "zoom panel"),
+	),
+	Approve: key.NewBinding(
+		key.WithKeys("A"),
+		key.WithHelp("A", "approve PR"),
+	),
+	Close: key.NewBinding(
+		key.WithKeys("X"),
+		key.WithHelp("X", "close PR"),
 	),
 }
 

@@ -98,6 +98,28 @@ type AnalysisErrorMsg struct {
 	Err error
 }
 
+// PRApproveDoneMsg is sent when PR approval succeeds.
+type PRApproveDoneMsg struct {
+	PRNumber int
+}
+
+// PRApproveErrMsg is sent when PR approval fails.
+type PRApproveErrMsg struct {
+	PRNumber int
+	Err      error
+}
+
+// PRCloseDoneMsg is sent when PR close succeeds.
+type PRCloseDoneMsg struct {
+	PRNumber int
+}
+
+// PRCloseErrMsg is sent when PR close fails.
+type PRCloseErrMsg struct {
+	PRNumber int
+	Err      error
+}
+
 // chatStreamChan carries streaming chunks and the final response from Claude chat.
 type chatStreamChan chan tea.Msg
 
@@ -138,7 +160,8 @@ type App struct {
 	initialized    bool    // whether first WindowSizeMsg has been processed
 
 	// Mode
-	mode AppMode
+	mode          AppMode
+	pendingAction ConfirmAction
 }
 
 // NewApp creates a new App model with default state.
@@ -360,6 +383,31 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case PRApproveDoneMsg:
+		if m.selectedPR == nil || msg.PRNumber != m.selectedPR.Number {
+			return m, nil
+		}
+		m.statusBar.SetTemporaryMessage(fmt.Sprintf("✓ Approved PR #%d", msg.PRNumber), 3*time.Second)
+		return m, fetchReviewsCmd(m.ghClient, m.selectedPR.Owner, m.selectedPR.Repo, m.selectedPR.Number)
+
+	case PRApproveErrMsg:
+		m.statusBar.SetTemporaryMessage(fmt.Sprintf("✗ Approve failed: %s", msg.Err), 5*time.Second)
+		return m, nil
+
+	case PRCloseDoneMsg:
+		if m.selectedPR == nil || msg.PRNumber != m.selectedPR.Number {
+			return m, nil
+		}
+		m.statusBar.SetTemporaryMessage(fmt.Sprintf("✓ Closed PR #%d", msg.PRNumber), 3*time.Second)
+		if m.ghClient != nil {
+			return m, fetchPRsCmd(m.ghClient)
+		}
+		return m, nil
+
+	case PRCloseErrMsg:
+		m.statusBar.SetTemporaryMessage(fmt.Sprintf("✗ Close failed: %s", msg.Err), 5*time.Second)
+		return m, nil
+
 	case ChatSendMsg:
 		return m.handleChatSend(msg.Message)
 
@@ -395,6 +443,11 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// In insert mode, only Esc is handled globally (via chat panel)
 		if m.mode == ModeInsert {
 			return m.updateChatPanel(msg)
+		}
+
+		// Confirmation prompt captures y/n/Esc
+		if m.pendingAction != ConfirmNone {
+			return m.handleConfirmKey(msg)
 		}
 
 		// Global key handling in navigation mode
@@ -476,6 +529,12 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m.refreshPRList()
 			}
 			return m.refreshSelectedPR()
+
+		case key.Matches(msg, GlobalKeys.Approve):
+			return m.promptConfirm(ConfirmApprove)
+
+		case key.Matches(msg, GlobalKeys.Close):
+			return m.promptConfirm(ConfirmClose)
 		}
 
 		// Delegate to focused panel
@@ -827,6 +886,69 @@ func (m App) refreshSelectedPR() (tea.Model, tea.Cmd) {
 		fetchCIStatusCmd(m.ghClient, pr.Owner, pr.Repo, pr.Number),
 		fetchReviewsCmd(m.ghClient, pr.Owner, pr.Repo, pr.Number),
 	)
+}
+
+// promptConfirm enters the confirmation state for approve/close actions.
+func (m App) promptConfirm(action ConfirmAction) (tea.Model, tea.Cmd) {
+	if m.selectedPR == nil {
+		m.statusBar.SetTemporaryMessage("No PR selected", 2*time.Second)
+		return m, nil
+	}
+	if m.ghClient == nil {
+		m.statusBar.SetTemporaryMessage("GitHub client not ready", 2*time.Second)
+		return m, nil
+	}
+	m.pendingAction = action
+	m.statusBar.SetPendingAction(action)
+	return m, nil
+}
+
+// handleConfirmKey processes y/n/Esc during a pending confirmation.
+func (m App) handleConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	action := m.pendingAction
+	m.pendingAction = ConfirmNone
+	m.statusBar.SetPendingAction(ConfirmNone)
+
+	switch msg.String() {
+	case "y", "Y":
+		pr := m.selectedPR
+		client := m.ghClient
+		switch action {
+		case ConfirmApprove:
+			m.statusBar.SetTemporaryMessage(fmt.Sprintf("Approving PR #%d...", pr.Number), 3*time.Second)
+			return m, approvePRCmd(client, pr.Owner, pr.Repo, pr.Number)
+		case ConfirmClose:
+			m.statusBar.SetTemporaryMessage(fmt.Sprintf("Closing PR #%d...", pr.Number), 3*time.Second)
+			return m, closePRCmd(client, pr.Owner, pr.Repo, pr.Number)
+		}
+	case "n", "N", "esc":
+		m.statusBar.SetTemporaryMessage("Cancelled", 1*time.Second)
+	default:
+		// Any other key cancels silently
+	}
+	return m, nil
+}
+
+// approvePRCmd returns a command that approves a PR.
+func approvePRCmd(client *github.Client, owner, repo string, number int) tea.Cmd {
+	return func() tea.Msg {
+		err := client.ApprovePR(context.Background(), owner, repo, number, "")
+		if err != nil {
+			return PRApproveErrMsg{PRNumber: number, Err: err}
+		}
+		return PRApproveDoneMsg{PRNumber: number}
+	}
+}
+
+// closePRCmd returns a command that closes a PR without merging.
+func closePRCmd(client *github.Client, owner, repo string, number int) tea.Cmd {
+	return func() tea.Msg {
+		err := client.ClosePR(context.Background(), owner, repo, number)
+		if err != nil {
+			return PRCloseErrMsg{PRNumber: number, Err: err}
+		}
+		return PRCloseDoneMsg{PRNumber: number}
+	}
 }
 
 // handleChatSend validates state and kicks off streaming Claude chat.
