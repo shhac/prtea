@@ -17,6 +17,7 @@ type DiffViewerTab int
 const (
 	TabDiff   DiffViewerTab = iota
 	TabPRInfo
+	TabCI
 )
 
 // DiffHunk represents a single hunk within a file's patch.
@@ -110,7 +111,7 @@ func (m DiffViewerModel) Update(msg tea.Msg) (DiffViewerModel, tea.Cmd) {
 			}
 			return m, nil
 		case key.Matches(msg, DiffViewerKeys.NextTab):
-			if m.activeTab < TabPRInfo {
+			if m.activeTab < TabCI {
 				m.activeTab++
 				m.refreshContent()
 			}
@@ -346,7 +347,7 @@ func (m *DiffViewerModel) SetPRInfoError(err string) {
 	m.refreshContent()
 }
 
-// SetCIStatus sets CI check status data for the PR Info tab.
+// SetCIStatus sets CI check status data for the CI tab.
 func (m *DiffViewerModel) SetCIStatus(status *github.CIStatus) {
 	m.ciStatus = status
 	m.refreshContent()
@@ -366,6 +367,12 @@ func (m *DiffViewerModel) refreshContent() {
 	// PR Info tab has its own content path
 	if m.activeTab == TabPRInfo {
 		m.viewport.SetContent(m.renderPRInfo())
+		return
+	}
+
+	// CI tab has its own content path
+	if m.activeTab == TabCI {
+		m.viewport.SetContent(m.renderCITab())
 		return
 	}
 
@@ -436,6 +443,7 @@ func (m DiffViewerModel) renderTabs() string {
 		diffLabel += fmt.Sprintf(" [%d/%d hunks]", len(m.selectedHunks), len(m.hunks))
 	}
 	prInfoLabel := "PR Info"
+	ciLabel := m.ciTabLabel()
 
 	tabNames := []struct {
 		tab   DiffViewerTab
@@ -443,6 +451,7 @@ func (m DiffViewerModel) renderTabs() string {
 	}{
 		{TabDiff, diffLabel},
 		{TabPRInfo, prInfoLabel},
+		{TabCI, ciLabel},
 	}
 
 	for _, t := range tabNames {
@@ -507,30 +516,6 @@ func (m DiffViewerModel) renderPRInfo() string {
 		b.WriteString("\n")
 	}
 
-	// CI Status
-	if m.ciStatus != nil {
-		b.WriteString("\n")
-		b.WriteString(sectionStyle.Render("CI Status"))
-		b.WriteString("\n")
-		if m.ciStatus.TotalCount == 0 {
-			b.WriteString(dimStyle.Render("No CI checks configured"))
-			b.WriteString("\n")
-		} else {
-			icon, color := ciStatusIconColor(m.ciStatus.OverallStatus)
-			badge := lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Render(icon)
-			passCount := ciPassingCount(m.ciStatus.Checks)
-			label := ciStatusLabel(m.ciStatus.OverallStatus)
-			b.WriteString(fmt.Sprintf("%s %s (%d/%d checks)\n", badge, label, passCount, m.ciStatus.TotalCount))
-
-			// Individual checks
-			for _, check := range m.ciStatus.Checks {
-				ci, cc := ciCheckIconColor(check)
-				checkIcon := lipgloss.NewStyle().Foreground(lipgloss.Color(cc)).Render(ci)
-				b.WriteString(fmt.Sprintf("  %s %s\n", checkIcon, check.Name))
-			}
-		}
-	}
-
 	// Reviews
 	if m.reviewSummary != nil {
 		b.WriteString("\n")
@@ -581,6 +566,120 @@ func (m DiffViewerModel) renderPRInfo() string {
 	} else {
 		b.WriteString("\n")
 		b.WriteString(dimStyle.Render("No description provided."))
+	}
+
+	return b.String()
+}
+
+// ciTabLabel returns a dynamic label for the CI tab header showing at-a-glance status.
+func (m DiffViewerModel) ciTabLabel() string {
+	if m.ciStatus == nil || m.prNumber == 0 {
+		return "CI"
+	}
+	if m.ciStatus.TotalCount == 0 {
+		return "CI"
+	}
+	icon, _ := ciStatusIconColor(m.ciStatus.OverallStatus)
+	passCount := ciPassingCount(m.ciStatus.Checks)
+	switch m.ciStatus.OverallStatus {
+	case "passing":
+		return fmt.Sprintf("CI (%s %d/%d)", icon, passCount, m.ciStatus.TotalCount)
+	case "failing":
+		failCount := m.ciStatus.TotalCount - passCount
+		return fmt.Sprintf("CI (%s %d/%d)", icon, failCount, m.ciStatus.TotalCount)
+	case "pending":
+		completedCount := 0
+		for _, c := range m.ciStatus.Checks {
+			if c.Status == "completed" {
+				completedCount++
+			}
+		}
+		return fmt.Sprintf("CI (%s %d/%d)", icon, completedCount, m.ciStatus.TotalCount)
+	case "mixed":
+		return fmt.Sprintf("CI (%s %d/%d)", icon, passCount, m.ciStatus.TotalCount)
+	default:
+		return "CI"
+	}
+}
+
+// renderCITab renders the full CI status view for the dedicated CI tab.
+func (m DiffViewerModel) renderCITab() string {
+	if m.prNumber == 0 {
+		return lipgloss.NewStyle().
+			Foreground(lipgloss.Color("244")).
+			Padding(1, 2).
+			Render("Select a PR to view CI status")
+	}
+
+	if m.ciStatus == nil {
+		return lipgloss.NewStyle().
+			Foreground(lipgloss.Color("244")).
+			Padding(1, 2).
+			Render(fmt.Sprintf("Loading CI status for PR #%d...", m.prNumber))
+	}
+
+	sectionStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("33"))
+	dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+
+	var b strings.Builder
+
+	b.WriteString(sectionStyle.Render(fmt.Sprintf("CI Status — PR #%d", m.prNumber)))
+	b.WriteString("\n\n")
+
+	if m.ciStatus.TotalCount == 0 {
+		b.WriteString(dimStyle.Render("No CI checks configured"))
+		b.WriteString("\n")
+		return b.String()
+	}
+
+	// Summary badge
+	icon, color := ciStatusIconColor(m.ciStatus.OverallStatus)
+	badge := lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Render(icon)
+	passCount := ciPassingCount(m.ciStatus.Checks)
+	label := ciStatusLabel(m.ciStatus.OverallStatus)
+	b.WriteString(fmt.Sprintf("%s %s — %d/%d checks passing\n\n", badge, label, passCount, m.ciStatus.TotalCount))
+
+	// Sort checks: failures first, then pending, then passing/skipped
+	type checkGroup struct {
+		title  string
+		checks []github.CICheck
+	}
+	var failing, pending, passing []github.CICheck
+	for _, check := range m.ciStatus.Checks {
+		switch {
+		case check.Status == "completed" && check.Conclusion == "failure":
+			failing = append(failing, check)
+		case check.Status == "queued" || check.Status == "in_progress":
+			pending = append(pending, check)
+		default:
+			passing = append(passing, check)
+		}
+	}
+
+	groups := []checkGroup{
+		{"Failing", failing},
+		{"In Progress", pending},
+		{"Passing", passing},
+	}
+
+	for _, group := range groups {
+		if len(group.checks) == 0 {
+			continue
+		}
+		b.WriteString(dimStyle.Render(fmt.Sprintf("── %s (%d) ", group.title, len(group.checks))))
+		b.WriteString("\n")
+		for _, check := range group.checks {
+			ci, cc := ciCheckIconColor(check)
+			checkIcon := lipgloss.NewStyle().Foreground(lipgloss.Color(cc)).Render(ci)
+			conclusion := ""
+			if check.Status == "completed" && check.Conclusion != "" {
+				conclusion = dimStyle.Render(fmt.Sprintf(" (%s)", check.Conclusion))
+			} else if check.Status != "completed" {
+				conclusion = dimStyle.Render(fmt.Sprintf(" (%s)", check.Status))
+			}
+			b.WriteString(fmt.Sprintf("  %s %s%s\n", checkIcon, check.Name, conclusion))
+		}
+		b.WriteString("\n")
 	}
 
 	return b.String()
