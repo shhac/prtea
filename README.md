@@ -29,11 +29,13 @@ Three-panel TUI built with [Bubbletea](https://github.com/charmbracelet/bubblete
 
 ### Homebrew
 
-> Coming soon
+```bash
+brew install shhac/tap/prtea
+```
 
 ### GitHub Releases
 
-> Coming soon
+Download from the [releases page](https://github.com/shhac/prtea/releases), extract, and add to your `$PATH`.
 
 ### Build from Source
 
@@ -54,6 +56,8 @@ cp bin/prtea /usr/local/bin/
 ```bash
 prtea
 ```
+
+Check your installed version with `prtea --version`.
 
 Launch from any directory. The PR list loads your review requests and authored PRs from GitHub.
 
