@@ -52,6 +52,22 @@ type Suggestion struct {
 	File        string `json:"file,omitempty"`
 }
 
+// ReviewAnalysis is the structured output from Claude's AI review generation.
+// It produces a GitHub-ready review with inline comments.
+type ReviewAnalysis struct {
+	Action   string                `json:"action"`   // "approve", "comment", "request_changes"
+	Body     string                `json:"body"`     // overall review comment
+	Comments []InlineReviewComment `json:"comments"` // inline comments on specific lines
+}
+
+// InlineReviewComment is a single inline comment targeting a specific file/line.
+type InlineReviewComment struct {
+	Path string `json:"path"`           // relative file path
+	Line int    `json:"line"`           // file line number (new side)
+	Side string `json:"side,omitempty"` // "RIGHT" (default) or "LEFT"
+	Body string `json:"body"`           // comment text
+}
+
 // ChatMessage represents a single message in a chat conversation.
 type ChatMessage struct {
 	Role    string `json:"role"` // "user", "assistant"

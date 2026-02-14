@@ -76,6 +76,37 @@ func (a *Analyzer) Analyze(ctx context.Context, input AnalyzeInput, onProgress P
 	return a.runAndParse(ctx, cmd, onProgress)
 }
 
+// ReviewInput contains the parameters for generating an AI review.
+type ReviewInput struct {
+	Owner       string
+	Repo        string
+	PRNumber    int
+	PRTitle     string
+	PRBody      string
+	DiffContent string // unified diff patches for all changed files
+}
+
+// AnalyzeForReview runs Claude to generate a GitHub-ready review with inline comments.
+func (a *Analyzer) AnalyzeForReview(ctx context.Context, input ReviewInput, onProgress ProgressFunc) (*ReviewAnalysis, error) {
+	ctx, cancel := context.WithTimeout(ctx, a.timeout)
+	defer cancel()
+
+	prompt := a.buildReviewPrompt(input)
+
+	args := []string{
+		"-p", prompt,
+		"--output-format", "stream-json",
+		"--verbose",
+		"--max-turns", "1",
+	}
+
+	cmd := exec.CommandContext(ctx, a.claudePath, args...)
+	cmd.Stdin = nil
+	cmd.Env = filterEnv(os.Environ(), "ANTHROPIC_API_KEY")
+
+	return a.runAndParseReview(ctx, cmd, onProgress)
+}
+
 // AnalyzeDiff runs analysis using inline diff content (no local repo needed).
 func (a *Analyzer) AnalyzeDiff(ctx context.Context, input AnalyzeDiffInput, onProgress ProgressFunc) (*AnalysisResult, error) {
 	ctx, cancel := context.WithTimeout(ctx, a.timeout)
@@ -326,6 +357,172 @@ func truncate(s string, maxLen int) string {
 	}
 	return s[:maxLen] + "..."
 }
+
+// runAndParseReview starts the Claude CLI subprocess and extracts a ReviewAnalysis result.
+func (a *Analyzer) runAndParseReview(ctx context.Context, cmd *exec.Cmd, onProgress ProgressFunc) (*ReviewAnalysis, error) {
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create stdout pipe: %w", err)
+	}
+
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create stderr pipe: %w", err)
+	}
+
+	if err := cmd.Start(); err != nil {
+		if isNotFound(err) {
+			return nil, fmt.Errorf("claude CLI not found at %s: ensure 'claude' is installed", a.claudePath)
+		}
+		return nil, fmt.Errorf("failed to start claude: %w", err)
+	}
+
+	// Drain stderr in background
+	var stderrBuf strings.Builder
+	go func() {
+		scanner := bufio.NewScanner(stderr)
+		scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
+		for scanner.Scan() {
+			stderrBuf.WriteString(scanner.Text())
+			stderrBuf.WriteByte('\n')
+		}
+	}()
+
+	// Parse stream-json events from stdout
+	var resultEvent *StreamEvent
+	scanner := bufio.NewScanner(stdout)
+	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+
+		var event StreamEvent
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			continue
+		}
+
+		if onProgress != nil {
+			reportProgress(&event, onProgress)
+		}
+
+		if event.Type == "result" {
+			resultEvent = &event
+		}
+	}
+
+	if err := cmd.Wait(); err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return nil, fmt.Errorf("claude review timed out after %s", a.timeout)
+		}
+		errMsg := stderrBuf.String()
+		if len(errMsg) > 500 {
+			errMsg = errMsg[:500]
+		}
+		return nil, fmt.Errorf("claude exited with error: %w\nstderr: %s", err, errMsg)
+	}
+
+	if resultEvent == nil {
+		return nil, fmt.Errorf("claude produced no result event")
+	}
+
+	return extractReviewResult(resultEvent)
+}
+
+func (a *Analyzer) buildReviewPrompt(input ReviewInput) string {
+	body := input.PRBody
+	if body == "" {
+		body = "No description provided."
+	}
+
+	customPrompt := a.loadCustomPrompt(input.Owner, input.Repo)
+
+	return fmt.Sprintf(`You are generating a GitHub pull request review for PR #%d in %s/%s: "%s".
+
+PR description:
+%s
+
+Here is the complete diff for this PR:
+
+%s
+
+Instructions:
+1. Review all changes shown in the diff above.
+2. Decide whether to approve, comment, or request changes.
+3. Write an overall review body summarizing your assessment.
+4. For specific issues, add inline comments targeting the exact file path and line number.
+   - Use the NEW file line number (right side of the diff) for added/modified lines.
+   - Only comment on lines that actually appear in the diff.
+   - Each comment should be actionable and specific.
+   - Focus on bugs, security issues, and significant improvements. Skip trivial style nits.
+%s
+IMPORTANT: Your final response must be ONLY valid JSON matching this schema (no markdown, no wrapping):
+%s`,
+		input.PRNumber, input.Owner, input.Repo, input.PRTitle,
+		body,
+		input.DiffContent,
+		customPrompt,
+		reviewJSONSchema,
+	)
+}
+
+func extractReviewResult(event *StreamEvent) (*ReviewAnalysis, error) {
+	var resultText string
+
+	switch v := event.Result.(type) {
+	case string:
+		resultText = v
+	default:
+		data, err := json.Marshal(v)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal result: %w", err)
+		}
+		resultText = string(data)
+	}
+
+	// Try direct parse
+	var result ReviewAnalysis
+	if err := json.Unmarshal([]byte(resultText), &result); err == nil {
+		return &result, nil
+	}
+
+	// Fallback: extract JSON between first { and last }
+	start := strings.Index(resultText, "{")
+	end := strings.LastIndex(resultText, "}")
+	if start == -1 || end == -1 || end <= start {
+		return nil, fmt.Errorf("no JSON object found in claude review result")
+	}
+
+	if err := json.Unmarshal([]byte(resultText[start:end+1]), &result); err != nil {
+		return nil, fmt.Errorf("failed to parse review JSON: %w\nraw: %s", err, truncate(resultText, 500))
+	}
+
+	return &result, nil
+}
+
+// reviewJSONSchema is the JSON schema for AI-generated reviews.
+var reviewJSONSchema = `{
+  "type": "object",
+  "required": ["action", "body", "comments"],
+  "properties": {
+    "action": { "type": "string", "enum": ["approve", "comment", "request_changes"] },
+    "body": { "type": "string", "description": "Overall review comment summarizing the assessment" },
+    "comments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["path", "line", "body"],
+        "properties": {
+          "path": { "type": "string", "description": "Relative file path" },
+          "line": { "type": "number", "description": "Line number in the new file (right side)" },
+          "body": { "type": "string", "description": "Inline comment text" }
+        }
+      }
+    }
+  }
+}`
 
 // analysisJSONSchema is the JSON schema that Claude must produce.
 var analysisJSONSchema = `{
