@@ -223,6 +223,7 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.chatPanel.SetCommentsError(msg.Err.Error())
 		} else {
 			m.chatPanel.SetComments(msg.Comments, msg.InlineComments)
+			m.diffViewer.SetGitHubInlineComments(msg.InlineComments)
 		}
 		return m, m.refreshFetchDone(msg.PRNumber)
 

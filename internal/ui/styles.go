@@ -75,6 +75,29 @@ var (
 		Bold(true)
 )
 
+// GitHub inline comment styles for diff viewer
+var (
+	ghCommentBodyStyle = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("252")).
+		Background(lipgloss.Color("236")).
+		PaddingLeft(4)
+	ghCommentAuthorStyle = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("220")).
+		Background(lipgloss.Color("236")).
+		Bold(true)
+	ghCommentMetaStyle = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("244")).
+		Background(lipgloss.Color("236"))
+	ghCommentReplyStyle = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("252")).
+		Background(lipgloss.Color("236")).
+		PaddingLeft(6)
+	ghCommentOutdatedStyle = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("244")).
+		Background(lipgloss.Color("236")).
+		Italic(true)
+)
+
 // PR list styles
 var (
 	prTitleStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))

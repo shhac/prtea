@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -29,6 +30,12 @@ type DiffHunk struct {
 	Filename  string
 	Header    string   // the @@ line
 	Lines     []string // all lines including the @@ header
+}
+
+// ghCommentThread groups a root GitHub inline comment with its replies.
+type ghCommentThread struct {
+	Root    github.InlineComment
+	Replies []github.InlineComment
 }
 
 // parsePatchHunks splits a file's patch string into individual hunks.
@@ -121,6 +128,9 @@ type DiffViewerModel struct {
 	aiInlineComments      []claude.InlineReviewComment
 	aiCommentsByFileLine  map[string][]claude.InlineReviewComment // "path:line" → comments
 
+	// GitHub inline comment state
+	ghCommentThreads map[string][]ghCommentThread // "path:line" → threaded comments
+
 	// Search state
 	searchMode          bool
 	searchInput         textinput.Model
@@ -149,6 +159,7 @@ func NewDiffViewerModel() DiffViewerModel {
 	si := textinput.New()
 	si.Prompt = ""
 	si.CharLimit = 100
+
 	return DiffViewerModel{
 		spinner:     newLoadingSpinner(),
 		searchInput: si,
@@ -463,6 +474,7 @@ func (m *DiffViewerModel) SetLoading(prNumber int) {
 	m.clearSearch()
 	m.aiInlineComments = nil
 	m.aiCommentsByFileLine = nil
+	m.ghCommentThreads = nil
 	m.currentFileIdx = 0
 	m.err = nil
 	m.prTitle = ""
@@ -559,6 +571,58 @@ func (m *DiffViewerModel) SetAIInlineComments(comments []claude.InlineReviewComm
 func (m *DiffViewerModel) ClearAIInlineComments() {
 	m.aiInlineComments = nil
 	m.aiCommentsByFileLine = nil
+	m.cachedLines = nil
+	m.refreshContent()
+}
+
+// SetGitHubInlineComments stores GitHub review comments, groups them into threads,
+// and rebuilds the diff cache so they render at their line positions.
+func (m *DiffViewerModel) SetGitHubInlineComments(comments []github.InlineComment) {
+	if len(comments) == 0 {
+		m.ghCommentThreads = nil
+		m.cachedLines = nil
+		m.refreshContent()
+		return
+	}
+
+	// Separate root comments from replies; index roots by ID for thread building.
+	rootByID := make(map[int64]*ghCommentThread)
+	var rootOrder []int64 // preserve insertion order
+	var replies []github.InlineComment
+
+	for _, c := range comments {
+		if c.Outdated {
+			continue // outdated comments stay in Comments tab only
+		}
+		if c.InReplyToID != 0 {
+			replies = append(replies, c)
+		} else {
+			t := ghCommentThread{Root: c}
+			rootByID[c.ID] = &t
+			rootOrder = append(rootOrder, c.ID)
+		}
+	}
+
+	// Attach replies to their root threads, sorted chronologically.
+	sort.Slice(replies, func(i, j int) bool {
+		return replies[i].CreatedAt.Before(replies[j].CreatedAt)
+	})
+	for _, r := range replies {
+		if t, ok := rootByID[r.InReplyToID]; ok {
+			t.Replies = append(t.Replies, r)
+		}
+		// Orphan replies (root not found) are silently dropped — they
+		// still appear in the Comments tab flat list.
+	}
+
+	// Build the "path:line" → threads map.
+	m.ghCommentThreads = make(map[string][]ghCommentThread)
+	for _, id := range rootOrder {
+		t := rootByID[id]
+		key := fmt.Sprintf("%s:%d", t.Root.Path, t.Root.Line)
+		m.ghCommentThreads[key] = append(m.ghCommentThreads[key], *t)
+	}
+
 	m.cachedLines = nil
 	m.refreshContent()
 }
@@ -990,9 +1054,10 @@ func (m *DiffViewerModel) renderHunkLines(hunkIdx int) []string {
 	selected := m.selectedHunks[hunkIdx]
 	isFocused := hunkIdx == m.focusedHunkIdx
 	hasAIComments := len(m.aiCommentsByFileLine) > 0
+	hasGHComments := len(m.ghCommentThreads) > 0
 	lines := make([]string, 0, len(hunk.Lines))
 
-	// Track new-side line number for AI inline comment matching
+	// Track new-side line number for inline comment matching
 	newLine := 0
 
 	for lineIdx, line := range hunk.Lines {
@@ -1075,14 +1140,27 @@ func (m *DiffViewerModel) renderHunkLines(hunkIdx int) []string {
 			lines = append(lines, gutter+style.Render(displayLine))
 		}
 
-		// Inject AI inline comments after matching lines (+ or context lines)
-		if hasAIComments && newLine > 0 && !strings.HasPrefix(line, "-") && !strings.HasPrefix(line, `\`) && !strings.HasPrefix(line, "@@") {
+		// Inject inline comments after matching lines (+ or context lines)
+		if newLine > 0 && !strings.HasPrefix(line, "-") && !strings.HasPrefix(line, `\`) && !strings.HasPrefix(line, "@@") {
 			key := fmt.Sprintf("%s:%d", hunk.Filename, newLine)
-			if comments, ok := m.aiCommentsByFileLine[key]; ok {
-				for _, c := range comments {
-					prefix := aiCommentPrefixStyle.Render("  💬 ")
-					body := aiCommentStyle.Render(c.Body)
-					lines = append(lines, prefix+body)
+
+			// AI inline comments
+			if hasAIComments {
+				if comments, ok := m.aiCommentsByFileLine[key]; ok {
+					for _, c := range comments {
+						prefix := aiCommentPrefixStyle.Render("  💬 ")
+						body := aiCommentStyle.Render(c.Body)
+						lines = append(lines, prefix+body)
+					}
+				}
+			}
+
+			// GitHub inline comments (threaded)
+			if hasGHComments {
+				if threads, ok := m.ghCommentThreads[key]; ok {
+					for _, t := range threads {
+						lines = append(lines, m.renderGHCommentThread(t)...)
+					}
 				}
 			}
 		}
@@ -1096,15 +1174,37 @@ func (m *DiffViewerModel) renderHunkLines(hunkIdx int) []string {
 	return lines
 }
 
+// renderGHCommentThread renders a single GitHub comment thread (root + replies).
+func (m *DiffViewerModel) renderGHCommentThread(t ghCommentThread) []string {
+	var lines []string
+
+	// Root comment: 💬 @author · Jan 2 15:04
+	header := ghCommentAuthorStyle.Render("  💬 @"+t.Root.Author.Login) +
+		ghCommentMetaStyle.Render(" · "+t.Root.CreatedAt.Format("Jan 2 15:04"))
+	lines = append(lines, header)
+	lines = append(lines, ghCommentBodyStyle.Render(t.Root.Body))
+
+	// Replies: ↳ @author · Jan 2 15:04
+	for _, r := range t.Replies {
+		replyHeader := ghCommentMetaStyle.Render("    ↳ ") +
+			ghCommentAuthorStyle.Render("@"+r.Author.Login) +
+			ghCommentMetaStyle.Render(" · "+r.CreatedAt.Format("Jan 2 15:04"))
+		lines = append(lines, replyHeader)
+		lines = append(lines, ghCommentReplyStyle.Render(r.Body))
+	}
+
+	return lines
+}
+
 // rerenderHunkInCache re-renders a single hunk's styled lines in the cache.
-// When AI inline comments are present, line counts may differ from the source,
+// When inline comments are present, line counts may differ from the source,
 // so we fall back to a full cache rebuild instead of in-place replacement.
 func (m *DiffViewerModel) rerenderHunkInCache(hunkIdx int) {
 	if hunkIdx < 0 || hunkIdx >= len(m.hunkLineRanges) {
 		return
 	}
-	// If AI comments are active, hunk line counts are unstable — force full rebuild
-	if len(m.aiCommentsByFileLine) > 0 {
+	// If any inline comments are active, hunk line counts are unstable — force full rebuild
+	if len(m.aiCommentsByFileLine) > 0 || len(m.ghCommentThreads) > 0 {
 		m.cachedLines = nil
 		return
 	}
