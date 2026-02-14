@@ -17,6 +17,10 @@ Three-panel TUI built with [Bubbletea](https://github.com/charmbracelet/bubblete
 - **Review status** — per-reviewer approval breakdown with visual badges
 - **Comments** — read and post PR comments with full markdown rendering
 - **Custom prompts** — per-repo review instructions for tailored analysis
+- **Search in diff** — `/` to search, `n`/`N` to navigate matches with highlighting
+- **Command palette** — `Ctrl+P` for quick commands, `:` for full mode with autocomplete
+- **AI review generation** — AI-powered inline review comments rendered on diff lines
+- **Chat persistence** — chat sessions saved to disk and restored when revisiting PRs
 - **Vim-style navigation** — j/k, Ctrl+d/u, g/G, and modal editing in chat
 
 ## Prerequisites
@@ -87,6 +91,8 @@ Press `?` at any time to see the full keybinding reference.
 | `r` | Refresh (PR list / selected PR) |
 | `a` | Analyze PR |
 | `o` | Open in browser |
+| `Ctrl+P` | Command palette (quick mode) |
+| `:` | Command palette (full mode) |
 | `?` | Toggle help |
 | `q` | Quit |
 
@@ -108,7 +114,8 @@ Press `?` at any time to see the full keybinding reference.
 | `h` / `l` | Prev/next tab (Diff, PR Info, CI) |
 | `j` / `k` | Scroll up/down |
 | `Ctrl+d` / `Ctrl+u` | Half page down/up |
-| `n` / `N` | Next/prev hunk |
+| `/` | Search in diff |
+| `n` / `N` | Next/prev hunk (or search match) |
 | `g` / `G` | Jump to top/bottom |
 | `s` / `Space` | Select/deselect hunk |
 | `Enter` | Select hunk + focus chat |
