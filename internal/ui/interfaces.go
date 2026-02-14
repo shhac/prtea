@@ -21,4 +21,6 @@ type GitHubService interface {
 	ApprovePR(ctx context.Context, owner, repo string, number int, body string) error
 	PostComment(ctx context.Context, owner, repo string, number int, body string) error
 	ClosePR(ctx context.Context, owner, repo string, number int) error
+	RequestChangesPR(ctx context.Context, owner, repo string, number int, body string) error
+	CommentReviewPR(ctx context.Context, owner, repo string, number int, body string) error
 }

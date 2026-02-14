@@ -36,3 +36,24 @@ func (c *Client) ClosePR(ctx context.Context, owner, repo string, number int) er
 	}
 	return nil
 }
+
+// RequestChangesPR submits a "request changes" review on a PR.
+// The body is required by the GitHub API for this review type.
+func (c *Client) RequestChangesPR(ctx context.Context, owner, repo string, number int, body string) error {
+	repoFlag := owner + "/" + repo
+	args := []string{"pr", "review", fmt.Sprintf("%d", number), "-R", repoFlag, "--request-changes", "-b", body}
+	if _, err := c.ghExec(ctx, args...); err != nil {
+		return fmt.Errorf("failed to request changes on PR #%d: %w", number, err)
+	}
+	return nil
+}
+
+// CommentReviewPR submits a review-level comment on a PR (not an issue comment).
+func (c *Client) CommentReviewPR(ctx context.Context, owner, repo string, number int, body string) error {
+	repoFlag := owner + "/" + repo
+	args := []string{"pr", "review", fmt.Sprintf("%d", number), "-R", repoFlag, "--comment", "-b", body}
+	if _, err := c.ghExec(ctx, args...); err != nil {
+		return fmt.Errorf("failed to submit review comment on PR #%d: %w", number, err)
+	}
+	return nil
+}
