@@ -3,7 +3,6 @@ package ui
 import (
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/spinner"
@@ -58,14 +57,9 @@ type ChatPanelModel struct {
 	ready     bool
 
 	// Chat state
-	isWaiting        bool   // true while waiting for Claude response
-	chatError        string // last chat error message
-	streamingContent string // accumulated streaming text from Claude
-
-	// Progressive streaming markdown render state
-	lastStreamRender     string    // last successful glamour-rendered content
-	lastStreamRenderLen  int       // byte length of streamingContent when last rendered
-	lastStreamRenderTime time.Time // when the last render happened
+	isWaiting bool   // true while waiting for Claude response
+	chatError string // last chat error message
+	chatStream StreamRenderer // progressive streaming for chat
 
 	// Analysis state
 	analysisResult  *claude.AnalysisResult
@@ -284,26 +278,17 @@ func (m *ChatPanelModel) SetAnalysisError(err string) {
 	m.refreshViewport()
 }
 
-// AppendStreamChunk appends a text chunk during streaming and refreshes the viewport.
+// AppendStreamChunk appends a text chunk during chat streaming and refreshes the viewport.
 // Only auto-scrolls if the user was already at the bottom, so scrolling up
 // to read earlier messages is not disrupted by incoming tokens.
-// Periodically renders accumulated content with glamour (checkpoint approach)
-// so the user sees formatted markdown during streaming, not just raw text.
 func (m *ChatPanelModel) AppendStreamChunk(chunk string) {
-	m.streamingContent += chunk
-
-	// Checkpoint: re-render with glamour if enough time has passed
-	if time.Since(m.lastStreamRenderTime) >= 300*time.Millisecond {
-		innerWidth := m.width - 6
-		if innerWidth < 10 {
-			innerWidth = 10
-		}
-		rendered := m.renderMarkdown(m.streamingContent, innerWidth)
-		m.lastStreamRender = rendered
-		m.lastStreamRenderLen = len(m.streamingContent)
-		m.lastStreamRenderTime = time.Now()
+	innerWidth := m.width - 6
+	if innerWidth < 10 {
+		innerWidth = 10
 	}
-
+	m.chatStream.Append(chunk, func(s string) string {
+		return m.renderMarkdown(s, innerWidth)
+	})
 	wasAtBottom := m.viewport.AtBottom()
 	m.refreshViewport()
 	if wasAtBottom {
@@ -320,10 +305,7 @@ func (m *ChatPanelModel) AddResponse(content string) {
 	})
 	m.isWaiting = false
 	m.chatError = ""
-	m.streamingContent = ""
-	m.lastStreamRender = ""
-	m.lastStreamRenderLen = 0
-	m.lastStreamRenderTime = time.Time{}
+	m.chatStream.Reset()
 	wasAtBottom := m.viewport.AtBottom()
 	m.refreshViewport()
 	if wasAtBottom {
@@ -336,10 +318,7 @@ func (m *ChatPanelModel) AddResponse(content string) {
 func (m *ChatPanelModel) SetChatError(err string) {
 	m.chatError = err
 	m.isWaiting = false
-	m.streamingContent = ""
-	m.lastStreamRender = ""
-	m.lastStreamRenderLen = 0
-	m.lastStreamRenderTime = time.Time{}
+	m.chatStream.Reset()
 	wasAtBottom := m.viewport.AtBottom()
 	m.refreshViewport()
 	if wasAtBottom {
@@ -352,10 +331,7 @@ func (m *ChatPanelModel) ClearChat() {
 	m.messages = nil
 	m.isWaiting = false
 	m.chatError = ""
-	m.streamingContent = ""
-	m.lastStreamRender = ""
-	m.lastStreamRenderLen = 0
-	m.lastStreamRenderTime = time.Time{}
+	m.chatStream.Reset()
 	m.refreshViewport()
 }
 
@@ -618,21 +594,10 @@ func (m *ChatPanelModel) renderMessages() string {
 		if len(m.messages) > 0 {
 			b.WriteString("\n\n")
 		}
-		if m.streamingContent != "" {
+		if m.chatStream.HasContent() {
 			b.WriteString(chatAssistantStyle.Render("Claude:"))
 			b.WriteString("\n")
-			if m.lastStreamRender != "" {
-				b.WriteString(m.lastStreamRender)
-				// Append raw tail (tokens received since last glamour render)
-				if len(m.streamingContent) > m.lastStreamRenderLen {
-					tail := m.streamingContent[m.lastStreamRenderLen:]
-					b.WriteString("\n")
-					b.WriteString(wordWrap(tail, innerWidth))
-				}
-			} else {
-				// No render yet (first 300ms) — show raw text
-				b.WriteString(wordWrap(m.streamingContent, innerWidth))
-			}
+			b.WriteString(m.chatStream.View(wordWrap, innerWidth))
 		} else {
 			b.WriteString(lipgloss.NewStyle().
 				Foreground(lipgloss.Color("244")).
