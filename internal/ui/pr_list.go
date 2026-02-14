@@ -54,9 +54,6 @@ type PRSelectedMsg struct {
 	HTMLURL string
 }
 
-// PRRefreshMsg is sent when the user presses `r` to refresh PR data.
-type PRRefreshMsg struct{}
-
 // prItemDelegate renders PR list items with distinct cursor and selected states.
 // The cursor (Bubbletea's Index()) uses the stock left-border style.
 // The "selected" PR (loaded in diff/chat) gets a ▸ marker prefix.
@@ -318,11 +315,6 @@ func (m PRListModel) Update(msg tea.Msg) (PRListModel, tea.Cmd) {
 						HTMLURL: item.htmlURL,
 					}
 				}
-			}
-		case key.Matches(msg, PRListKeys.Refresh):
-			m.state = stateLoading
-			return m, func() tea.Msg {
-				return PRRefreshMsg{}
 			}
 		}
 	}

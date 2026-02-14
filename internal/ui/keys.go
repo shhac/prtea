@@ -13,6 +13,7 @@ type GlobalKeyMap struct {
 	Panel3      key.Binding
 	Analyze     key.Binding
 	OpenBrowser key.Binding
+	Refresh      key.Binding
 	ToggleLeft   key.Binding
 	ToggleCenter key.Binding
 	ToggleRight  key.Binding
@@ -56,6 +57,10 @@ var GlobalKeys = GlobalKeyMap{
 		key.WithKeys("o"),
 		key.WithHelp("o", "open in browser"),
 	),
+	Refresh: key.NewBinding(
+		key.WithKeys("r"),
+		key.WithHelp("r", "refresh"),
+	),
 	ToggleLeft: key.NewBinding(
 		key.WithKeys("["),
 		key.WithHelp("[", "toggle left panel"),
@@ -80,7 +85,6 @@ type PRListKeyMap struct {
 	Down    key.Binding
 	Select  key.Binding
 	Filter  key.Binding
-	Refresh key.Binding
 	PrevTab key.Binding
 	NextTab key.Binding
 }
@@ -101,10 +105,6 @@ var PRListKeys = PRListKeyMap{
 	Filter: key.NewBinding(
 		key.WithKeys("/"),
 		key.WithHelp("/", "filter"),
-	),
-	Refresh: key.NewBinding(
-		key.WithKeys("r"),
-		key.WithHelp("r", "refresh"),
 	),
 	PrevTab: key.NewBinding(
 		key.WithKeys("h", "left"),

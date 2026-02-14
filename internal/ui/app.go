@@ -216,14 +216,6 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.prList.SetError(msg.Err.Error())
 		return m, nil
 
-	case PRRefreshMsg:
-		m.prList.SetLoading()
-		if m.ghClient != nil {
-			return m, fetchPRsCmd(m.ghClient)
-		}
-		// Client not ready yet — retry init
-		return m, initGHClientCmd
-
 	case HelpClosedMsg:
 		m.mode = ModeNavigation
 		m.statusBar.SetState(m.focused, m.mode)
@@ -477,6 +469,12 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case key.Matches(msg, GlobalKeys.Analyze):
 			return m.startAnalysis()
+
+		case key.Matches(msg, GlobalKeys.Refresh):
+			if m.focused == PanelLeft {
+				return m.refreshPRList()
+			}
+			return m.refreshSelectedPR()
 		}
 
 		// Delegate to focused panel
@@ -796,6 +794,36 @@ func (m App) startAnalysis() (tea.Model, tea.Cmd) {
 	m.showAndFocusPanel(PanelRight)
 
 	return m, analyzeDiffCmd(m.analyzer, m.selectedPR, m.diffFiles, hash)
+}
+
+// refreshPRList re-fetches the PR lists (To Review + My PRs).
+func (m App) refreshPRList() (tea.Model, tea.Cmd) {
+	m.prList.SetLoading()
+	if m.ghClient != nil {
+		return m, fetchPRsCmd(m.ghClient)
+	}
+	return m, initGHClientCmd
+}
+
+// refreshSelectedPR re-fetches all data for the currently selected PR
+// without clearing chat history, Claude session, or analysis results.
+func (m App) refreshSelectedPR() (tea.Model, tea.Cmd) {
+	if m.selectedPR == nil {
+		return m.refreshPRList()
+	}
+
+	pr := m.selectedPR
+	if m.ghClient == nil {
+		return m, nil
+	}
+
+	return m, tea.Batch(
+		fetchDiffCmd(m.ghClient, pr.Owner, pr.Repo, pr.Number),
+		fetchPRDetailCmd(m.ghClient, pr.Owner, pr.Repo, pr.Number),
+		fetchCommentsCmd(m.ghClient, pr.Owner, pr.Repo, pr.Number),
+		fetchCIStatusCmd(m.ghClient, pr.Owner, pr.Repo, pr.Number),
+		fetchReviewsCmd(m.ghClient, pr.Owner, pr.Repo, pr.Number),
+	)
 }
 
 // handleChatSend validates state and kicks off streaming Claude chat.

@@ -60,11 +60,11 @@ func (m StatusBarModel) keyHints() string {
 
 	switch m.focused {
 	case PanelLeft:
-		return " [h/l]tab [j/k]move [Enter]select [Tab]panel [z]zoom [?]help"
+		return " [h/l]tab [j/k]move [Enter]select [r]refresh [Tab]panel [z]zoom [?]help"
 	case PanelCenter:
-		return " [h/l]tab [j/k]scroll [n/N]hunk [s/Space]select [S]file [c]clear [Tab]panel [z]zoom [?]help"
+		return " [h/l]tab [j/k]scroll [n/N]hunk [s/Space]select [S]file [c]clear [r]refresh [Tab]panel [z]zoom [?]help"
 	case PanelRight:
-		return " [h/l]tab [j/k]scroll [Enter]insert [Tab]panel [z]zoom [?]help"
+		return " [h/l]tab [j/k]scroll [Enter]insert [r]refresh [Tab]panel [z]zoom [?]help"
 	default:
 		return " [Tab]panel [?]help [q]quit"
 	}

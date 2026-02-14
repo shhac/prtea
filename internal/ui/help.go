@@ -184,6 +184,7 @@ func (m HelpOverlayModel) renderHelpContent() string {
 				{"1 / 2 / 3", "Jump to panel"},
 				{"[ / \\ / ]", "Toggle left/center/right panel"},
 				{"z", "Zoom focused panel"},
+				{"r", "Refresh (PR list / selected PR)"},
 				{"a", "Analyze PR"},
 				{"o", "Open in browser"},
 				{"?", "Toggle this help"},
@@ -199,7 +200,6 @@ func (m HelpOverlayModel) renderHelpContent() string {
 				{"j / k", "Move up/down"},
 				{"Enter / Space", "Select PR"},
 				{"/", "Filter"},
-				{"r", "Refresh"},
 			},
 		},
 		{
