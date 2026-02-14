@@ -111,7 +111,8 @@ type AnalysisCompleteMsg struct {
 
 // AnalysisErrorMsg is sent when Claude analysis fails.
 type AnalysisErrorMsg struct {
-	Err error
+	PRNumber int
+	Err      error
 }
 
 // -- PR actions --

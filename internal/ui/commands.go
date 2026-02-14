@@ -203,7 +203,7 @@ func analyzeDiffCmd(analyzer *claude.Analyzer, pr *SelectedPR, files []github.PR
 
 		result, err := analyzer.AnalyzeDiff(ctx, input, nil)
 		if err != nil {
-			return AnalysisErrorMsg{Err: err}
+			return AnalysisErrorMsg{PRNumber: pr.Number, Err: err}
 		}
 
 		return AnalysisCompleteMsg{

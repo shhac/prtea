@@ -242,7 +242,9 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case AnalysisErrorMsg:
 		m.analyzing = false
-		m.chatPanel.SetAnalysisError(msg.Err.Error())
+		if m.selectedPR != nil && msg.PRNumber == m.selectedPR.Number {
+			m.chatPanel.SetAnalysisError(msg.Err.Error())
+		}
 		return m, nil
 
 	case CommentPostMsg:
