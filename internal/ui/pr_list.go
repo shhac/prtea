@@ -285,6 +285,12 @@ func (m PRListModel) IsFiltering() bool {
 	return m.list.FilterState() == list.Filtering
 }
 
+// HasActiveFilter returns true when a filter is being typed or has been applied.
+func (m PRListModel) HasActiveFilter() bool {
+	fs := m.list.FilterState()
+	return fs == list.Filtering || fs == list.FilterApplied
+}
+
 func (m PRListModel) Update(msg tea.Msg) (PRListModel, tea.Cmd) {
 	switch msg := msg.(type) {
 	case spinner.TickMsg:

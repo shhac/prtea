@@ -168,6 +168,12 @@ type ReviewSubmitErrMsg struct {
 	Err      error
 }
 
+// ReviewValidationMsg is emitted by the review tab when validation fails
+// (e.g. empty body for Request Changes or Comment).
+type ReviewValidationMsg struct {
+	Message string
+}
+
 // -- Chat panel --
 
 // ModeChangedMsg is sent when the chat panel changes modes.

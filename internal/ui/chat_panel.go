@@ -84,6 +84,10 @@ type ChatPanelModel struct {
 	reviewAction     ReviewAction
 	reviewFocus      ReviewFocus
 	reviewSubmitting bool
+
+	// Cached glamour renderer (recreated when width changes)
+	glamourRenderer *glamour.TermRenderer
+	glamourWidth    int
 }
 
 type chatMessage struct {
@@ -289,7 +293,7 @@ func (m *ChatPanelModel) AppendStreamChunk(chunk string) {
 		if innerWidth < 10 {
 			innerWidth = 10
 		}
-		rendered := renderMarkdown(m.streamingContent, innerWidth)
+		rendered := m.renderMarkdown(m.streamingContent, innerWidth)
 		m.lastStreamRender = rendered
 		m.lastStreamRenderLen = len(m.streamingContent)
 		m.lastStreamRenderTime = time.Now()
@@ -509,7 +513,7 @@ func (m ChatPanelModel) renderHeader() string {
 	return tabRow + strings.Repeat(" ", padding) + badge
 }
 
-func (m ChatPanelModel) renderMessages() string {
+func (m *ChatPanelModel) renderMessages() string {
 	if len(m.messages) == 0 && !m.isWaiting && m.chatError == "" {
 		return renderEmptyState("No messages yet", "Press Enter to start chatting")
 	}
@@ -536,7 +540,7 @@ func (m ChatPanelModel) renderMessages() string {
 		b.WriteString("\n")
 
 		if msg.role == "assistant" {
-			b.WriteString(renderMarkdown(msg.content, innerWidth))
+			b.WriteString(m.renderMarkdown(msg.content, innerWidth))
 		} else {
 			b.WriteString(wordWrap(msg.content, innerWidth))
 		}
@@ -598,7 +602,7 @@ func (m ChatPanelModel) renderAnalysis() string {
 	return m.renderAnalysisResult()
 }
 
-func (m ChatPanelModel) renderComments() string {
+func (m *ChatPanelModel) renderComments() string {
 	if m.commentsLoading {
 		return lipgloss.NewStyle().
 			Foreground(lipgloss.Color("244")).
@@ -635,7 +639,7 @@ func (m ChatPanelModel) renderComments() string {
 			b.WriteString(authorStyle.Render(c.Author.Login))
 			b.WriteString(dimStyle.Render(" · " + c.CreatedAt.Format("Jan 2 15:04")))
 			b.WriteString("\n")
-			b.WriteString(renderMarkdown(c.Body, innerWidth))
+			b.WriteString(m.renderMarkdown(c.Body, innerWidth))
 			b.WriteString("\n")
 		}
 	}
@@ -665,7 +669,7 @@ func (m ChatPanelModel) renderComments() string {
 				b.WriteString(dimStyle.Render(" (outdated)"))
 			}
 			b.WriteString("\n")
-			b.WriteString(renderMarkdown(c.Body, innerWidth))
+			b.WriteString(m.renderMarkdown(c.Body, innerWidth))
 			b.WriteString("\n")
 		}
 	}
@@ -941,10 +945,14 @@ func (m ChatPanelModel) updateReviewTab(msg tea.KeyMsg) (ChatPanelModel, tea.Cmd
 			body := strings.TrimSpace(m.reviewTextArea.Value())
 			// Validate: request changes and comment require a body
 			if m.reviewAction == ReviewRequestChanges && body == "" {
-				return m, nil // TODO: could show error
+				return m, func() tea.Msg {
+					return ReviewValidationMsg{Message: "Review body is required for Request Changes"}
+				}
 			}
 			if m.reviewAction == ReviewComment && body == "" {
-				return m, nil
+				return m, func() tea.Msg {
+					return ReviewValidationMsg{Message: "Review body is required for Comment"}
+				}
 			}
 			m.reviewSubmitting = true
 			action := m.reviewAction
@@ -1059,17 +1067,33 @@ func (m ChatPanelModel) renderReview() string {
 	return b.String()
 }
 
-// renderMarkdown renders markdown text with glamour for terminal display.
-// Falls back to plain wordWrap if glamour fails.
-func renderMarkdown(markdown string, width int) string {
-	if width < 10 {
-		width = 10
+// getOrCreateRenderer returns a cached glamour renderer for the given width,
+// creating a new one only when the width changes.
+func (m *ChatPanelModel) getOrCreateRenderer(width int) *glamour.TermRenderer {
+	if m.glamourRenderer != nil && m.glamourWidth == width {
+		return m.glamourRenderer
 	}
 	r, err := glamour.NewTermRenderer(
 		glamour.WithAutoStyle(),
 		glamour.WithWordWrap(width),
 	)
 	if err != nil {
+		return nil
+	}
+	m.glamourRenderer = r
+	m.glamourWidth = width
+	return r
+}
+
+// renderMarkdown renders markdown text with glamour for terminal display.
+// Uses a cached renderer per width to avoid re-creating it on every call.
+// Falls back to plain wordWrap if glamour fails.
+func (m *ChatPanelModel) renderMarkdown(markdown string, width int) string {
+	if width < 10 {
+		width = 10
+	}
+	r := m.getOrCreateRenderer(width)
+	if r == nil {
 		return wordWrap(markdown, width)
 	}
 	out, err := r.Render(markdown)

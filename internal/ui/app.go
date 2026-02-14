@@ -258,6 +258,10 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case ReviewValidationMsg:
+		clearCmd := m.statusBar.SetTemporaryMessage(msg.Message, 3*time.Second)
+		return m, clearCmd
+
 	case ReviewSubmitMsg:
 		return m.handleReviewSubmit(msg)
 
@@ -490,6 +494,7 @@ func (m App) View() string {
 	}
 
 	panels := lipgloss.JoinHorizontal(lipgloss.Top, panelViews...)
+	m.statusBar.SetFiltering(m.focused == PanelLeft && m.prList.IsFiltering())
 	bar := m.statusBar.View()
 
 	base := lipgloss.JoinVertical(lipgloss.Left, panels, bar)

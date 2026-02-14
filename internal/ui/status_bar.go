@@ -15,6 +15,7 @@ type StatusBarModel struct {
 	focused    Panel
 	mode       AppMode
 	selectedPR int
+	filtering  bool // true when PR list filter input is active
 
 	// Temporary flash message (e.g. "Refreshing PR #123...")
 	statusMessage string
@@ -35,6 +36,11 @@ func (m *StatusBarModel) SetWidth(width int) {
 func (m *StatusBarModel) SetState(focused Panel, mode AppMode) {
 	m.focused = focused
 	m.mode = mode
+}
+
+// SetFiltering updates whether the PR list filter input is active.
+func (m *StatusBarModel) SetFiltering(filtering bool) {
+	m.filtering = filtering
 }
 
 func (m *StatusBarModel) SetSelectedPR(number int) {
@@ -95,6 +101,10 @@ func (m StatusBarModel) View() string {
 }
 
 func (m StatusBarModel) keyHints() string {
+	if m.filtering {
+		return " [Esc]cancel [Enter]apply [type]filter"
+	}
+
 	if m.mode == ModeInsert {
 		return " [Enter]send [Esc]exit insert"
 	}

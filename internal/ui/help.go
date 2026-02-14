@@ -196,6 +196,7 @@ func (m HelpOverlayModel) renderHelpContent() string {
 				{"h / l", "Prev/next tab"},
 				{"j / k", "Move up/down"},
 				{"/", "Filter PRs"},
+				{"Esc", "Clear filter"},
 				{"Space", "Select PR"},
 				{"Enter", "Select PR + focus diff"},
 			},
