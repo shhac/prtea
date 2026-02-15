@@ -66,7 +66,7 @@ type ChatPanelModel struct {
 	analysisResult  *claude.AnalysisResult
 	analysisLoading bool
 	analysisError   string
-	analysisStream  StreamRenderer // progressive streaming for analysis
+	analysisStream  AnalysisStreamRenderer // incremental JSON parsing for analysis
 
 	// Comments state
 	comments        []github.Comment
@@ -74,6 +74,10 @@ type ChatPanelModel struct {
 	commentsLoading bool
 	commentsError   string
 	commentPosting  bool // true while posting a comment
+
+	// Cached rendered comments output (avoids re-rendering markdown via glamour on every viewport refresh)
+	commentsCache      string
+	commentsCacheWidth int
 
 	// Review tab state
 	reviewTextArea      textarea.Model
@@ -340,14 +344,10 @@ func (m *ChatPanelModel) AppendStreamChunk(chunk string) {
 }
 
 // AppendAnalysisStreamChunk appends a text chunk during analysis streaming.
+// The AnalysisStreamRenderer incrementally parses the JSON and renders
+// completed fields with lipgloss styling instead of showing raw JSON.
 func (m *ChatPanelModel) AppendAnalysisStreamChunk(chunk string) {
-	innerWidth := m.width - 6
-	if innerWidth < 10 {
-		innerWidth = 10
-	}
-	m.analysisStream.Append(chunk, func(s string) string {
-		return m.renderMarkdown(s, innerWidth)
-	})
+	m.analysisStream.Append(chunk)
 	wasAtBottom := m.viewport.AtBottom()
 	m.refreshViewport()
 	if wasAtBottom {
@@ -409,6 +409,7 @@ func (m *ChatPanelModel) SetCommentsLoading() {
 	m.commentsError = ""
 	m.comments = nil
 	m.inlineComments = nil
+	m.commentsCache = ""
 	m.refreshViewport()
 }
 
@@ -418,6 +419,7 @@ func (m *ChatPanelModel) SetComments(comments []github.Comment, inline []github.
 	m.inlineComments = inline
 	m.commentsLoading = false
 	m.commentsError = ""
+	m.commentsCache = ""
 	m.refreshViewport()
 }
 
@@ -425,6 +427,7 @@ func (m *ChatPanelModel) SetComments(comments []github.Comment, inline []github.
 func (m *ChatPanelModel) SetCommentsError(err string) {
 	m.commentsError = err
 	m.commentsLoading = false
+	m.commentsCache = ""
 	m.refreshViewport()
 }
 
@@ -434,6 +437,7 @@ func (m *ChatPanelModel) SetCommentPosted(err error) {
 	if err != nil {
 		m.commentsError = "Failed to post comment: " + err.Error()
 	}
+	m.commentsCache = ""
 	m.refreshViewport()
 	m.viewport.GotoBottom()
 }
@@ -445,6 +449,7 @@ func (m *ChatPanelModel) ClearComments() {
 	m.commentsLoading = false
 	m.commentsError = ""
 	m.commentPosting = false
+	m.commentsCache = ""
 	m.refreshViewport()
 }
 
@@ -701,7 +706,15 @@ func (m ChatPanelModel) renderAnalysis() string {
 				Foreground(lipgloss.Color("244")).
 				Render(m.spinner.View() + " Analyzing PR with Claude..."))
 			b.WriteString("\n\n")
-			b.WriteString(m.analysisStream.View(wordWrap, innerWidth))
+			streamView := m.analysisStream.View(innerWidth)
+			if streamView != "" {
+				b.WriteString(streamView)
+			} else {
+				// JSON hasn't been parsed yet (very early in stream)
+				b.WriteString(lipgloss.NewStyle().
+					Foreground(lipgloss.Color("244")).
+					Render("Waiting for analysis data..."))
+			}
 			return b.String()
 		}
 		return lipgloss.NewStyle().
@@ -735,6 +748,11 @@ func (m *ChatPanelModel) renderComments() string {
 	innerWidth := m.width - 6
 	if innerWidth < 10 {
 		innerWidth = 10
+	}
+
+	// Return cached render if available and width hasn't changed
+	if m.commentsCache != "" && m.commentsCacheWidth == innerWidth {
+		return m.commentsCache
 	}
 
 	sectionStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("33"))
@@ -790,7 +808,10 @@ func (m *ChatPanelModel) renderComments() string {
 		}
 	}
 
-	return b.String()
+	result := b.String()
+	m.commentsCache = result
+	m.commentsCacheWidth = innerWidth
+	return result
 }
 
 func (m ChatPanelModel) renderAnalysisResult() string {
