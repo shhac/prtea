@@ -483,7 +483,7 @@ func (m *SettingsModel) ensureVisible() {
 
 // refreshViewport rebuilds the viewport content.
 func (m *SettingsModel) refreshViewport() {
-	if !m.vpReady {
+	if !m.vpReady || m.cfg == nil {
 		return
 	}
 	content := m.renderContent()
