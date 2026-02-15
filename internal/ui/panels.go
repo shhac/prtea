@@ -26,8 +26,6 @@ const (
 	minRightWidth  = 25
 	minTotalWidth  = 80
 
-	collapseThreshold = 120
-
 	// 3-panel mode ratios
 	leftRatio  = 0.20
 	rightRatio = 0.30

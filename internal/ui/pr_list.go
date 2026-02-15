@@ -173,7 +173,7 @@ type PRListModel struct {
 	myPRs    []list.Item
 }
 
-func NewPRListModel() PRListModel {
+func NewPRListModel(defaultTab PRListTab) PRListModel {
 	selected := new(int)       // heap-allocated, shared with delegate
 	ciStatus := new(string)    // heap-allocated, shared with delegate
 	reviewDec := new(string)   // heap-allocated, shared with delegate
@@ -196,7 +196,7 @@ func NewPRListModel() PRListModel {
 	return PRListModel{
 		list:             l,
 		spinner:          newLoadingSpinner(),
-		activeTab:        TabToReview,
+		activeTab:        defaultTab,
 		state:            stateLoading,
 		selectedPRNumber: selected,
 		ciOverallStatus:  ciStatus,

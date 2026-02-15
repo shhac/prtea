@@ -51,13 +51,14 @@ type App struct {
 	analysisStreamCancel context.CancelFunc  // cancels active analysis stream
 
 	// Layout state
-	focused        Panel
-	width          int
-	height         int
-	panelVisible   [3]bool // which panels are currently visible
-	zoomed         bool    // zoom mode: only focused panel shown
-	preZoomVisible [3]bool // saved visibility before zoom
-	initialized    bool    // whether first WindowSizeMsg has been processed
+	focused            Panel
+	width              int
+	height             int
+	panelVisible       [3]bool // which panels are currently visible
+	zoomed             bool    // zoom mode: only focused panel shown
+	preZoomVisible     [3]bool // saved visibility before zoom
+	initialized        bool    // whether first WindowSizeMsg has been processed
+	collapseThreshold  int     // terminal width below which panels auto-collapse
 
 	// Mode
 	mode AppMode
@@ -97,27 +98,51 @@ func NewApp() App {
 
 	store := claude.NewAnalysisStore(config.AnalysesCacheDir())
 
+	// Map config default PR tab to constant
+	defaultTab := TabToReview
+	if cfg.DefaultPRTab == "mine" {
+		defaultTab = TabMyPRs
+	}
+
+	// Determine initial panel visibility from StartCollapsed config
+	panelVisible := [3]bool{true, true, true}
+	for _, name := range cfg.StartCollapsed {
+		switch name {
+		case "left":
+			panelVisible[PanelLeft] = false
+		case "center":
+			panelVisible[PanelCenter] = false
+		case "right":
+			panelVisible[PanelRight] = false
+		}
+	}
+	// Ensure at least one panel is visible
+	if !panelVisible[PanelLeft] && !panelVisible[PanelCenter] && !panelVisible[PanelRight] {
+		panelVisible = [3]bool{true, true, true}
+	}
+
 	return App{
-		prList:        NewPRListModel(),
-		diffViewer:    NewDiffViewerModel(),
-		chatPanel:     NewChatPanelModel(),
-		statusBar:     NewStatusBarModel(),
-		helpOverlay:   NewHelpOverlayModel(),
-		commandMode:   NewCommandModeModel(),
-		settingsPanel: NewSettingsModel(),
-		focused:       PanelLeft,
-		panelVisible:  [3]bool{true, true, true},
-		mode:          ModeNavigation,
-		claudePath:    claudePath,
-		appConfig:     cfg,
-		analyzer:      analyzer,
-		chatService:   chatSvc,
-		analysisStore: store,
-		chatStore:     chatStore,
-		pollInterval:  cfg.PollIntervalDuration(),
-		pollEnabled:   cfg.PollEnabled,
-		notifyEnabled: cfg.NotificationsEnabled,
-		knownPRs:      make(map[string]bool),
+		prList:            NewPRListModel(defaultTab),
+		diffViewer:        NewDiffViewerModel(),
+		chatPanel:         NewChatPanelModel(),
+		statusBar:         NewStatusBarModel(),
+		helpOverlay:       NewHelpOverlayModel(),
+		commandMode:       NewCommandModeModel(),
+		settingsPanel:     NewSettingsModel(),
+		focused:           PanelLeft,
+		panelVisible:      panelVisible,
+		mode:              ModeNavigation,
+		collapseThreshold: cfg.CollapseThreshold,
+		claudePath:        claudePath,
+		appConfig:         cfg,
+		analyzer:          analyzer,
+		chatService:       chatSvc,
+		analysisStore:     store,
+		chatStore:         chatStore,
+		pollInterval:      cfg.PollIntervalDuration(),
+		pollEnabled:       cfg.PollEnabled,
+		notifyEnabled:     cfg.NotificationsEnabled,
+		knownPRs:          make(map[string]bool),
 	}
 }
 
@@ -133,10 +158,10 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.helpOverlay.SetSize(m.width, m.height)
 		m.commandMode.SetSize(m.width, m.height)
 		m.settingsPanel.SetSize(m.width, m.height)
-		// Auto-collapse right panel on first render if terminal is narrow
+		// Auto-collapse panels on first render if terminal is narrow
 		if !m.initialized {
 			m.initialized = true
-			if m.width < collapseThreshold {
+			if m.width < m.collapseThreshold {
 				m.panelVisible[PanelRight] = false
 				if m.focused == PanelRight {
 					m.focusPanel(nextVisiblePanel(m.focused, m.panelVisible))
@@ -843,13 +868,24 @@ func (m *App) exitZoom() {
 }
 
 // showAndFocusPanel ensures a panel is visible, exits zoom if active,
-// and focuses the panel.
+// and focuses the panel. On narrow terminals (below collapse threshold),
+// showing center or right automatically hides the other to keep at most
+// 2 panels visible.
 func (m *App) showAndFocusPanel(p Panel) {
 	if m.zoomed {
 		m.exitZoom()
 	}
 	if !m.panelVisible[p] {
 		m.panelVisible[p] = true
+	}
+	// On small screens, auto-swap center↔right to avoid cramped 3-panel layout
+	if m.width > 0 && m.width < m.collapseThreshold {
+		switch p {
+		case PanelCenter:
+			m.panelVisible[PanelRight] = false
+		case PanelRight:
+			m.panelVisible[PanelCenter] = false
+		}
 	}
 	m.focusPanel(p)
 	m.recalcLayout()

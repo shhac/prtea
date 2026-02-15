@@ -11,16 +11,20 @@ import (
 
 // Config holds application configuration.
 type Config struct {
-	ClaudeTimeout        int  `json:"claudeTimeoutMs"`
-	PollInterval         int  `json:"pollIntervalMs"`
-	PollEnabled          bool `json:"pollEnabled"`
-	NotificationsEnabled bool `json:"notificationsEnabled"`
+	ClaudeTimeout        int      `json:"claudeTimeoutMs"`
+	PollInterval         int      `json:"pollIntervalMs"`
+	PollEnabled          bool     `json:"pollEnabled"`
+	NotificationsEnabled bool     `json:"notificationsEnabled"`
+	DefaultPRTab         string   `json:"defaultPRTab"`         // "review" (default) or "mine"
+	StartCollapsed       []string `json:"startCollapsed"`       // panels to collapse on boot, e.g. ["right"]
+	CollapseThreshold    int      `json:"collapseThreshold"`    // terminal width below which panels auto-collapse
 }
 
 // Defaults
 const (
-	DefaultClaudeTimeoutMs = 120000
-	DefaultPollIntervalMs  = 60000
+	DefaultClaudeTimeoutMs    = 120000
+	DefaultPollIntervalMs     = 60000
+	DefaultCollapseThreshold  = 120
 )
 
 // DefaultConfigDir returns the platform-appropriate config directory.
@@ -133,8 +137,9 @@ func (c *Config) PollIntervalDuration() time.Duration {
 
 func defaults() *Config {
 	return &Config{
-		ClaudeTimeout: DefaultClaudeTimeoutMs,
-		PollInterval:  DefaultPollIntervalMs,
+		ClaudeTimeout:     DefaultClaudeTimeoutMs,
+		PollInterval:      DefaultPollIntervalMs,
+		CollapseThreshold: DefaultCollapseThreshold,
 	}
 }
 
@@ -144,5 +149,8 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.PollInterval == 0 {
 		cfg.PollInterval = DefaultPollIntervalMs
+	}
+	if cfg.CollapseThreshold == 0 {
+		cfg.CollapseThreshold = DefaultCollapseThreshold
 	}
 }
