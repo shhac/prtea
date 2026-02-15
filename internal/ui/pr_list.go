@@ -437,16 +437,15 @@ func (m PRListModel) renderTabs() string {
 }
 
 func (m PRListModel) renderFilterBadge() string {
-	badge := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("230")).
-		Background(lipgloss.Color("62")).
-		Bold(true).
-		Padding(0, 1).
-		Render("FILTERED")
+	label := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("214")).
+		Italic(true).
+		Render("▸ filtered")
 	hint := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("244")).
-		Render(" [Esc]clear [/]edit")
-	return badge + hint
+		Foreground(lipgloss.Color("240")).
+		Italic(true).
+		Render("  Esc clear · / edit")
+	return "\n" + label + hint
 }
 
 func (m PRListModel) renderLoading() string {
