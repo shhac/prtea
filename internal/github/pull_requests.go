@@ -3,6 +3,7 @@ package github
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -49,6 +50,14 @@ type ghCompare struct {
 	BehindBy int `json:"behind_by"`
 }
 
+// fetchLimit returns the configured PR fetch limit, falling back to 100.
+func (c *Client) fetchLimit() string {
+	if c.FetchLimit > 0 {
+		return strconv.Itoa(c.FetchLimit)
+	}
+	return "100"
+}
+
 // GetPRsForReview returns open PRs where the authenticated user is requested as a reviewer.
 func (c *Client) GetPRsForReview(ctx context.Context) ([]PRItem, error) {
 	var results []ghSearchPR
@@ -56,7 +65,7 @@ func (c *Client) GetPRsForReview(ctx context.Context) ([]PRItem, error) {
 		"search", "prs",
 		"--review-requested=@me",
 		"--state=open",
-		"--limit", "100",
+		"--limit", c.fetchLimit(),
 		"--json", "number,title,url,createdAt,isDraft,author,repository,labels",
 	)
 	if err != nil {
@@ -72,7 +81,7 @@ func (c *Client) GetMyPRs(ctx context.Context) ([]PRItem, error) {
 		"search", "prs",
 		"--author=@me",
 		"--state=open",
-		"--limit", "100",
+		"--limit", c.fetchLimit(),
 		"--json", "number,title,url,createdAt,isDraft,author,repository,labels",
 	)
 	if err != nil {

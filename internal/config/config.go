@@ -18,13 +18,31 @@ type Config struct {
 	DefaultPRTab         string   `json:"defaultPRTab"`         // "review" (default) or "mine"
 	StartCollapsed       []string `json:"startCollapsed"`       // panels to collapse on boot, e.g. ["right"]
 	CollapseThreshold    int      `json:"collapseThreshold"`    // terminal width below which panels auto-collapse
+
+	// Tier 1: fetch & notification tuning
+	PRFetchLimit          int `json:"prFetchLimit"`          // max PRs to fetch per query
+	NotificationThreshold int `json:"notificationThreshold"` // above this, batch notifications into summary
+
+	// Tier 2: AI tuning
+	MaxChatHistory    int `json:"maxChatHistory"`    // max messages in chat history
+	MaxPromptTokens   int `json:"maxPromptTokens"`   // max tokens for prompts
+	ChatMaxTurns      int `json:"chatMaxTurns"`      // max agentic turns for chat
+	AnalysisMaxTurns  int `json:"analysisMaxTurns"`  // max turns for analysis
+	StreamCheckpointMs int `json:"streamCheckpointMs"` // stream rendering checkpoint interval in ms
 }
 
 // Defaults
 const (
-	DefaultClaudeTimeoutMs    = 120000
-	DefaultPollIntervalMs     = 60000
-	DefaultCollapseThreshold  = 120
+	DefaultClaudeTimeoutMs       = 120000
+	DefaultPollIntervalMs        = 60000
+	DefaultCollapseThreshold     = 120
+	DefaultPRFetchLimit          = 100
+	DefaultNotificationThreshold = 3
+	DefaultMaxChatHistory        = 16
+	DefaultMaxPromptTokens       = 100000
+	DefaultChatMaxTurns          = 3
+	DefaultAnalysisMaxTurns      = 30
+	DefaultStreamCheckpointMs    = 300
 )
 
 // DefaultConfigDir returns the platform-appropriate config directory.
@@ -137,9 +155,16 @@ func (c *Config) PollIntervalDuration() time.Duration {
 
 func defaults() *Config {
 	return &Config{
-		ClaudeTimeout:     DefaultClaudeTimeoutMs,
-		PollInterval:      DefaultPollIntervalMs,
-		CollapseThreshold: DefaultCollapseThreshold,
+		ClaudeTimeout:         DefaultClaudeTimeoutMs,
+		PollInterval:          DefaultPollIntervalMs,
+		CollapseThreshold:     DefaultCollapseThreshold,
+		PRFetchLimit:          DefaultPRFetchLimit,
+		NotificationThreshold: DefaultNotificationThreshold,
+		MaxChatHistory:        DefaultMaxChatHistory,
+		MaxPromptTokens:       DefaultMaxPromptTokens,
+		ChatMaxTurns:          DefaultChatMaxTurns,
+		AnalysisMaxTurns:      DefaultAnalysisMaxTurns,
+		StreamCheckpointMs:    DefaultStreamCheckpointMs,
 	}
 }
 
@@ -152,5 +177,26 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.CollapseThreshold == 0 {
 		cfg.CollapseThreshold = DefaultCollapseThreshold
+	}
+	if cfg.PRFetchLimit == 0 {
+		cfg.PRFetchLimit = DefaultPRFetchLimit
+	}
+	if cfg.NotificationThreshold == 0 {
+		cfg.NotificationThreshold = DefaultNotificationThreshold
+	}
+	if cfg.MaxChatHistory == 0 {
+		cfg.MaxChatHistory = DefaultMaxChatHistory
+	}
+	if cfg.MaxPromptTokens == 0 {
+		cfg.MaxPromptTokens = DefaultMaxPromptTokens
+	}
+	if cfg.ChatMaxTurns == 0 {
+		cfg.ChatMaxTurns = DefaultChatMaxTurns
+	}
+	if cfg.AnalysisMaxTurns == 0 {
+		cfg.AnalysisMaxTurns = DefaultAnalysisMaxTurns
+	}
+	if cfg.StreamCheckpointMs == 0 {
+		cfg.StreamCheckpointMs = DefaultStreamCheckpointMs
 	}
 }

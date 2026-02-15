@@ -7,21 +7,26 @@ import "time"
 // intervals, showing raw tail text between checkpoints. Used by both chat and
 // analysis streaming.
 type StreamRenderer struct {
-	Content       string    // accumulated raw streaming text
-	Rendered      string    // last successful glamour-rendered content
-	RenderedLen   int       // byte length of Content when last rendered
-	RenderedAt    time.Time // when the last render happened
+	Content            string        // accumulated raw streaming text
+	Rendered           string        // last successful glamour-rendered content
+	RenderedLen        int           // byte length of Content when last rendered
+	RenderedAt         time.Time     // when the last render happened
+	CheckpointInterval time.Duration // how often glamour re-renders are triggered (0 = default 300ms)
 }
 
-// checkpointInterval controls how often glamour re-renders are triggered.
-const checkpointInterval = 300 * time.Millisecond
+// defaultCheckpointInterval is the fallback when CheckpointInterval is zero.
+const defaultCheckpointInterval = 300 * time.Millisecond
 
 // Append adds a text chunk and re-renders with glamour if enough time has passed.
 // renderFn is called to perform the actual glamour rendering.
 func (sr *StreamRenderer) Append(chunk string, renderFn func(string) string) {
 	sr.Content += chunk
 
-	if time.Since(sr.RenderedAt) >= checkpointInterval {
+	interval := sr.CheckpointInterval
+	if interval == 0 {
+		interval = defaultCheckpointInterval
+	}
+	if time.Since(sr.RenderedAt) >= interval {
 		sr.Rendered = renderFn(sr.Content)
 		sr.RenderedLen = len(sr.Content)
 		sr.RenderedAt = time.Now()

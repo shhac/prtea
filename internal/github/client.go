@@ -16,8 +16,9 @@ type CommandRunner func(ctx context.Context, args ...string) (string, error)
 
 // Client wraps the gh CLI and caches the authenticated username.
 type Client struct {
-	username string
-	run      CommandRunner
+	username   string
+	run        CommandRunner
+	FetchLimit int // max PRs per query (0 uses default 100)
 }
 
 // NewClient verifies the gh CLI is installed and authenticated, then caches the current user.

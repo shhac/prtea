@@ -92,8 +92,8 @@ func NewApp() App {
 	var analyzer *claude.Analyzer
 	var chatSvc *claude.ChatService
 	if claudePath != "" {
-		analyzer = claude.NewAnalyzer(claudePath, cfg.ClaudeTimeoutDuration(), config.PromptsDir())
-		chatSvc = claude.NewChatService(claudePath, cfg.ClaudeTimeoutDuration(), chatStore)
+		analyzer = claude.NewAnalyzer(claudePath, cfg.ClaudeTimeoutDuration(), config.PromptsDir(), cfg.AnalysisMaxTurns)
+		chatSvc = claude.NewChatService(claudePath, cfg.ClaudeTimeoutDuration(), chatStore, cfg.MaxPromptTokens, cfg.MaxChatHistory, cfg.ChatMaxTurns)
 	}
 
 	store := claude.NewAnalysisStore(config.AnalysesCacheDir())
@@ -121,10 +121,13 @@ func NewApp() App {
 		panelVisible = [3]bool{true, true, true}
 	}
 
+	chatPanel := NewChatPanelModel()
+	chatPanel.SetStreamCheckpoint(time.Duration(cfg.StreamCheckpointMs) * time.Millisecond)
+
 	return App{
 		prList:            NewPRListModel(defaultTab),
 		diffViewer:        NewDiffViewerModel(),
-		chatPanel:         NewChatPanelModel(),
+		chatPanel:         chatPanel,
 		statusBar:         NewStatusBarModel(),
 		helpOverlay:       NewHelpOverlayModel(),
 		commandMode:       NewCommandModeModel(),
@@ -172,6 +175,9 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case GHClientReadyMsg:
+		if gc, ok := msg.Client.(*github.Client); ok {
+			gc.FetchLimit = m.appConfig.PRFetchLimit
+		}
 		m.ghClient = msg.Client
 		return m, fetchPRsCmd(m.ghClient)
 
@@ -220,7 +226,7 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.notifyEnabled {
 			newPRs := m.detectNewPRs(msg.ToReview)
 			if len(newPRs) > 0 {
-				cmds = append(cmds, notifyNewPRsCmd(newPRs))
+				cmds = append(cmds, notifyNewPRsCmd(newPRs, m.appConfig.NotificationThreshold))
 			}
 		}
 		// Always update the known set (even if notifications disabled)

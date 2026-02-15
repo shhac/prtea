@@ -36,7 +36,7 @@ func TestBuildChatPrompt(t *testing.T) {
 			PRContext: session.PRContext,
 			Message:   "What does this PR do?",
 		}
-		prompt := buildChatPrompt(session, input)
+		prompt := buildChatPrompt(session, input, defaultMaxPromptTokens, defaultMaxHistoryMessages)
 		if !strings.Contains(prompt, "PR #42") {
 			t.Error("prompt should contain PR context")
 		}
@@ -54,7 +54,7 @@ func TestBuildChatPrompt(t *testing.T) {
 			HunksSelected: true,
 			Message:       "What does this do?",
 		}
-		prompt := buildChatPrompt(session, input)
+		prompt := buildChatPrompt(session, input, defaultMaxPromptTokens, defaultMaxHistoryMessages)
 		if !strings.Contains(prompt, "selected specific code hunks") {
 			t.Error("prompt should contain hunk-focused instruction")
 		}
@@ -72,7 +72,7 @@ func TestBuildChatPrompt(t *testing.T) {
 			PRContext: session.PRContext,
 			Message:   "Is it safe?",
 		}
-		prompt := buildChatPrompt(session, input)
+		prompt := buildChatPrompt(session, input, defaultMaxPromptTokens, defaultMaxHistoryMessages)
 		if !strings.Contains(prompt, "What does this do?") {
 			t.Error("prompt should contain previous user message")
 		}
@@ -117,7 +117,7 @@ func TestBuildChatPrompt_TokenBudget_DropsOldMessages(t *testing.T) {
 		Message:   "final question",
 	}
 
-	prompt := buildChatPrompt(session, input)
+	prompt := buildChatPrompt(session, input, defaultMaxPromptTokens, defaultMaxHistoryMessages)
 
 	// Should contain the most recent messages but not the earliest ones
 	if !strings.Contains(prompt, "final question") {
@@ -148,7 +148,7 @@ func TestBuildChatPrompt_TokenBudget_TruncatesDiff(t *testing.T) {
 		Message:   "explain more",
 	}
 
-	prompt := buildChatPrompt(session, input)
+	prompt := buildChatPrompt(session, input, defaultMaxPromptTokens, defaultMaxHistoryMessages)
 
 	// The prompt should be truncated
 	if !strings.Contains(prompt, "[... diff truncated to fit context window ...]") {
@@ -191,7 +191,7 @@ func TestExtractResultText(t *testing.T) {
 }
 
 func TestChatService_ClearSession(t *testing.T) {
-	svc := NewChatService("/usr/local/bin/claude", 0, nil)
+	svc := NewChatService("/usr/local/bin/claude", 0, nil, 0, 0, 0)
 
 	// Create a session manually
 	svc.mu.Lock()
@@ -214,7 +214,7 @@ func TestChatService_ClearSession(t *testing.T) {
 
 func TestChatService_SaveAndGetSession(t *testing.T) {
 	store := NewChatStore(t.TempDir())
-	svc := NewChatService("/usr/local/bin/claude", 0, store)
+	svc := NewChatService("/usr/local/bin/claude", 0, store, 0, 0, 0)
 
 	// Create a session manually
 	svc.mu.Lock()
@@ -254,7 +254,7 @@ func TestChatService_SaveAndGetSession(t *testing.T) {
 }
 
 func TestChatService_GetSessionMessages_Empty(t *testing.T) {
-	svc := NewChatService("/usr/local/bin/claude", 0, nil)
+	svc := NewChatService("/usr/local/bin/claude", 0, nil, 0, 0, 0)
 	msgs := svc.GetSessionMessages("alice", "widget-factory", 99)
 	if msgs != nil {
 		t.Errorf("expected nil for non-existent session, got %+v", msgs)
@@ -263,7 +263,7 @@ func TestChatService_GetSessionMessages_Empty(t *testing.T) {
 
 func TestChatService_ClearSession_WithStore(t *testing.T) {
 	store := NewChatStore(t.TempDir())
-	svc := NewChatService("/usr/local/bin/claude", 0, store)
+	svc := NewChatService("/usr/local/bin/claude", 0, store, 0, 0, 0)
 
 	// Put a session in memory and on disk
 	svc.mu.Lock()

@@ -97,10 +97,10 @@ func prKey(owner, repo string, number int) string {
 }
 
 // notifyNewPRsCmd sends OS notifications for newly detected PRs.
-// If more than 3 new PRs arrived at once, sends a single summary notification.
-func notifyNewPRsCmd(newPRs []github.PRItem) tea.Cmd {
+// If more than threshold new PRs arrived at once, sends a single summary notification.
+func notifyNewPRsCmd(newPRs []github.PRItem, threshold int) tea.Cmd {
 	return func() tea.Msg {
-		if len(newPRs) > 3 {
+		if len(newPRs) > threshold {
 			_ = notify.Send(
 				"prtea",
 				fmt.Sprintf("%d new PRs for review", len(newPRs)),

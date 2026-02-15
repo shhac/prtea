@@ -14,20 +14,26 @@ import (
 
 // ChatService manages Claude chat sessions for PR discussions.
 type ChatService struct {
-	claudePath string
-	timeout    time.Duration
-	mu         sync.Mutex
-	sessions   map[string]*ChatSession
-	store      *ChatStore // optional persistent store
+	claudePath         string
+	timeout            time.Duration
+	maxPromptTokens    int
+	maxHistoryMessages int
+	maxTurns           int
+	mu                 sync.Mutex
+	sessions           map[string]*ChatSession
+	store              *ChatStore // optional persistent store
 }
 
 // NewChatService creates a ChatService with optional persistent storage.
-func NewChatService(claudePath string, timeout time.Duration, store *ChatStore) *ChatService {
+func NewChatService(claudePath string, timeout time.Duration, store *ChatStore, maxPromptTokens, maxHistory, maxTurns int) *ChatService {
 	return &ChatService{
-		claudePath: claudePath,
-		timeout:    timeout,
-		sessions:   make(map[string]*ChatSession),
-		store:      store,
+		claudePath:         claudePath,
+		timeout:            timeout,
+		maxPromptTokens:    maxPromptTokens,
+		maxHistoryMessages: maxHistory,
+		maxTurns:           maxTurns,
+		sessions:           make(map[string]*ChatSession),
+		store:              store,
 	}
 }
 
@@ -117,15 +123,11 @@ func (cs *ChatService) getOrCreateSession(input ChatInput) *ChatSession {
 	return session
 }
 
-// Token budget constants.
+// Token budget defaults (used when service values are zero).
 const (
-	// maxPromptTokens is the soft limit for the total prompt size.
-	// Set conservatively below Claude's 200K context to leave room for the response.
-	maxPromptTokens = 100_000
-
-	// maxHistoryMessages is the maximum number of recent messages to keep.
-	// Older messages are dropped to stay within the token budget.
-	maxHistoryMessages = 16
+	defaultMaxPromptTokens    = 100_000
+	defaultMaxHistoryMessages = 16
+	defaultChatMaxTurns       = 3
 )
 
 // estimateTokens returns a rough token count for a string.
@@ -135,7 +137,7 @@ func estimateTokens(s string) int {
 	return len(s) / 3
 }
 
-func buildChatPrompt(session *ChatSession, input ChatInput) string {
+func buildChatPrompt(session *ChatSession, input ChatInput, maxTokens, maxHistory int) string {
 	var b strings.Builder
 
 	// System instruction (always included)
@@ -159,8 +161,8 @@ func buildChatPrompt(session *ChatSession, input ChatInput) string {
 
 	// Determine which messages to include (most recent first, up to budget)
 	messages := session.Messages
-	if len(messages) > maxHistoryMessages {
-		messages = messages[len(messages)-maxHistoryMessages:]
+	if len(messages) > maxHistory {
+		messages = messages[len(messages)-maxHistory:]
 	}
 
 	// Further trim messages if total exceeds token budget
@@ -170,9 +172,9 @@ func buildChatPrompt(session *ChatSession, input ChatInput) string {
 	}
 
 	totalTokens := fixedTokens + contextTokens + historyTokens
-	if totalTokens > maxPromptTokens && len(messages) > 2 {
+	if totalTokens > maxTokens && len(messages) > 2 {
 		// Drop oldest messages until we fit (keep at least the last 2 messages)
-		for totalTokens > maxPromptTokens && len(messages) > 2 {
+		for totalTokens > maxTokens && len(messages) > 2 {
 			dropped := messages[0]
 			messages = messages[1:]
 			totalTokens -= estimateTokens(dropped.Content) + 10
@@ -181,9 +183,9 @@ func buildChatPrompt(session *ChatSession, input ChatInput) string {
 
 	// If still over budget after trimming history, truncate the diff context
 	prContext := input.PRContext
-	if totalTokens > maxPromptTokens {
+	if totalTokens > maxTokens {
 		// Calculate how many tokens we can afford for the context
-		availableContextTokens := maxPromptTokens - fixedTokens - historyTokens
+		availableContextTokens := maxTokens - fixedTokens - historyTokens
 		if availableContextTokens < 0 {
 			availableContextTokens = 0
 		}
@@ -217,14 +219,28 @@ func (cs *ChatService) ChatStream(ctx context.Context, input ChatInput, onChunk 
 	defer cancel()
 
 	session := cs.getOrCreateSession(input)
-	prompt := buildChatPrompt(session, input)
+
+	maxTokens := cs.maxPromptTokens
+	if maxTokens == 0 {
+		maxTokens = defaultMaxPromptTokens
+	}
+	maxHistory := cs.maxHistoryMessages
+	if maxHistory == 0 {
+		maxHistory = defaultMaxHistoryMessages
+	}
+	turns := cs.maxTurns
+	if turns == 0 {
+		turns = defaultChatMaxTurns
+	}
+
+	prompt := buildChatPrompt(session, input, maxTokens, maxHistory)
 
 	args := []string{
 		"-p", prompt,
 		"--output-format", "stream-json",
 		"--verbose",
 		"--include-partial-messages",
-		"--max-turns", "3",
+		"--max-turns", fmt.Sprintf("%d", turns),
 	}
 
 	cmd := exec.CommandContext(ctx, cs.claudePath, args...)

@@ -13,19 +13,22 @@ import (
 
 // Analyzer spawns claude CLI to produce structured PR analysis.
 type Analyzer struct {
-	claudePath string
-	timeout    time.Duration
-	promptsDir string
+	claudePath       string
+	timeout          time.Duration
+	promptsDir       string
+	analysisMaxTurns int
 }
 
 // NewAnalyzer creates an Analyzer. claudePath is the path to the claude binary.
 // timeout is the maximum time to wait for analysis to complete.
 // promptsDir is the directory for custom per-repo prompts (may be empty).
-func NewAnalyzer(claudePath string, timeout time.Duration, promptsDir string) *Analyzer {
+// analysisMaxTurns is the max agentic turns for analysis (0 defaults to 30).
+func NewAnalyzer(claudePath string, timeout time.Duration, promptsDir string, analysisMaxTurns int) *Analyzer {
 	return &Analyzer{
-		claudePath: claudePath,
-		timeout:    timeout,
-		promptsDir: promptsDir,
+		claudePath:       claudePath,
+		timeout:          timeout,
+		promptsDir:       promptsDir,
+		analysisMaxTurns: analysisMaxTurns,
 	}
 }
 
@@ -58,12 +61,17 @@ func (a *Analyzer) Analyze(ctx context.Context, input AnalyzeInput, onProgress P
 
 	prompt := a.buildAnalysisPrompt(input)
 
+	maxTurns := a.analysisMaxTurns
+	if maxTurns == 0 {
+		maxTurns = 30
+	}
+
 	args := []string{
 		"-p", prompt,
 		"--output-format", "stream-json",
 		"--verbose",
 		"--allowedTools", "Read,Glob,Grep,Bash",
-		"--max-turns", "30",
+		"--max-turns", fmt.Sprintf("%d", maxTurns),
 	}
 
 	cmd := exec.CommandContext(ctx, a.claudePath, args...)

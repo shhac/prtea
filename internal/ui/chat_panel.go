@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/spinner"
@@ -120,6 +121,12 @@ func NewChatPanelModel() ChatPanelModel {
 		reviewAction:     ReviewComment,
 		reviewRadioFocus: 1, // matches ReviewComment default
 	}
+}
+
+// SetStreamCheckpoint sets the checkpoint interval for streaming renderers.
+func (m *ChatPanelModel) SetStreamCheckpoint(d time.Duration) {
+	m.chatStream.CheckpointInterval = d
+	m.analysisStream.CheckpointInterval = d
 }
 
 func (m ChatPanelModel) Update(msg tea.Msg) (ChatPanelModel, tea.Cmd) {
