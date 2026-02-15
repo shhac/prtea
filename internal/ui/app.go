@@ -132,6 +132,7 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		m.helpOverlay.SetSize(m.width, m.height)
 		m.commandMode.SetSize(m.width, m.height)
+		m.settingsPanel.SetSize(m.width, m.height)
 		// Auto-collapse right panel on first render if terminal is narrow
 		if !m.initialized {
 			m.initialized = true
