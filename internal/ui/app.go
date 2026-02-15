@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/bubbles/key"
+	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -384,6 +385,12 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.statusBar.ClearIfSeqMatch(msg.Seq)
 		return m, nil
 
+	case list.FilterMatchesMsg:
+		// Route filter match results back to the PR list so filtering actually works.
+		var cmd tea.Cmd
+		m.prList, cmd = m.prList.Update(msg)
+		return m, cmd
+
 	case spinner.TickMsg:
 		// Route spinner ticks to all panels (each panel only processes its own spinner)
 		var cmds []tea.Cmd
@@ -595,6 +602,7 @@ func (m App) View() string {
 
 	panels := lipgloss.JoinHorizontal(lipgloss.Top, panelViews...)
 	m.statusBar.SetFiltering(m.focused == PanelLeft && m.prList.IsFiltering())
+	m.statusBar.SetFilterApplied(m.focused == PanelLeft && m.prList.HasActiveFilter() && !m.prList.IsFiltering())
 	m.statusBar.SetDiffSearching(m.focused == PanelCenter && m.diffViewer.IsSearching())
 	m.statusBar.SetDiffSearchInfo(m.diffViewer.SearchInfo())
 	bar := m.statusBar.View()

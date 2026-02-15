@@ -41,7 +41,9 @@ type PRItem struct {
 	htmlURL  string
 }
 
-func (i PRItem) FilterValue() string { return i.title + " " + i.author + " " + i.repo }
+func (i PRItem) FilterValue() string {
+	return i.title + " " + i.author + " " + i.repoFull + " " + i.owner + " " + i.repo
+}
 func (i PRItem) Title() string       { return fmt.Sprintf("#%d %s", i.number, i.title) }
 func (i PRItem) Description() string {
 	return fmt.Sprintf("%s · %s", i.author, i.repo)
@@ -188,6 +190,7 @@ func NewPRListModel() PRListModel {
 	l.SetShowHelp(false)
 	l.SetShowStatusBar(false)
 	l.SetFilteringEnabled(true)
+	l.FilterInput.Placeholder = "title, author, repo…"
 	l.DisableQuitKeybindings()
 
 	return PRListModel{
@@ -301,14 +304,20 @@ func (m PRListModel) Update(msg tea.Msg) (PRListModel, tea.Cmd) {
 		}
 		return m, nil
 	case tea.KeyMsg:
-		// While filtering, let the inner list handle all keys
+		// While filtering, let the inner list handle all keys —
+		// except Enter on empty input, which should clear the filter.
 		if m.IsFiltering() {
+			if msg.Type == tea.KeyEnter && m.list.FilterInput.Value() == "" {
+				m.list.ResetFilter()
+				return m, nil
+			}
 			break
 		}
 		switch {
 		case key.Matches(msg, PRListKeys.PrevTab):
 			if m.activeTab == TabMyPRs {
 				m.activeTab = TabToReview
+				m.list.ResetFilter()
 				if m.state == stateLoaded {
 					m.list.SetItems(m.toReview)
 				}
@@ -317,6 +326,7 @@ func (m PRListModel) Update(msg tea.Msg) (PRListModel, tea.Cmd) {
 		case key.Matches(msg, PRListKeys.NextTab):
 			if m.activeTab == TabToReview {
 				m.activeTab = TabMyPRs
+				m.list.ResetFilter()
 				if m.state == stateLoaded {
 					m.list.SetItems(m.myPRs)
 				}
