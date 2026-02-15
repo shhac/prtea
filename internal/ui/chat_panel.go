@@ -76,7 +76,8 @@ type ChatPanelModel struct {
 
 	// Review tab state
 	reviewTextArea   textarea.Model
-	reviewAction     ReviewAction
+	reviewAction     ReviewAction // the confirmed selection (what gets submitted)
+	reviewRadioFocus int          // which radio option has focus (0=Approve, 1=Comment, 2=RequestChanges)
 	reviewFocus      ReviewFocus
 	reviewSubmitting bool
 
@@ -115,8 +116,9 @@ func NewChatPanelModel() ChatPanelModel {
 		textInput:    ti,
 		chatMode:     ChatModeNormal,
 		activeTab:    ChatTabChat,
-		reviewTextArea: ta,
-		reviewAction: ReviewComment,
+		reviewTextArea:   ta,
+		reviewAction:     ReviewComment,
+		reviewRadioFocus: 1, // matches ReviewComment default
 	}
 }
 
@@ -416,6 +418,7 @@ func (m *ChatPanelModel) ClearComments() {
 func (m *ChatPanelModel) ClearReview() {
 	m.reviewTextArea.Reset()
 	m.reviewAction = ReviewComment
+	m.reviewRadioFocus = 1 // matches ReviewComment default
 	m.reviewFocus = ReviewFocusTextArea
 	m.reviewSubmitting = false
 	m.reviewTextArea.Blur()
@@ -444,10 +447,13 @@ func (m *ChatPanelModel) SetAIReviewResult(result *claude.ReviewAnalysis) {
 	switch result.Action {
 	case "approve":
 		m.reviewAction = ReviewApprove
+		m.reviewRadioFocus = int(ReviewApprove)
 	case "request_changes":
 		m.reviewAction = ReviewRequestChanges
+		m.reviewRadioFocus = int(ReviewRequestChanges)
 	default:
 		m.reviewAction = ReviewComment
+		m.reviewRadioFocus = int(ReviewComment)
 	}
 
 	m.reviewFocus = ReviewFocusTextArea
@@ -478,6 +484,7 @@ func (m *ChatPanelModel) SetReviewSubmitted(err error) {
 	if err == nil {
 		m.reviewTextArea.Reset()
 		m.reviewAction = ReviewComment
+		m.reviewRadioFocus = 1 // matches ReviewComment default
 		m.reviewFocus = ReviewFocusTextArea
 		m.reviewTextArea.Blur()
 		m.aiReviewResult = nil
@@ -979,29 +986,30 @@ func (m ChatPanelModel) updateReviewTab(msg tea.KeyMsg) (ChatPanelModel, tea.Cmd
 		case "enter":
 			m.reviewTextArea.Focus()
 			return m, func() tea.Msg { return ModeChangedMsg{Mode: ChatModeInsert} }
-		case "tab":
+		case "tab", "j", "down":
 			m.reviewFocus = ReviewFocusRadio
-			return m, nil
-		case "j", "down":
-			m.reviewFocus = ReviewFocusRadio
+			m.reviewRadioFocus = int(m.reviewAction) // start focus on current selection
 			return m, nil
 		}
 
 	case ReviewFocusRadio:
 		switch msg.String() {
 		case "j", "down":
-			if m.reviewAction < ReviewRequestChanges {
-				m.reviewAction++
+			if m.reviewRadioFocus < int(ReviewRequestChanges) {
+				m.reviewRadioFocus++
 			} else {
 				m.reviewFocus = ReviewFocusSubmit
 			}
 			return m, nil
 		case "k", "up":
-			if m.reviewAction > ReviewApprove {
-				m.reviewAction--
+			if m.reviewRadioFocus > int(ReviewApprove) {
+				m.reviewRadioFocus--
 			} else {
 				m.reviewFocus = ReviewFocusTextArea
 			}
+			return m, nil
+		case "enter", " ":
+			m.reviewAction = ReviewAction(m.reviewRadioFocus)
 			return m, nil
 		case "tab":
 			m.reviewFocus = ReviewFocusSubmit
@@ -1040,9 +1048,11 @@ func (m ChatPanelModel) updateReviewTab(msg tea.KeyMsg) (ChatPanelModel, tea.Cmd
 			return m, nil
 		case "shift+tab":
 			m.reviewFocus = ReviewFocusRadio
+			m.reviewRadioFocus = int(ReviewRequestChanges) // focus last radio option
 			return m, nil
 		case "k", "up":
 			m.reviewFocus = ReviewFocusRadio
+			m.reviewRadioFocus = int(ReviewRequestChanges) // focus last radio option
 			return m, nil
 		}
 	}
@@ -1124,10 +1134,17 @@ func (m ChatPanelModel) renderReview() string {
 		{ReviewRequestChanges, "Request Changes", reviewRequestChangesStyle},
 	}
 
-	for _, a := range actions {
+	for i, a := range actions {
+		// Selection indicator: (●) for selected action, ( ) otherwise
 		indicator := "  ( ) "
 		if m.reviewAction == a.action {
 			indicator = "  (●) "
+		}
+
+		// Focus cursor: ▸ prefix when this option has focus
+		isFocused := m.reviewFocus == ReviewFocusRadio && m.reviewRadioFocus == i
+		if isFocused {
+			indicator = "▸ " + indicator[2:] // replace leading spaces with cursor
 		}
 
 		var line string
@@ -1137,8 +1154,8 @@ func (m ChatPanelModel) renderReview() string {
 			line = indicator + reviewOptionDimStyle.Render(a.label)
 		}
 
-		// Highlight the focused radio group
-		if m.reviewFocus == ReviewFocusRadio && m.reviewAction == a.action {
+		// Bold the focused option
+		if isFocused {
 			line = lipgloss.NewStyle().Bold(true).Render(line)
 		}
 
