@@ -66,6 +66,10 @@ type App struct {
 	// When it reaches 0, we show a success message.
 	refreshPending int
 	refreshPRNum   int // PR number being refreshed
+
+	// Background polling
+	pollInterval time.Duration // current poll interval from config
+	pollEnabled  bool          // whether polling is enabled
 }
 
 // NewApp creates a new App model with default state.
@@ -105,6 +109,8 @@ func NewApp() App {
 		chatService:   chatSvc,
 		analysisStore: store,
 		chatStore:     chatStore,
+		pollInterval:  cfg.PollIntervalDuration(),
+		pollEnabled:   cfg.PollEnabled,
 	}
 }
 
@@ -144,10 +150,33 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		toReview := convertPRItems(msg.ToReview)
 		myPRs := convertPRItems(msg.MyPRs)
 		m.prList.SetItems(toReview, myPRs)
+		// Start background polling after the first successful load
+		if m.pollEnabled && m.pollInterval > 0 {
+			return m, pollTickCmd(m.pollInterval)
+		}
 		return m, nil
 
 	case PRsErrorMsg:
 		m.prList.SetError(msg.Err.Error())
+		return m, nil
+
+	case pollTickMsg:
+		if m.pollEnabled && m.ghClient != nil && m.prList.state == stateLoaded {
+			return m, tea.Batch(
+				pollFetchPRsCmd(m.ghClient),
+				pollTickCmd(m.pollInterval),
+			)
+		}
+		// Not ready or disabled — reschedule so polling resumes if re-enabled
+		if m.pollEnabled && m.pollInterval > 0 {
+			return m, pollTickCmd(m.pollInterval)
+		}
+		return m, nil
+
+	case pollPRsLoadedMsg:
+		toReview := convertPRItems(msg.ToReview)
+		myPRs := convertPRItems(msg.MyPRs)
+		m.prList.MergeItems(toReview, myPRs)
 		return m, nil
 
 	case HelpClosedMsg:
@@ -165,6 +194,14 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cfg := m.settingsPanel.Config()
 			m.appConfig = cfg
 			_ = config.Save(cfg)
+			// Update polling state from new config
+			wasEnabled := m.pollEnabled
+			m.pollEnabled = cfg.PollEnabled
+			m.pollInterval = cfg.PollIntervalDuration()
+			// If polling was just enabled, start the tick
+			if !wasEnabled && m.pollEnabled && m.pollInterval > 0 && m.prList.state == stateLoaded {
+				return m, pollTickCmd(m.pollInterval)
+			}
 		}
 		return m, nil
 

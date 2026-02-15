@@ -283,6 +283,53 @@ func (m *PRListModel) SetItems(toReview, myPRs []list.Item) {
 	}
 }
 
+// MergeItems updates both tab datasets without disrupting user state.
+// Unlike SetItems, it preserves the cursor position (by PR number),
+// skips the update while a filter is active, and does not change loadState.
+func (m *PRListModel) MergeItems(toReview, myPRs []list.Item) {
+	if m.state != stateLoaded {
+		return
+	}
+
+	// Always update cached data for both tabs
+	m.toReview = toReview
+	m.myPRs = myPRs
+
+	// If a filter is active, don't touch the list — cached data is updated
+	// and will take effect when the filter is cleared or the tab switches.
+	if m.HasActiveFilter() {
+		return
+	}
+
+	// Remember which PR the cursor is on (by number, not index)
+	var cursorPRNumber int
+	if item, ok := m.list.SelectedItem().(PRItem); ok {
+		cursorPRNumber = item.number
+	}
+
+	// Replace items for the active tab
+	var newItems []list.Item
+	switch m.activeTab {
+	case TabToReview:
+		newItems = m.toReview
+	case TabMyPRs:
+		newItems = m.myPRs
+	}
+	m.list.SetItems(newItems)
+
+	// Restore cursor to the same PR
+	if cursorPRNumber != 0 {
+		for i, item := range newItems {
+			if pr, ok := item.(PRItem); ok && pr.number == cursorPRNumber {
+				m.list.Select(i)
+				return
+			}
+		}
+		// PR disappeared from the list — cursor stays at whatever index
+		// bubbles clamped it to (typically the last item if list shrank).
+	}
+}
+
 // IsFiltering returns true when the user is actively typing in the filter input.
 func (m PRListModel) IsFiltering() bool {
 	return m.list.FilterState() == list.Filtering

@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
@@ -60,6 +61,33 @@ func convertPRItems(prs []github.PRItem) []list.Item {
 		}
 	}
 	return items
+}
+
+// pollTickCmd returns a command that fires after the given interval to trigger background polling.
+func pollTickCmd(interval time.Duration) tea.Cmd {
+	return tea.Tick(interval, func(t time.Time) tea.Msg {
+		return pollTickMsg{}
+	})
+}
+
+// pollFetchPRsCmd returns a command that fetches PR lists for background polling.
+// Errors are silently ignored — the next tick will retry.
+func pollFetchPRsCmd(client GitHubService) tea.Cmd {
+	return func() tea.Msg {
+		ctx := context.Background()
+		toReview, err := client.GetPRsForReview(ctx)
+		if err != nil {
+			return nil
+		}
+		myPRs, err := client.GetMyPRs(ctx)
+		if err != nil {
+			return nil
+		}
+		return pollPRsLoadedMsg{
+			ToReview: toReview,
+			MyPRs:    myPRs,
+		}
+	}
 }
 
 // fetchDiffCmd returns a command that fetches PR file diffs.

@@ -262,6 +262,18 @@ type ConfigChangedMsg struct{}
 // SettingsClosedMsg is sent when the settings overlay is dismissed.
 type SettingsClosedMsg struct{}
 
+// -- Background polling --
+
+// pollTickMsg is sent by the periodic timer to trigger a background PR list fetch.
+type pollTickMsg struct{}
+
+// pollPRsLoadedMsg is sent when background polling fetches PR data successfully.
+// Separate from PRsLoadedMsg to allow non-disruptive merging.
+type pollPRsLoadedMsg struct {
+	ToReview []github.PRItem
+	MyPRs    []github.PRItem
+}
+
 // -- Inline comment authoring --
 
 // InlineCommentAddMsg is emitted by the diff viewer when the user saves an inline comment.
