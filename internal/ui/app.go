@@ -70,6 +70,11 @@ type App struct {
 	// Background polling
 	pollInterval time.Duration // current poll interval from config
 	pollEnabled  bool          // whether polling is enabled
+
+	// Notification state
+	notifyEnabled    bool            // whether OS notifications are enabled
+	initialLoadDone  bool            // true after first successful PR fetch
+	knownPRs         map[string]bool // PR keys seen since boot (for new-PR detection)
 }
 
 // NewApp creates a new App model with default state.
@@ -111,6 +116,8 @@ func NewApp() App {
 		chatStore:     chatStore,
 		pollInterval:  cfg.PollIntervalDuration(),
 		pollEnabled:   cfg.PollEnabled,
+		notifyEnabled: cfg.NotificationsEnabled,
+		knownPRs:      make(map[string]bool),
 	}
 }
 
@@ -150,6 +157,11 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		toReview := convertPRItems(msg.ToReview)
 		myPRs := convertPRItems(msg.MyPRs)
 		m.prList.SetItems(toReview, myPRs)
+		// Snapshot known PRs on initial load (boot set for notification detection)
+		if !m.initialLoadDone {
+			m.initialLoadDone = true
+			m.snapshotKnownPRs(msg.ToReview, msg.MyPRs)
+		}
 		// Start background polling after the first successful load
 		if m.pollEnabled && m.pollInterval > 0 {
 			return m, pollTickCmd(m.pollInterval)
@@ -177,7 +189,17 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		toReview := convertPRItems(msg.ToReview)
 		myPRs := convertPRItems(msg.MyPRs)
 		m.prList.MergeItems(toReview, myPRs)
-		return m, nil
+		// Detect new PRs and send notifications
+		var cmds []tea.Cmd
+		if m.notifyEnabled {
+			newPRs := m.detectNewPRs(msg.ToReview)
+			if len(newPRs) > 0 {
+				cmds = append(cmds, notifyNewPRsCmd(newPRs))
+			}
+		}
+		// Always update the known set (even if notifications disabled)
+		m.snapshotKnownPRs(msg.ToReview, msg.MyPRs)
+		return m, tea.Batch(cmds...)
 
 	case HelpClosedMsg:
 		m.mode = ModeNavigation
@@ -198,6 +220,7 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			wasEnabled := m.pollEnabled
 			m.pollEnabled = cfg.PollEnabled
 			m.pollInterval = cfg.PollIntervalDuration()
+			m.notifyEnabled = cfg.NotificationsEnabled
 			// If polling was just enabled, start the tick
 			if !wasEnabled && m.pollEnabled && m.pollInterval > 0 && m.prList.state == stateLoaded {
 				return m, pollTickCmd(m.pollInterval)
@@ -1213,6 +1236,28 @@ func (m *App) mergeAIComments(aiComments []claude.InlineReviewComment) {
 			})
 		}
 	}
+}
+
+// snapshotKnownPRs records all current PR keys in the known set.
+func (m *App) snapshotKnownPRs(toReview, myPRs []github.PRItem) {
+	for _, pr := range toReview {
+		m.knownPRs[prKey(pr.Repo.Owner, pr.Repo.Name, pr.Number)] = true
+	}
+	for _, pr := range myPRs {
+		m.knownPRs[prKey(pr.Repo.Owner, pr.Repo.Name, pr.Number)] = true
+	}
+}
+
+// detectNewPRs returns PRs from the "To Review" list that are not in the known set.
+// Only "To Review" is checked — the user generally doesn't need notifications for their own PRs.
+func (m *App) detectNewPRs(toReview []github.PRItem) []github.PRItem {
+	var newPRs []github.PRItem
+	for _, pr := range toReview {
+		if !m.knownPRs[prKey(pr.Repo.Owner, pr.Repo.Name, pr.Number)] {
+			newPRs = append(newPRs, pr)
+		}
+	}
+	return newPRs
 }
 
 // executeCommand dispatches a named command from the command palette.

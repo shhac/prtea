@@ -13,6 +13,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/shhac/prtea/internal/claude"
 	"github.com/shhac/prtea/internal/github"
+	"github.com/shhac/prtea/internal/notify"
 )
 
 // initGHClientCmd creates the GitHub client in a goroutine.
@@ -87,6 +88,32 @@ func pollFetchPRsCmd(client GitHubService) tea.Cmd {
 			ToReview: toReview,
 			MyPRs:    myPRs,
 		}
+	}
+}
+
+// prKey returns a unique string key for a PR across repos (owner/repo#number).
+func prKey(owner, repo string, number int) string {
+	return fmt.Sprintf("%s/%s#%d", owner, repo, number)
+}
+
+// notifyNewPRsCmd sends OS notifications for newly detected PRs.
+// If more than 3 new PRs arrived at once, sends a single summary notification.
+func notifyNewPRsCmd(newPRs []github.PRItem) tea.Cmd {
+	return func() tea.Msg {
+		if len(newPRs) > 3 {
+			_ = notify.Send(
+				"prtea",
+				fmt.Sprintf("%d new PRs for review", len(newPRs)),
+			)
+		} else {
+			for _, pr := range newPRs {
+				_ = notify.Send(
+					"prtea: New PR for review",
+					fmt.Sprintf("#%d %s by %s in %s", pr.Number, pr.Title, pr.Author.Login, pr.Repo.Name),
+				)
+			}
+		}
+		return nil
 	}
 }
 
