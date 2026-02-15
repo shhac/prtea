@@ -602,7 +602,6 @@ func (m App) View() string {
 
 	panels := lipgloss.JoinHorizontal(lipgloss.Top, panelViews...)
 	m.statusBar.SetFiltering(m.focused == PanelLeft && m.prList.IsFiltering())
-	m.statusBar.SetFilterApplied(m.focused == PanelLeft && m.prList.HasActiveFilter() && !m.prList.IsFiltering())
 	m.statusBar.SetDiffSearching(m.focused == PanelCenter && m.diffViewer.IsSearching())
 	m.statusBar.SetDiffSearchInfo(m.diffViewer.SearchInfo())
 	bar := m.statusBar.View()

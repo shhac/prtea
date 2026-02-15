@@ -403,7 +403,12 @@ func (m PRListModel) View() string {
 		}
 	}
 
-	inner := lipgloss.JoinVertical(lipgloss.Left, header, content)
+	sections := []string{header}
+	if m.HasActiveFilter() && !m.IsFiltering() {
+		sections = append(sections, m.renderFilterBadge())
+	}
+	sections = append(sections, content)
+	inner := lipgloss.JoinVertical(lipgloss.Left, sections...)
 
 	style := panelStyle(m.focused, false, m.width-2, m.height-2)
 	return style.Render(inner)
@@ -429,6 +434,19 @@ func (m PRListModel) renderTabs() string {
 	}
 
 	return strings.Join(tabs, " ")
+}
+
+func (m PRListModel) renderFilterBadge() string {
+	badge := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("230")).
+		Background(lipgloss.Color("62")).
+		Bold(true).
+		Padding(0, 1).
+		Render("FILTERED")
+	hint := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("244")).
+		Render(" [Esc]clear [/]edit")
+	return badge + hint
 }
 
 func (m PRListModel) renderLoading() string {
