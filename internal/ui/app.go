@@ -370,6 +370,38 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.refreshFetchDone(msg.PRNumber)
 
+	case CIRerunRequestMsg:
+		if m.selectedPR == nil || m.ghClient == nil {
+			return m, nil
+		}
+		runIDs := m.diffViewer.ciStatus.FailedRunIDs()
+		if len(runIDs) == 0 {
+			clearCmd := m.statusBar.SetTemporaryMessage("No re-runnable failed checks", 2*time.Second)
+			return m, clearCmd
+		}
+		clearCmd := m.statusBar.SetTemporaryMessage(
+			fmt.Sprintf("Re-running %d failed workflow(s)...", len(runIDs)), 15*time.Second,
+		)
+		pr := m.selectedPR
+		return m, tea.Batch(clearCmd, rerunFailedCICmd(m.ghClient, pr.Owner, pr.Repo, pr.Number, runIDs))
+
+	case CIRerunDoneMsg:
+		clearCmd := m.statusBar.SetTemporaryMessage(
+			fmt.Sprintf("Re-ran %d workflow(s) — refreshing CI...", msg.Count), 3*time.Second,
+		)
+		// Refresh CI status after re-run
+		var fetchCmd tea.Cmd
+		if m.selectedPR != nil && m.ghClient != nil && msg.PRNumber == m.selectedPR.Number {
+			fetchCmd = fetchCIStatusCmd(m.ghClient, m.selectedPR.Owner, m.selectedPR.Repo, m.selectedPR.Number)
+		}
+		return m, tea.Batch(clearCmd, fetchCmd)
+
+	case CIRerunErrMsg:
+		clearCmd := m.statusBar.SetTemporaryMessage(
+			fmt.Sprintf("CI re-run failed: %s", formatUserError(msg.Err.Error())), 5*time.Second,
+		)
+		return m, clearCmd
+
 	case ReviewsLoadedMsg:
 		// Race guard: only apply if this is for the currently selected PR
 		if m.selectedPR == nil || msg.PRNumber != m.selectedPR.Number {
@@ -1356,6 +1388,8 @@ func (m App) executeCommand(name string) (tea.Model, tea.Cmd) {
 		m.chatPanel.activeTab = ChatTabReview
 		m.showAndFocusPanel(PanelRight)
 		return m, nil
+	case "rerun ci":
+		return m, func() tea.Msg { return CIRerunRequestMsg{} }
 	case "refresh":
 		if m.focused == PanelLeft {
 			return m.refreshPRList()

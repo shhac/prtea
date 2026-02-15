@@ -183,6 +183,19 @@ func fetchReviewsCmd(client GitHubService, owner, repo string, number int) tea.C
 	}
 }
 
+// rerunFailedCICmd returns a command that re-runs failed GitHub Actions workflows.
+func rerunFailedCICmd(client GitHubService, owner, repo string, number int, runIDs []int64) tea.Cmd {
+	return func() tea.Msg {
+		ctx := context.Background()
+		for _, id := range runIDs {
+			if err := client.RerunWorkflow(ctx, owner, repo, id, true); err != nil {
+				return CIRerunErrMsg{PRNumber: number, Err: err}
+			}
+		}
+		return CIRerunDoneMsg{PRNumber: number, Count: len(runIDs)}
+	}
+}
+
 // openBrowserCmd returns a command that opens a URL in the default browser.
 func openBrowserCmd(url string) tea.Cmd {
 	return func() tea.Msg {

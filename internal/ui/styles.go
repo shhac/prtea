@@ -56,6 +56,12 @@ var diffFocusedHunkStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("99")).
 // Focused hunk gutter marker (▎ in accent color)
 var diffFocusGutterStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("62"))
 
+// Line cursor: gutter arrow and subtle row highlight
+var (
+	diffCursorGutterStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true)
+	diffCursorBg          = lipgloss.Color("237")
+)
+
 // Search match highlight backgrounds
 var (
 	diffSearchMatchBg        = lipgloss.Color("58")  // dark olive for all matches

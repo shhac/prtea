@@ -80,6 +80,15 @@ type searchMatch struct {
 	endCol     int
 }
 
+// lineInfo describes what a cached viewport line represents in the source diff.
+type lineInfo struct {
+	hunkIdx       int    // which hunk this line belongs to (-1 for file headers etc.)
+	filename      string // file path for this line
+	newLineNum    int    // new-side file line number (0 = not a file line)
+	isCommentable bool   // true for + and context lines (commentable on RIGHT side)
+	isDiffLine    bool   // true for actual diff content lines (cursor can land here)
+}
+
 // parseAllHunks parses hunks from all files once and populates m.hunks.
 func (m *DiffViewerModel) parseAllHunks() {
 	m.hunks = nil
@@ -120,9 +129,14 @@ type DiffViewerModel struct {
 	// On scroll, only the old and new focused hunks are re-rendered (O(hunk_size)
 	// lipgloss calls instead of O(total_lines)).
 	cachedLines       []string     // per-line styled output (nil = needs full rebuild)
+	cachedLineInfo    []lineInfo   // parallel to cachedLines — what each viewport line represents
 	hunkLineRanges    [][2]int     // [start, end) line indices in cachedLines per hunk
 	lastRenderedFocus int          // focusedHunkIdx at last cache update
 	dirtyHunks        map[int]bool // hunk indices needing re-render in cache
+
+	// Line-level cursor for precise inline comment targeting.
+	// cursorLine indexes into cachedLines and cachedLineInfo.
+	cursorLine int
 
 	// AI inline comment state
 	aiInlineComments      []claude.InlineReviewComment
@@ -279,6 +293,14 @@ func (m DiffViewerModel) Update(msg tea.Msg) (DiffViewerModel, tea.Cmd) {
 			}
 		}
 
+		// "x" re-runs failed CI on CI tab
+		if m.activeTab == TabCI && key.Matches(msg, DiffViewerKeys.RerunCI) {
+			if m.ciStatus != nil && len(m.ciStatus.FailedRunIDs()) > 0 {
+				return m, func() tea.Msg { return CIRerunRequestMsg{} }
+			}
+			return m, nil
+		}
+
 		// "/" enters search mode on diff tab
 		if m.activeTab == TabDiff && key.Matches(msg, DiffViewerKeys.Search) {
 			m.searchMode = true
@@ -308,6 +330,7 @@ func (m DiffViewerModel) Update(msg tea.Msg) (DiffViewerModel, tea.Cmd) {
 					m.focusedHunkIdx++
 				}
 				m.scrollToFocusedHunk()
+				m.syncCursorToFocusedHunk()
 				m.refreshContent()
 			}
 			return m, nil
@@ -317,68 +340,54 @@ func (m DiffViewerModel) Update(msg tea.Msg) (DiffViewerModel, tea.Cmd) {
 					m.focusedHunkIdx--
 				}
 				m.scrollToFocusedHunk()
+				m.syncCursorToFocusedHunk()
 				m.refreshContent()
 			}
 			return m, nil
 		case key.Matches(msg, DiffViewerKeys.HalfDown):
 			m.viewport.HalfViewDown()
 			m.syncFocusToScroll()
+			m.syncCursorToScroll()
 			m.refreshContent()
 			return m, nil
 		case key.Matches(msg, DiffViewerKeys.HalfUp):
 			m.viewport.HalfViewUp()
 			m.syncFocusToScroll()
+			m.syncCursorToScroll()
 			m.refreshContent()
 			return m, nil
 		case key.Matches(msg, DiffViewerKeys.Top):
 			m.viewport.GotoTop()
 			m.syncFocusToScroll()
+			m.syncCursorToScroll()
 			m.refreshContent()
 			return m, nil
 		case key.Matches(msg, DiffViewerKeys.Bottom):
 			m.viewport.GotoBottom()
 			m.syncFocusToScroll()
+			m.syncCursorToScroll()
 			m.refreshContent()
 			return m, nil
 		case key.Matches(msg, DiffViewerKeys.Down):
-			if m.activeTab == TabDiff && m.viewport.AtBottom() && len(m.hunks) > 0 && m.focusedHunkIdx < len(m.hunks)-1 {
-				// At bottom of scroll: advance to next hunk
-				m.focusedHunkIdx++
-				m.scrollToFocusedHunk()
+			if m.activeTab == TabDiff && len(m.cachedLineInfo) > 0 {
+				m.moveCursor(1)
 				m.refreshContent()
 				return m, nil
 			}
+			// Non-diff tabs: scroll viewport
 			var cmd tea.Cmd
-			oldFocus := m.focusedHunkIdx
 			m.viewport, cmd = m.viewport.Update(msg)
-			if m.activeTab == TabDiff {
-				m.syncFocusToScroll()
-				// When scrolling down, don't allow focus to jump backward
-				if m.focusedHunkIdx < oldFocus {
-					m.focusedHunkIdx = oldFocus
-				}
-			}
 			m.refreshContent()
 			return m, cmd
 		case key.Matches(msg, DiffViewerKeys.Up):
-			var cmd tea.Cmd
-			oldFocus := m.focusedHunkIdx
-			m.viewport, cmd = m.viewport.Update(msg)
-			if m.activeTab == TabDiff {
-				m.syncFocusToScroll()
-				// When scrolling up, don't allow focus to jump forward
-				if m.focusedHunkIdx > oldFocus {
-					m.focusedHunkIdx = oldFocus
-				}
-				// If natural scroll didn't shift focus backward but previous hunk
-				// header is now visible, force focus shift without viewport jump
-				if m.focusedHunkIdx == oldFocus && oldFocus > 0 {
-					prevOffset := m.hunkOffsets[oldFocus-1]
-					if prevOffset >= m.viewport.YOffset {
-						m.focusedHunkIdx = oldFocus - 1
-					}
-				}
+			if m.activeTab == TabDiff && len(m.cachedLineInfo) > 0 {
+				m.moveCursor(-1)
+				m.refreshContent()
+				return m, nil
 			}
+			// Non-diff tabs: scroll viewport
+			var cmd tea.Cmd
+			m.viewport, cmd = m.viewport.Update(msg)
 			m.refreshContent()
 			return m, cmd
 		case key.Matches(msg, DiffViewerKeys.SelectHunkAndAdvance):
@@ -462,6 +471,9 @@ func (m DiffViewerModel) Update(msg tea.Msg) (DiffViewerModel, tea.Cmd) {
 	m.viewport, cmd = m.viewport.Update(msg)
 	m.syncFocusToScroll()
 	if m.focusedHunkIdx != oldFocus {
+		if m.activeTab == TabDiff {
+			m.syncCursorToScroll()
+		}
 		m.refreshContent()
 	}
 	return m, cmd
@@ -488,6 +500,7 @@ func (m *DiffViewerModel) SetSize(width, height int) {
 		m.viewport.Height = innerHeight
 	}
 	m.cachedLines = nil // width change invalidates styled cache
+	m.cachedLineInfo = nil
 	m.refreshContent()
 }
 
@@ -504,8 +517,10 @@ func (m *DiffViewerModel) SetLoading(prNumber int) {
 	m.hunks = nil
 	m.hunkOffsets = nil
 	m.focusedHunkIdx = 0
+	m.cursorLine = 0
 	m.selectedHunks = nil
 	m.cachedLines = nil
+	m.cachedLineInfo = nil
 	m.hunkLineRanges = nil
 	m.lastRenderedFocus = 0
 	m.dirtyHunks = nil
@@ -538,10 +553,12 @@ func (m *DiffViewerModel) SetDiff(files []github.PRFile) {
 	m.err = nil
 	m.currentFileIdx = 0
 	m.focusedHunkIdx = 0
+	m.cursorLine = 0
 	m.selectedHunks = nil
 	m.clearSearch()
 	m.parseAllHunks()
 	m.cachedLines = nil
+	m.cachedLineInfo = nil
 	m.refreshContent()
 	m.viewport.GotoTop()
 }
@@ -553,6 +570,7 @@ func (m *DiffViewerModel) SetError(err error) {
 	m.files = nil
 	m.fileOffsets = nil
 	m.cachedLines = nil
+	m.cachedLineInfo = nil
 	m.refreshContent()
 }
 
@@ -606,6 +624,7 @@ func (m *DiffViewerModel) SetAIInlineComments(comments []claude.InlineReviewComm
 	}
 	// Full cache invalidation since comment lines change hunk sizes
 	m.cachedLines = nil
+	m.cachedLineInfo = nil
 	m.refreshContent()
 }
 
@@ -614,17 +633,26 @@ func (m *DiffViewerModel) ClearAIInlineComments() {
 	m.aiInlineComments = nil
 	m.aiCommentsByFileLine = nil
 	m.cachedLines = nil
+	m.cachedLineInfo = nil
 	m.refreshContent()
 }
 
-// EnterCommentMode activates comment input mode targeting the focused hunk.
+// EnterCommentMode activates comment input mode targeting the cursor line.
+// If the cursor is on a non-commentable line, it snaps to the nearest commentable
+// line within the same hunk. Returns nil if no commentable line is found.
 func (m *DiffViewerModel) EnterCommentMode() tea.Cmd {
-	if len(m.hunks) == 0 || m.activeTab != TabDiff {
+	if len(m.hunks) == 0 || m.activeTab != TabDiff || len(m.cachedLineInfo) == 0 {
 		return nil
 	}
-	hunk := m.hunks[m.focusedHunkIdx]
-	m.commentTargetFile = hunk.Filename
-	m.commentTargetLine = parseHunkNewStart(hunk.Header)
+
+	// Find the comment target from cursor position
+	targetLine, targetFile := m.commentTargetFromCursor()
+	if targetLine == 0 || targetFile == "" {
+		return nil
+	}
+
+	m.commentTargetFile = targetFile
+	m.commentTargetLine = targetLine
 	m.commentMode = true
 
 	// Pre-fill if editing existing comment at this location
@@ -640,6 +668,50 @@ func (m *DiffViewerModel) EnterCommentMode() tea.Cmd {
 	return m.commentInput.Focus()
 }
 
+// commentTargetFromCursor returns the file path and line number for the cursor's
+// current position. If the cursor is on a non-commentable line, searches nearby
+// lines in the same hunk for the nearest commentable one.
+func (m *DiffViewerModel) commentTargetFromCursor() (int, string) {
+	if m.cursorLine < 0 || m.cursorLine >= len(m.cachedLineInfo) {
+		return 0, ""
+	}
+
+	info := m.cachedLineInfo[m.cursorLine]
+	if info.isCommentable && info.newLineNum > 0 {
+		return info.newLineNum, info.filename
+	}
+
+	// Cursor is on a non-commentable line (@@, -, \, etc.)
+	// Search forward then backward within the same hunk
+	hunk := info.hunkIdx
+	if hunk < 0 {
+		return 0, ""
+	}
+
+	// Forward
+	for i := m.cursorLine + 1; i < len(m.cachedLineInfo); i++ {
+		ci := m.cachedLineInfo[i]
+		if ci.hunkIdx != hunk {
+			break
+		}
+		if ci.isCommentable && ci.newLineNum > 0 {
+			return ci.newLineNum, ci.filename
+		}
+	}
+	// Backward
+	for i := m.cursorLine - 1; i >= 0; i-- {
+		ci := m.cachedLineInfo[i]
+		if ci.hunkIdx != hunk {
+			break
+		}
+		if ci.isCommentable && ci.newLineNum > 0 {
+			return ci.newLineNum, ci.filename
+		}
+	}
+
+	return 0, ""
+}
+
 // IsCommenting returns true when the comment input is actively being typed into.
 func (m DiffViewerModel) IsCommenting() bool {
 	return m.commentMode
@@ -653,6 +725,7 @@ func (m *DiffViewerModel) SetPendingInlineComments(comments []PendingInlineComme
 		m.pendingCommentsByFileLine[key] = append(m.pendingCommentsByFileLine[key], c)
 	}
 	m.cachedLines = nil
+	m.cachedLineInfo = nil
 	m.refreshContent()
 }
 
@@ -669,6 +742,7 @@ func (m *DiffViewerModel) SetGitHubInlineComments(comments []github.InlineCommen
 	if len(comments) == 0 {
 		m.ghCommentThreads = nil
 		m.cachedLines = nil
+		m.cachedLineInfo = nil
 		m.refreshContent()
 		return
 	}
@@ -712,6 +786,7 @@ func (m *DiffViewerModel) SetGitHubInlineComments(comments []github.InlineCommen
 	}
 
 	m.cachedLines = nil
+	m.cachedLineInfo = nil
 	m.refreshContent()
 }
 
@@ -1054,12 +1129,22 @@ func (m DiffViewerModel) renderCITab() string {
 		{"Passing", passing},
 	}
 
+	// When all checks share one status, show a flat list without group headers.
+	nonEmpty := 0
+	for _, g := range groups {
+		if len(g.checks) > 0 {
+			nonEmpty++
+		}
+	}
+
 	for _, group := range groups {
 		if len(group.checks) == 0 {
 			continue
 		}
-		b.WriteString(dimStyle.Render(fmt.Sprintf("── %s (%d) ", group.title, len(group.checks))))
-		b.WriteString("\n")
+		if nonEmpty > 1 {
+			b.WriteString(dimStyle.Render(fmt.Sprintf("── %s (%d) ", group.title, len(group.checks))))
+			b.WriteString("\n")
+		}
 		for _, check := range group.checks {
 			ci, cc := ciCheckIconColor(check)
 			checkIcon := lipgloss.NewStyle().Foreground(lipgloss.Color(cc)).Render(ci)
@@ -1074,28 +1159,40 @@ func (m DiffViewerModel) renderCITab() string {
 		b.WriteString("\n")
 	}
 
+	// Show re-run hint when there are failed checks with rerunnable workflows
+	if failedIDs := m.ciStatus.FailedRunIDs(); len(failedIDs) > 0 {
+		hintStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Italic(true)
+		b.WriteString(hintStyle.Render("Press x to re-run failed checks"))
+		b.WriteString("\n")
+	}
+
 	return b.String()
 }
 
 // buildCachedLines renders all diff content into the cachedLines slice.
-// It computes fileOffsets, hunkOffsets, and hunkLineRanges from pre-parsed hunks.
+// It computes fileOffsets, hunkOffsets, hunkLineRanges, and cachedLineInfo.
 func (m *DiffViewerModel) buildCachedLines() {
 	if len(m.files) == 0 {
 		m.cachedLines = []string{renderEmptyState("No files changed in this PR", "")}
+		m.cachedLineInfo = []lineInfo{{hunkIdx: -1}}
 		m.hunkLineRanges = nil
 		return
 	}
 
 	innerWidth := m.viewport.Width
 	lines := make([]string, 0, 256)
+	infos := make([]lineInfo, 0, 256)
 	m.fileOffsets = make([]int, len(m.files))
 	m.hunkOffsets = make([]int, len(m.hunks))
 	m.hunkLineRanges = make([][2]int, len(m.hunks))
 	globalHunkIdx := 0
 
+	nonHunkInfo := lineInfo{hunkIdx: -1}
+
 	for i, f := range m.files {
 		if i > 0 {
 			lines = append(lines, "")
+			infos = append(infos, nonHunkInfo)
 		}
 
 		// Track line offset where this file header starts
@@ -1103,9 +1200,11 @@ func (m *DiffViewerModel) buildCachedLines() {
 
 		// File header
 		lines = append(lines, diffFileHeaderStyle.Render(fileStatusLabel(f)))
+		infos = append(infos, nonHunkInfo)
 
 		// Separator
 		lines = append(lines, strings.Repeat("─", min(innerWidth, 60)))
+		infos = append(infos, nonHunkInfo)
 
 		// Patch content
 		if f.Patch == "" {
@@ -1113,25 +1212,32 @@ func (m *DiffViewerModel) buildCachedLines() {
 				Foreground(lipgloss.Color("244")).
 				Italic(true).
 				Render("  (diff not available)"))
+			infos = append(infos, nonHunkInfo)
 			continue
 		}
 
 		lines = append(lines, "") // blank before hunks
+		infos = append(infos, nonHunkInfo)
 
 		// Render pre-parsed hunks
 		for globalHunkIdx < len(m.hunks) && m.hunks[globalHunkIdx].FileIndex == i {
 			m.hunkOffsets[globalHunkIdx] = len(lines)
 			start := len(lines)
-			hunkLines := m.renderHunkLines(globalHunkIdx)
+			hunkLines, hunkInfos := m.renderHunkLines(globalHunkIdx)
 			lines = append(lines, hunkLines...)
+			infos = append(infos, hunkInfos...)
 			m.hunkLineRanges[globalHunkIdx] = [2]int{start, len(lines)}
 			globalHunkIdx++
 		}
 	}
 
 	m.cachedLines = lines
+	m.cachedLineInfo = infos
 	m.lastRenderedFocus = m.focusedHunkIdx
 	m.dirtyHunks = nil
+
+	// Clamp cursor and snap to first diff line if needed
+	m.clampCursor()
 }
 
 // parseHunkNewStart parses the new-side start line number from a @@ header.
@@ -1148,8 +1254,8 @@ func parseHunkNewStart(header string) int {
 	return n
 }
 
-// renderHunkLines renders a single hunk's styled output lines.
-func (m *DiffViewerModel) renderHunkLines(hunkIdx int) []string {
+// renderHunkLines renders a single hunk's styled output lines and parallel line info.
+func (m *DiffViewerModel) renderHunkLines(hunkIdx int) ([]string, []lineInfo) {
 	hunk := m.hunks[hunkIdx]
 	selected := m.selectedHunks[hunkIdx]
 	isFocused := hunkIdx == m.focusedHunkIdx
@@ -1157,17 +1263,30 @@ func (m *DiffViewerModel) renderHunkLines(hunkIdx int) []string {
 	hasGHComments := len(m.ghCommentThreads) > 0
 	hasPendingComments := len(m.pendingCommentsByFileLine) > 0
 	lines := make([]string, 0, len(hunk.Lines))
+	infos := make([]lineInfo, 0, len(hunk.Lines))
+
+	// Base offset of this hunk in cachedLines (for cursor comparison).
+	hunkBase := -1
+	if hunkIdx < len(m.hunkOffsets) {
+		hunkBase = m.hunkOffsets[hunkIdx]
+	}
 
 	// Track new-side line number for inline comment matching
 	newLine := 0
 
 	for lineIdx, line := range hunk.Lines {
+		// Compute absolute position in cachedLines for cursor check
+		isCursorLine := hunkBase >= 0 && hunkBase+len(lines) == m.cursorLine
+
 		if line == "" {
-			if isFocused {
+			if isCursorLine {
+				lines = append(lines, diffCursorGutterStyle.Render("▸"))
+			} else if isFocused {
 				lines = append(lines, diffFocusGutterStyle.Render("▎"))
 			} else {
 				lines = append(lines, "")
 			}
+			infos = append(infos, lineInfo{hunkIdx: hunkIdx, filename: hunk.Filename})
 			continue
 		}
 
@@ -1185,9 +1304,13 @@ func (m *DiffViewerModel) renderHunkLines(hunkIdx int) []string {
 			// Context line — advances new-side counter
 		}
 
-		// Gutter marker: ▎ for focused hunk, space for others
+		commentable := newLine > 0 && !strings.HasPrefix(line, "-") && !strings.HasPrefix(line, `\`) && !strings.HasPrefix(line, "@@")
+
+		// Gutter marker: ▸ for cursor, ▎ for focused hunk, space for others
 		var gutter string
-		if isFocused {
+		if isCursorLine {
+			gutter = diffCursorGutterStyle.Render("▸") + " "
+		} else if isFocused {
 			gutter = diffFocusGutterStyle.Render("▎") + " "
 		} else {
 			gutter = "  "
@@ -1225,6 +1348,9 @@ func (m *DiffViewerModel) renderHunkLines(hunkIdx int) []string {
 		if selected {
 			style = style.Background(diffSelectedBg)
 		}
+		if isCursorLine {
+			style = style.Background(diffCursorBg)
+		}
 
 		// Apply search highlights if matches exist on this line
 		if lineMatches := m.getLineSearchMatches(hunkIdx, lineIdx); len(lineMatches) > 0 {
@@ -1240,9 +1366,16 @@ func (m *DiffViewerModel) renderHunkLines(hunkIdx int) []string {
 		} else {
 			lines = append(lines, gutter+style.Render(displayLine))
 		}
+		infos = append(infos, lineInfo{
+			hunkIdx:       hunkIdx,
+			filename:      hunk.Filename,
+			newLineNum:    newLine,
+			isCommentable: commentable,
+			isDiffLine:    true,
+		})
 
 		// Inject inline comments after matching lines (+ or context lines)
-		if newLine > 0 && !strings.HasPrefix(line, "-") && !strings.HasPrefix(line, `\`) && !strings.HasPrefix(line, "@@") {
+		if commentable {
 			key := fmt.Sprintf("%s:%d", hunk.Filename, newLine)
 
 			// AI inline comments
@@ -1252,6 +1385,7 @@ func (m *DiffViewerModel) renderHunkLines(hunkIdx int) []string {
 						prefix := aiCommentPrefixStyle.Render("  💬 ")
 						body := aiCommentStyle.Render(c.Body)
 						lines = append(lines, prefix+body)
+						infos = append(infos, lineInfo{hunkIdx: hunkIdx, filename: hunk.Filename})
 					}
 				}
 			}
@@ -1260,7 +1394,11 @@ func (m *DiffViewerModel) renderHunkLines(hunkIdx int) []string {
 			if hasGHComments {
 				if threads, ok := m.ghCommentThreads[key]; ok {
 					for _, t := range threads {
-						lines = append(lines, m.renderGHCommentThread(t)...)
+						threadLines := m.renderGHCommentThread(t)
+						for range threadLines {
+							infos = append(infos, lineInfo{hunkIdx: hunkIdx, filename: hunk.Filename})
+						}
+						lines = append(lines, threadLines...)
 					}
 				}
 			}
@@ -1272,6 +1410,7 @@ func (m *DiffViewerModel) renderHunkLines(hunkIdx int) []string {
 						prefix := pendingCommentPrefixStyle.Render("  📝 ")
 						body := pendingCommentStyle.Render(c.Body)
 						lines = append(lines, prefix+body)
+						infos = append(infos, lineInfo{hunkIdx: hunkIdx, filename: hunk.Filename})
 					}
 				}
 			}
@@ -1283,7 +1422,7 @@ func (m *DiffViewerModel) renderHunkLines(hunkIdx int) []string {
 		}
 	}
 
-	return lines
+	return lines, infos
 }
 
 // renderGHCommentThread renders a single GitHub comment thread (root + replies).
@@ -1321,9 +1460,12 @@ func (m *DiffViewerModel) rerenderHunkInCache(hunkIdx int) {
 		return
 	}
 	r := m.hunkLineRanges[hunkIdx]
-	newLines := m.renderHunkLines(hunkIdx)
+	newLines, newInfos := m.renderHunkLines(hunkIdx)
 	for i, line := range newLines {
 		m.cachedLines[r[0]+i] = line
+		if r[0]+i < len(m.cachedLineInfo) {
+			m.cachedLineInfo[r[0]+i] = newInfos[i]
+		}
 	}
 }
 
@@ -1381,6 +1523,153 @@ func (m *DiffViewerModel) scrollToFocusedHunk() {
 		target = 0
 	}
 	m.viewport.SetYOffset(target)
+}
+
+// moveCursor moves the line cursor by delta positions, skipping non-diff lines.
+// It also updates focusedHunkIdx and marks affected hunks dirty.
+func (m *DiffViewerModel) moveCursor(delta int) {
+	if len(m.cachedLineInfo) == 0 {
+		return
+	}
+
+	oldHunk := -1
+	if m.cursorLine >= 0 && m.cursorLine < len(m.cachedLineInfo) {
+		oldHunk = m.cachedLineInfo[m.cursorLine].hunkIdx
+	}
+
+	// Step in the given direction, skipping non-diff lines
+	newPos := m.cursorLine
+	for {
+		newPos += delta
+		if newPos < 0 || newPos >= len(m.cachedLineInfo) {
+			// Hit boundary — stay put
+			return
+		}
+		if m.cachedLineInfo[newPos].isDiffLine {
+			break
+		}
+	}
+
+	m.cursorLine = newPos
+
+	// Sync focused hunk to cursor
+	newHunk := m.cachedLineInfo[m.cursorLine].hunkIdx
+	if newHunk >= 0 {
+		m.focusedHunkIdx = newHunk
+	}
+
+	// Mark affected hunks dirty so they re-render with updated cursor indicator
+	if oldHunk >= 0 {
+		m.markHunkDirty(oldHunk)
+	}
+	if newHunk >= 0 {
+		m.markHunkDirty(newHunk)
+	}
+
+	m.ensureCursorVisible()
+}
+
+// ensureCursorVisible scrolls the viewport so the cursor line is on-screen.
+func (m *DiffViewerModel) ensureCursorVisible() {
+	if m.cursorLine < m.viewport.YOffset {
+		m.viewport.SetYOffset(m.cursorLine)
+	} else if m.cursorLine >= m.viewport.YOffset+m.viewport.Height {
+		m.viewport.SetYOffset(m.cursorLine - m.viewport.Height + 1)
+	}
+}
+
+// clampCursor ensures cursorLine is within bounds and on a diff line.
+// Called after cache rebuilds when absolute positions may have shifted.
+func (m *DiffViewerModel) clampCursor() {
+	if len(m.cachedLineInfo) == 0 {
+		m.cursorLine = 0
+		return
+	}
+	if m.cursorLine >= len(m.cachedLineInfo) {
+		m.cursorLine = len(m.cachedLineInfo) - 1
+	}
+	if m.cursorLine < 0 {
+		m.cursorLine = 0
+	}
+	// If not on a diff line, find the nearest one forward then backward
+	if !m.cachedLineInfo[m.cursorLine].isDiffLine {
+		m.snapCursorToNearestDiffLine()
+	}
+}
+
+// snapCursorToNearestDiffLine moves the cursor to the nearest diff line,
+// searching forward first, then backward.
+func (m *DiffViewerModel) snapCursorToNearestDiffLine() {
+	// Search forward
+	for i := m.cursorLine; i < len(m.cachedLineInfo); i++ {
+		if m.cachedLineInfo[i].isDiffLine {
+			m.cursorLine = i
+			return
+		}
+	}
+	// Search backward
+	for i := m.cursorLine - 1; i >= 0; i-- {
+		if m.cachedLineInfo[i].isDiffLine {
+			m.cursorLine = i
+			return
+		}
+	}
+}
+
+// syncCursorToScroll snaps the cursor to a visible diff line after viewport jumps.
+func (m *DiffViewerModel) syncCursorToScroll() {
+	if len(m.cachedLineInfo) == 0 {
+		return
+	}
+
+	oldHunk := -1
+	if m.cursorLine >= 0 && m.cursorLine < len(m.cachedLineInfo) {
+		oldHunk = m.cachedLineInfo[m.cursorLine].hunkIdx
+	}
+
+	// Place cursor at first visible diff line
+	for i := m.viewport.YOffset; i < m.viewport.YOffset+m.viewport.Height && i < len(m.cachedLineInfo); i++ {
+		if m.cachedLineInfo[i].isDiffLine {
+			m.cursorLine = i
+			break
+		}
+	}
+
+	// Mark old and new hunks dirty
+	if oldHunk >= 0 {
+		m.markHunkDirty(oldHunk)
+	}
+	if m.cursorLine >= 0 && m.cursorLine < len(m.cachedLineInfo) {
+		newHunk := m.cachedLineInfo[m.cursorLine].hunkIdx
+		if newHunk >= 0 {
+			m.markHunkDirty(newHunk)
+		}
+	}
+}
+
+// syncCursorToFocusedHunk moves the cursor to the first diff line of the focused hunk.
+func (m *DiffViewerModel) syncCursorToFocusedHunk() {
+	if m.focusedHunkIdx < 0 || m.focusedHunkIdx >= len(m.hunkOffsets) || len(m.cachedLineInfo) == 0 {
+		return
+	}
+
+	oldHunk := -1
+	if m.cursorLine >= 0 && m.cursorLine < len(m.cachedLineInfo) {
+		oldHunk = m.cachedLineInfo[m.cursorLine].hunkIdx
+	}
+
+	start := m.hunkOffsets[m.focusedHunkIdx]
+	for i := start; i < len(m.cachedLineInfo); i++ {
+		if m.cachedLineInfo[i].isDiffLine && m.cachedLineInfo[i].hunkIdx == m.focusedHunkIdx {
+			m.cursorLine = i
+			break
+		}
+	}
+
+	if oldHunk >= 0 {
+		m.markHunkDirty(oldHunk)
+	}
+	m.markHunkDirty(m.focusedHunkIdx)
 }
 
 // ciStatusIconColor returns the icon and lipgloss color for an overall CI status.

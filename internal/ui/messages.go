@@ -100,6 +100,23 @@ type ReviewsLoadedMsg struct {
 	Err      error
 }
 
+// -- CI re-run --
+
+// CIRerunRequestMsg is emitted when the user requests a CI re-run (x key or :rerun ci).
+type CIRerunRequestMsg struct{}
+
+// CIRerunDoneMsg is sent when CI workflow re-run succeeds.
+type CIRerunDoneMsg struct {
+	PRNumber int
+	Count    int // number of workflows re-run
+}
+
+// CIRerunErrMsg is sent when CI workflow re-run fails.
+type CIRerunErrMsg struct {
+	PRNumber int
+	Err      error
+}
+
 // -- Claude analysis --
 
 // AnalysisCompleteMsg is sent when Claude analysis finishes successfully.

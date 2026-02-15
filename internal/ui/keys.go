@@ -143,6 +143,7 @@ type DiffViewerKeyMap struct {
 	SelectFileHunks       key.Binding
 	ClearSelection        key.Binding
 	Search                key.Binding
+	RerunCI               key.Binding
 }
 
 var DiffViewerKeys = DiffViewerKeyMap{
@@ -206,6 +207,10 @@ var DiffViewerKeys = DiffViewerKeyMap{
 	Search: key.NewBinding(
 		key.WithKeys("/"),
 		key.WithHelp("/", "search"),
+	),
+	RerunCI: key.NewBinding(
+		key.WithKeys("x"),
+		key.WithHelp("x", "re-run failed CI"),
 	),
 }
 

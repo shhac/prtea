@@ -36,6 +36,7 @@ var commandRegistry = []Command{
 	{Name: "clear selection", Aliases: []string{"cs"}, Description: "Clear hunk selection"},
 	{Name: "review", Aliases: []string{"rev"}, Description: "Generate AI review"},
 	{Name: "approve", Aliases: []string{"ap"}, Description: "Quick-approve PR"},
+	{Name: "rerun ci", Aliases: []string{"rerun"}, Description: "Re-run failed CI checks"},
 	{Name: "refresh", Aliases: []string{"ref"}, Description: "Refresh current view"},
 	{Name: "diff", Aliases: []string{"d"}, Description: "Focus diff panel"},
 	{Name: "chat", Aliases: []string{"ch"}, Description: "Focus chat panel"},

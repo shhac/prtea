@@ -64,11 +64,12 @@ type PRFile struct {
 
 // CICheck represents an individual CI check run.
 type CICheck struct {
-	ID         int64
-	Name       string
-	Status     string // "queued", "in_progress", "completed"
-	Conclusion string // "success", "failure", "neutral", "cancelled", "skipped", "timed_out", "action_required"
-	HTMLURL    string
+	ID            int64
+	Name          string
+	Status        string // "queued", "in_progress", "completed"
+	Conclusion    string // "success", "failure", "neutral", "cancelled", "skipped", "timed_out", "action_required"
+	HTMLURL       string
+	WorkflowRunID int64 // extracted from detailsUrl for GitHub Actions checks; 0 if not available
 }
 
 // CIStatus is the aggregate CI status for a commit.

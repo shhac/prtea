@@ -223,21 +223,24 @@ func TestRenderHunkLines_FocusAndSelection(t *testing.T) {
 
 	// Unfocused, unselected
 	m.focusedHunkIdx = 99
-	lines := m.renderHunkLines(0)
+	lines, infos := m.renderHunkLines(0)
 	if len(lines) != 3 {
 		t.Fatalf("got %d lines, want 3", len(lines))
+	}
+	if len(infos) != 3 {
+		t.Fatalf("got %d infos, want 3", len(infos))
 	}
 
 	// Focused hunk — should have gutter marker
 	m.focusedHunkIdx = 0
-	lines = m.renderHunkLines(0)
+	lines, _ = m.renderHunkLines(0)
 	if len(lines) != 3 {
 		t.Fatalf("got %d lines, want 3", len(lines))
 	}
 
 	// Selected hunk
 	m.selectedHunks = map[int]bool{0: true}
-	lines = m.renderHunkLines(0)
+	lines, _ = m.renderHunkLines(0)
 	if len(lines) != 3 {
 		t.Fatalf("got %d lines, want 3", len(lines))
 	}
@@ -359,5 +362,120 @@ func TestCacheInvalidation_SetSize(t *testing.T) {
 	// After SetSize+refreshContent, cache should be rebuilt (not nil)
 	if m.cachedLines == nil {
 		t.Fatal("cachedLines should be rebuilt after SetSize")
+	}
+}
+
+func TestCachedLineInfo_ParallelToCachedLines(t *testing.T) {
+	m := newTestDiffViewer(80, 24)
+	m.files = []github.PRFile{
+		{
+			Filename: "a.go", Status: "modified", Additions: 1, Deletions: 1,
+			Patch: "@@ -1,3 +1,3 @@\n-old\n+new\n ctx",
+		},
+	}
+	m.parseAllHunks()
+	m.buildCachedLines()
+
+	if len(m.cachedLineInfo) != len(m.cachedLines) {
+		t.Fatalf("cachedLineInfo len=%d != cachedLines len=%d", len(m.cachedLineInfo), len(m.cachedLines))
+	}
+
+	// Find hunk lines in the info — should have at least the hunk's diff lines
+	var diffLines int
+	for _, info := range m.cachedLineInfo {
+		if info.isDiffLine {
+			diffLines++
+		}
+	}
+	// Hunk has 4 lines: @@, -, +, context
+	if diffLines != 4 {
+		t.Errorf("expected 4 diff lines, got %d", diffLines)
+	}
+}
+
+func TestCachedLineInfo_CommentableLines(t *testing.T) {
+	m := newTestDiffViewer(80, 24)
+	m.files = []github.PRFile{
+		{
+			Filename: "a.go", Status: "modified", Additions: 1, Deletions: 1,
+			Patch: "@@ -1,3 +1,3 @@\n-old\n+new\n ctx",
+		},
+	}
+	m.parseAllHunks()
+	m.buildCachedLines()
+
+	// Count commentable lines — should be + and context lines (2 out of 4)
+	var commentable int
+	for _, info := range m.cachedLineInfo {
+		if info.isCommentable {
+			commentable++
+		}
+	}
+	if commentable != 2 {
+		t.Errorf("expected 2 commentable lines (+new, ctx), got %d", commentable)
+	}
+}
+
+func TestMoveCursor_SkipsNonDiffLines(t *testing.T) {
+	m := newTestDiffViewer(80, 24)
+	m.files = []github.PRFile{
+		{
+			Filename: "a.go", Status: "modified", Additions: 1, Deletions: 1,
+			Patch: "@@ -1,3 +1,3 @@\n-old\n+new\n ctx",
+		},
+	}
+	m.parseAllHunks()
+	m.buildCachedLines()
+
+	// Cursor should start on a diff line
+	if !m.cachedLineInfo[m.cursorLine].isDiffLine {
+		t.Error("cursor should start on a diff line")
+	}
+
+	startLine := m.cursorLine
+
+	// Move down repeatedly and verify cursor only lands on diff lines
+	for i := 0; i < 10; i++ {
+		m.moveCursor(1)
+		if m.cursorLine < len(m.cachedLineInfo) && !m.cachedLineInfo[m.cursorLine].isDiffLine {
+			t.Errorf("cursor at %d is not on a diff line after moving down", m.cursorLine)
+		}
+	}
+
+	// Move back up
+	for i := 0; i < 20; i++ {
+		m.moveCursor(-1)
+	}
+	// Should be back at or near the start
+	if m.cursorLine > startLine {
+		t.Errorf("cursor should be at or before start after moving up, got %d > %d", m.cursorLine, startLine)
+	}
+}
+
+func TestCommentTargetFromCursor(t *testing.T) {
+	m := newTestDiffViewer(80, 24)
+	m.files = []github.PRFile{
+		{
+			Filename: "a.go", Status: "modified", Additions: 2, Deletions: 0,
+			Patch: "@@ -1,2 +1,4 @@\n ctx1\n+added1\n+added2\n ctx2",
+		},
+	}
+	m.parseAllHunks()
+	m.buildCachedLines()
+
+	// Move cursor to a commentable line and check target
+	for i := 0; i < len(m.cachedLineInfo); i++ {
+		if m.cachedLineInfo[i].isCommentable && m.cachedLineInfo[i].newLineNum > 0 {
+			m.cursorLine = i
+			break
+		}
+	}
+
+	lineNum, filename := m.commentTargetFromCursor()
+	if filename != "a.go" {
+		t.Errorf("expected filename a.go, got %q", filename)
+	}
+	if lineNum == 0 {
+		t.Error("expected non-zero line number from commentTargetFromCursor")
 	}
 }

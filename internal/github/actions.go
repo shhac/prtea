@@ -60,6 +60,20 @@ func (c *Client) CommentReviewPR(ctx context.Context, owner, repo string, number
 	return nil
 }
 
+// RerunWorkflow re-runs a GitHub Actions workflow run.
+// If failedOnly is true, only failed jobs within the run are re-run.
+func (c *Client) RerunWorkflow(ctx context.Context, owner, repo string, runID int64, failedOnly bool) error {
+	repoFlag := owner + "/" + repo
+	args := []string{"run", "rerun", fmt.Sprintf("%d", runID), "-R", repoFlag}
+	if failedOnly {
+		args = append(args, "--failed")
+	}
+	if _, err := c.ghExec(ctx, args...); err != nil {
+		return fmt.Errorf("failed to re-run workflow %d: %w", runID, err)
+	}
+	return nil
+}
+
 // ReviewCommentPayload is a single inline comment in a review submission.
 type ReviewCommentPayload struct {
 	Path string `json:"path"`

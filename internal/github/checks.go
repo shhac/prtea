@@ -3,6 +3,8 @@ package github
 import (
 	"context"
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -38,10 +40,11 @@ func (c *Client) GetCIStatus(ctx context.Context, owner, repo string, ref string
 	checks := make([]CICheck, 0, len(data.StatusCheckRollup))
 	for _, cr := range data.StatusCheckRollup {
 		checks = append(checks, CICheck{
-			Name:       cr.Name,
-			Status:     normalizeStatus(cr.Status),
-			Conclusion: normalizeConclusionStr(cr.Conclusion),
-			HTMLURL:    cr.DetailsURL,
+			Name:          cr.Name,
+			Status:        normalizeStatus(cr.Status),
+			Conclusion:    normalizeConclusionStr(cr.Conclusion),
+			HTMLURL:       cr.DetailsURL,
+			WorkflowRunID: parseWorkflowRunID(cr.DetailsURL),
 		})
 	}
 
@@ -71,6 +74,42 @@ func normalizeStatus(s string) string {
 // normalizeConclusionStr converts gh CLI conclusion values to our lowercase convention.
 func normalizeConclusionStr(s string) string {
 	return strings.ToLower(s)
+}
+
+// actionsRunIDRe matches GitHub Actions URLs like /actions/runs/12345 or /actions/runs/12345/job/67890
+var actionsRunIDRe = regexp.MustCompile(`/actions/runs/(\d+)`)
+
+// parseWorkflowRunID extracts the GitHub Actions workflow run ID from a detailsUrl.
+// Returns 0 if the URL doesn't match the GitHub Actions pattern (e.g. external CI).
+func parseWorkflowRunID(url string) int64 {
+	m := actionsRunIDRe.FindStringSubmatch(url)
+	if len(m) < 2 {
+		return 0
+	}
+	id, err := strconv.ParseInt(m[1], 10, 64)
+	if err != nil {
+		return 0
+	}
+	return id
+}
+
+// FailedRunIDs returns deduplicated workflow run IDs for failed checks.
+// Only checks backed by GitHub Actions (WorkflowRunID > 0) are included.
+func (s *CIStatus) FailedRunIDs() []int64 {
+	if s == nil {
+		return nil
+	}
+	seen := make(map[int64]bool)
+	var ids []int64
+	for _, c := range s.Checks {
+		if c.Status == "completed" && c.Conclusion == "failure" && c.WorkflowRunID > 0 {
+			if !seen[c.WorkflowRunID] {
+				seen[c.WorkflowRunID] = true
+				ids = append(ids, c.WorkflowRunID)
+			}
+		}
+	}
+	return ids
 }
 
 // computeOverallStatus determines the aggregate CI status from individual checks.
