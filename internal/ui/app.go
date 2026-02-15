@@ -123,6 +123,7 @@ func NewApp() App {
 
 	chatPanel := NewChatPanelModel()
 	chatPanel.SetStreamCheckpoint(time.Duration(cfg.StreamCheckpointMs) * time.Millisecond)
+	chatPanel.SetDefaultReviewAction(cfg.DefaultReviewAction)
 
 	return App{
 		prList:            NewPRListModel(defaultTab),
@@ -257,6 +258,9 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if !wasEnabled && m.pollEnabled && m.pollInterval > 0 && m.prList.state == stateLoaded {
 				return m, pollTickCmd(m.pollInterval)
 			}
+			// Propagate display/review settings
+			m.chatPanel.SetStreamCheckpoint(time.Duration(cfg.StreamCheckpointMs) * time.Millisecond)
+			m.chatPanel.SetDefaultReviewAction(cfg.DefaultReviewAction)
 		}
 		return m, nil
 

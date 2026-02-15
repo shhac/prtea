@@ -76,11 +76,12 @@ type ChatPanelModel struct {
 	commentPosting  bool // true while posting a comment
 
 	// Review tab state
-	reviewTextArea   textarea.Model
-	reviewAction     ReviewAction // the confirmed selection (what gets submitted)
-	reviewRadioFocus int          // which radio option has focus (0=Approve, 1=Comment, 2=RequestChanges)
-	reviewFocus      ReviewFocus
-	reviewSubmitting bool
+	reviewTextArea      textarea.Model
+	reviewAction        ReviewAction // the confirmed selection (what gets submitted)
+	reviewRadioFocus    int          // which radio option has focus (0=Approve, 1=Comment, 2=RequestChanges)
+	reviewFocus         ReviewFocus
+	reviewSubmitting    bool
+	defaultReviewAction ReviewAction // configured default from settings
 
 	// AI review state
 	aiReviewResult   *claude.ReviewAnalysis
@@ -127,6 +128,21 @@ func NewChatPanelModel() ChatPanelModel {
 func (m *ChatPanelModel) SetStreamCheckpoint(d time.Duration) {
 	m.chatStream.CheckpointInterval = d
 	m.analysisStream.CheckpointInterval = d
+}
+
+// SetDefaultReviewAction sets the default review action from config.
+// This is used on initialization and when resetting the review tab.
+func (m *ChatPanelModel) SetDefaultReviewAction(action string) {
+	switch action {
+	case "approve":
+		m.defaultReviewAction = ReviewApprove
+	case "request_changes":
+		m.defaultReviewAction = ReviewRequestChanges
+	default:
+		m.defaultReviewAction = ReviewComment
+	}
+	m.reviewAction = m.defaultReviewAction
+	m.reviewRadioFocus = int(m.defaultReviewAction)
 }
 
 func (m ChatPanelModel) Update(msg tea.Msg) (ChatPanelModel, tea.Cmd) {
@@ -424,8 +440,8 @@ func (m *ChatPanelModel) ClearComments() {
 // ClearReview resets review state for a new PR.
 func (m *ChatPanelModel) ClearReview() {
 	m.reviewTextArea.Reset()
-	m.reviewAction = ReviewComment
-	m.reviewRadioFocus = 1 // matches ReviewComment default
+	m.reviewAction = m.defaultReviewAction
+	m.reviewRadioFocus = int(m.defaultReviewAction)
 	m.reviewFocus = ReviewFocusTextArea
 	m.reviewSubmitting = false
 	m.reviewTextArea.Blur()
@@ -490,8 +506,8 @@ func (m *ChatPanelModel) SetReviewSubmitted(err error) {
 	m.reviewSubmitting = false
 	if err == nil {
 		m.reviewTextArea.Reset()
-		m.reviewAction = ReviewComment
-		m.reviewRadioFocus = 1 // matches ReviewComment default
+		m.reviewAction = m.defaultReviewAction
+		m.reviewRadioFocus = int(m.defaultReviewAction)
 		m.reviewFocus = ReviewFocusTextArea
 		m.reviewTextArea.Blur()
 		m.aiReviewResult = nil
