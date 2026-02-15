@@ -361,16 +361,6 @@ func (m DiffViewerModel) Update(msg tea.Msg) (DiffViewerModel, tea.Cmd) {
 			m.refreshContent()
 			return m, cmd
 		case key.Matches(msg, DiffViewerKeys.Up):
-			if m.activeTab == TabDiff && len(m.hunks) > 0 && m.focusedHunkIdx > 0 {
-				prevOffset := m.hunkOffsets[m.focusedHunkIdx-1]
-				// If scrolling up 1 line would make previous hunk's header visible
-				if prevOffset >= m.viewport.YOffset-1 {
-					m.focusedHunkIdx--
-					m.scrollToFocusedHunk()
-					m.refreshContent()
-					return m, nil
-				}
-			}
 			var cmd tea.Cmd
 			oldFocus := m.focusedHunkIdx
 			m.viewport, cmd = m.viewport.Update(msg)
@@ -379,6 +369,14 @@ func (m DiffViewerModel) Update(msg tea.Msg) (DiffViewerModel, tea.Cmd) {
 				// When scrolling up, don't allow focus to jump forward
 				if m.focusedHunkIdx > oldFocus {
 					m.focusedHunkIdx = oldFocus
+				}
+				// If natural scroll didn't shift focus backward but previous hunk
+				// header is now visible, force focus shift without viewport jump
+				if m.focusedHunkIdx == oldFocus && oldFocus > 0 {
+					prevOffset := m.hunkOffsets[oldFocus-1]
+					if prevOffset >= m.viewport.YOffset {
+						m.focusedHunkIdx = oldFocus - 1
+					}
 				}
 			}
 			m.refreshContent()
@@ -779,6 +777,11 @@ func (m *DiffViewerModel) refreshContent() {
 				m.rerenderHunkInCache(idx)
 			}
 			m.dirtyHunks = nil
+			// If a rerender invalidated the cache (e.g. inline comments changed
+			// line counts), do the full rebuild now.
+			if m.cachedLines == nil {
+				m.buildCachedLines()
+			}
 		}
 		m.viewport.SetContent(strings.Join(m.cachedLines, "\n"))
 		return
