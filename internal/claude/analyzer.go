@@ -32,6 +32,16 @@ func NewAnalyzer(claudePath string, timeout time.Duration, promptsDir string, an
 	}
 }
 
+// SetTimeout updates the command timeout for future analysis requests.
+func (a *Analyzer) SetTimeout(d time.Duration) {
+	a.timeout = d
+}
+
+// SetAnalysisMaxTurns updates the max agentic turns for future analysis requests.
+func (a *Analyzer) SetAnalysisMaxTurns(n int) {
+	a.analysisMaxTurns = n
+}
+
 // AnalyzeInput contains the parameters for a PR analysis.
 type AnalyzeInput struct {
 	RepoPath   string

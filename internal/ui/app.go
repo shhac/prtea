@@ -261,6 +261,23 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Propagate display/review settings
 			m.chatPanel.SetStreamCheckpoint(time.Duration(cfg.StreamCheckpointMs) * time.Millisecond)
 			m.chatPanel.UpdateDefaultReviewAction(cfg.DefaultReviewAction)
+			// Propagate layout settings
+			m.collapseThreshold = cfg.CollapseThreshold
+			// Propagate PR fetch limit
+			if gc, ok := m.ghClient.(*github.Client); ok {
+				gc.FetchLimit = cfg.PRFetchLimit
+			}
+			// Propagate AI tuning settings
+			if m.analyzer != nil {
+				m.analyzer.SetTimeout(cfg.ClaudeTimeoutDuration())
+				m.analyzer.SetAnalysisMaxTurns(cfg.AnalysisMaxTurns)
+			}
+			if m.chatService != nil {
+				m.chatService.SetTimeout(cfg.ClaudeTimeoutDuration())
+				m.chatService.SetMaxPromptTokens(cfg.MaxPromptTokens)
+				m.chatService.SetMaxHistoryMessages(cfg.MaxChatHistory)
+				m.chatService.SetMaxTurns(cfg.ChatMaxTurns)
+			}
 		}
 		return m, nil
 

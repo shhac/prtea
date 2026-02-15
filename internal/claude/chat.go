@@ -371,6 +371,26 @@ func extractResultText(event *StreamEvent) string {
 	}
 }
 
+// SetTimeout updates the command timeout for future chat requests.
+func (cs *ChatService) SetTimeout(d time.Duration) {
+	cs.timeout = d
+}
+
+// SetMaxPromptTokens updates the max prompt token budget for future chat requests.
+func (cs *ChatService) SetMaxPromptTokens(n int) {
+	cs.maxPromptTokens = n
+}
+
+// SetMaxHistoryMessages updates the max history messages for future chat requests.
+func (cs *ChatService) SetMaxHistoryMessages(n int) {
+	cs.maxHistoryMessages = n
+}
+
+// SetMaxTurns updates the max agentic turns for future chat requests.
+func (cs *ChatService) SetMaxTurns(n int) {
+	cs.maxTurns = n
+}
+
 func sessionKey(owner, repo string, prNumber int) string {
 	return fmt.Sprintf("%s_%s_%d", owner, repo, prNumber)
 }
