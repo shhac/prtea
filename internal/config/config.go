@@ -28,7 +28,8 @@ type Config struct {
 	MaxPromptTokens   int `json:"maxPromptTokens"`   // max tokens for prompts
 	ChatMaxTurns      int `json:"chatMaxTurns"`      // max agentic turns for chat
 	AnalysisMaxTurns  int `json:"analysisMaxTurns"`  // max turns for analysis
-	StreamCheckpointMs int `json:"streamCheckpointMs"` // stream rendering checkpoint interval in ms
+	StreamCheckpointMs  int    `json:"streamCheckpointMs"`  // stream rendering checkpoint interval in ms
+	DefaultReviewAction string `json:"defaultReviewAction"` // "approve", "comment", or "request_changes"
 }
 
 // Defaults
