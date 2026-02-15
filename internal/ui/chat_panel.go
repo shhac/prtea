@@ -130,9 +130,22 @@ func (m *ChatPanelModel) SetStreamCheckpoint(d time.Duration) {
 	m.analysisStream.CheckpointInterval = d
 }
 
-// SetDefaultReviewAction sets the default review action from config.
-// This is used on initialization and when resetting the review tab.
+// SetDefaultReviewAction sets the default review action from config and
+// applies it to the current review state. Use at initialization time.
 func (m *ChatPanelModel) SetDefaultReviewAction(action string) {
+	m.parseDefaultReviewAction(action)
+	m.reviewAction = m.defaultReviewAction
+	m.reviewRadioFocus = int(m.defaultReviewAction)
+}
+
+// UpdateDefaultReviewAction updates the stored default without touching the
+// current review state. Use when config changes mid-session so an in-progress
+// review is not disrupted.
+func (m *ChatPanelModel) UpdateDefaultReviewAction(action string) {
+	m.parseDefaultReviewAction(action)
+}
+
+func (m *ChatPanelModel) parseDefaultReviewAction(action string) {
 	switch action {
 	case "approve":
 		m.defaultReviewAction = ReviewApprove
@@ -141,8 +154,6 @@ func (m *ChatPanelModel) SetDefaultReviewAction(action string) {
 	default:
 		m.defaultReviewAction = ReviewComment
 	}
-	m.reviewAction = m.defaultReviewAction
-	m.reviewRadioFocus = int(m.defaultReviewAction)
 }
 
 func (m ChatPanelModel) Update(msg tea.Msg) (ChatPanelModel, tea.Cmd) {

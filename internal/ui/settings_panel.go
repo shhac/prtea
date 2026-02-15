@@ -62,7 +62,7 @@ var settingsSchema = []settingItem{
 	{label: "AI", kind: settingSection},
 	{label: "Claude Timeout", desc: "Seconds before analysis times out", kind: settingNumber, min: 30, max: 600, step: 30, unitSec: true},
 	{label: "Chat History", desc: "Max messages kept in chat context", kind: settingNumber, min: 4, max: 64, step: 4},
-	{label: "Prompt Token Limit", desc: "Max tokens for prompt context (×1000)", kind: settingNumber, min: 10000, max: 500000, step: 10000},
+	{label: "Prompt Token Limit", desc: "Max tokens for prompt context", kind: settingNumber, min: 10000, max: 500000, step: 10000},
 	{label: "Chat Max Turns", desc: "Max agentic turns per chat message", kind: settingNumber, min: 1, max: 10, step: 1},
 	{label: "Analysis Max Turns", desc: "Max turns for full PR analysis", kind: settingNumber, min: 5, max: 100, step: 5},
 

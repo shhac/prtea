@@ -260,7 +260,7 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			// Propagate display/review settings
 			m.chatPanel.SetStreamCheckpoint(time.Duration(cfg.StreamCheckpointMs) * time.Millisecond)
-			m.chatPanel.SetDefaultReviewAction(cfg.DefaultReviewAction)
+			m.chatPanel.UpdateDefaultReviewAction(cfg.DefaultReviewAction)
 		}
 		return m, nil
 
