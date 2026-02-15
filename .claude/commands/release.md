@@ -24,7 +24,7 @@ You are performing a release of the `prtea` CLI. Follow these steps exactly.
 ### Step 1: Version bump, tag, and push
 
 ```bash
-sh scripts/release.sh <bump-type>
+./scripts/release.sh <bump-type>
 ```
 
 The release script reads the latest git tag, bumps the version, creates a new tag, and pushes it. Capture the new version number from the output for subsequent steps. Verify the tag was pushed successfully before continuing.
@@ -35,7 +35,7 @@ Clean up any leftover artifacts from previous builds, then build:
 
 ```bash
 rm -f release/prtea-* release/checksums-sha256.txt
-sh scripts/build-release-assets.sh
+./scripts/build-release-assets.sh
 ```
 
 This creates binaries and tarballs in `release/` for all platforms (darwin-arm64, darwin-amd64, linux-arm64, linux-amd64) plus `checksums-sha256.txt`. Verify all 4 tarballs and the checksum file exist in `release/` before continuing.
