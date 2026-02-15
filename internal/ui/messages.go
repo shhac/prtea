@@ -254,6 +254,14 @@ type CommandNotFoundMsg struct {
 	Input string
 }
 
+// -- Settings --
+
+// ConfigChangedMsg is sent when the user changes settings in the settings panel.
+type ConfigChangedMsg struct{}
+
+// SettingsClosedMsg is sent when the settings overlay is dismissed.
+type SettingsClosedMsg struct{}
+
 // -- Inline comment authoring --
 
 // InlineCommentAddMsg is emitted by the diff viewer when the user saves an inline comment.

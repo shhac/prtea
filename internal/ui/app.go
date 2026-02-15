@@ -25,8 +25,9 @@ type App struct {
 	statusBar  StatusBarModel
 
 	// Overlays
-	helpOverlay HelpOverlayModel
-	commandMode CommandModeModel
+	helpOverlay   HelpOverlayModel
+	commandMode   CommandModeModel
+	settingsPanel SettingsModel
 
 	// GitHub client (nil until GHClientReadyMsg)
 	ghClient GitHubService
@@ -94,6 +95,7 @@ func NewApp() App {
 		statusBar:     NewStatusBarModel(),
 		helpOverlay:   NewHelpOverlayModel(),
 		commandMode:   NewCommandModeModel(),
+		settingsPanel: NewSettingsModel(),
 		focused:       PanelLeft,
 		panelVisible:  [3]bool{true, true, true},
 		mode:          ModeNavigation,
@@ -151,6 +153,19 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case HelpClosedMsg:
 		m.mode = ModeNavigation
 		m.statusBar.SetState(m.focused, m.mode)
+		return m, nil
+
+	case SettingsClosedMsg:
+		m.mode = ModeNavigation
+		m.statusBar.SetState(m.focused, m.mode)
+		return m, nil
+
+	case ConfigChangedMsg:
+		if m.settingsPanel.IsDirty() {
+			cfg := m.settingsPanel.Config()
+			m.appConfig = cfg
+			_ = config.Save(cfg)
+		}
 		return m, nil
 
 	case CommandExecuteMsg:
@@ -443,6 +458,11 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		// Overlay mode captures all keys
 		if m.mode == ModeOverlay {
+			if m.settingsPanel.IsVisible() {
+				var cmd tea.Cmd
+				m.settingsPanel, cmd = m.settingsPanel.Update(msg)
+				return m, cmd
+			}
 			var cmd tea.Cmd
 			m.helpOverlay, cmd = m.helpOverlay.Update(msg)
 			return m, cmd
@@ -611,6 +631,11 @@ func (m App) View() string {
 	// Render help overlay on top if active
 	if m.helpOverlay.IsVisible() {
 		return m.helpOverlay.View()
+	}
+
+	// Render settings overlay on top if active
+	if m.settingsPanel.IsVisible() {
+		return m.settingsPanel.View()
 	}
 
 	// Render command palette at the bottom if active
@@ -1198,6 +1223,12 @@ func (m App) executeCommand(name string) (tea.Model, tea.Cmd) {
 		m.mode = ModeOverlay
 		m.helpOverlay.SetSize(m.width, m.height)
 		m.helpOverlay.Show(m.focused)
+		m.statusBar.SetState(m.focused, m.mode)
+		return m, nil
+	case "config":
+		m.mode = ModeOverlay
+		m.settingsPanel.SetSize(m.width, m.height)
+		m.settingsPanel.Show(m.appConfig)
 		m.statusBar.SetState(m.focused, m.mode)
 		return m, nil
 	case "zoom":

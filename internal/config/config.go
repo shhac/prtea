@@ -11,8 +11,10 @@ import (
 
 // Config holds application configuration.
 type Config struct {
-	ClaudeTimeout int `json:"claudeTimeoutMs"`
-	PollInterval  int `json:"pollIntervalMs"`
+	ClaudeTimeout        int  `json:"claudeTimeoutMs"`
+	PollInterval         int  `json:"pollIntervalMs"`
+	PollEnabled          bool `json:"pollEnabled"`
+	NotificationsEnabled bool `json:"notificationsEnabled"`
 }
 
 // Defaults
@@ -122,6 +124,11 @@ func GetRepoPrompt(owner, repo string) (string, error) {
 // ClaudeTimeoutDuration returns the configured claude timeout as a time.Duration.
 func (c *Config) ClaudeTimeoutDuration() time.Duration {
 	return time.Duration(c.ClaudeTimeout) * time.Millisecond
+}
+
+// PollIntervalDuration returns the configured poll interval as a time.Duration.
+func (c *Config) PollIntervalDuration() time.Duration {
+	return time.Duration(c.PollInterval) * time.Millisecond
 }
 
 func defaults() *Config {
