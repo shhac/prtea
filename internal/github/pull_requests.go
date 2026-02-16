@@ -10,12 +10,13 @@ import (
 
 // ghSearchPR is the JSON shape returned by gh search prs.
 type ghSearchPR struct {
-	Number    int       `json:"number"`
-	Title     string    `json:"title"`
-	URL       string    `json:"url"`
-	CreatedAt time.Time `json:"createdAt"`
-	IsDraft   bool      `json:"isDraft"`
-	Author    struct {
+	Number         int       `json:"number"`
+	Title          string    `json:"title"`
+	URL            string    `json:"url"`
+	CreatedAt      time.Time `json:"createdAt"`
+	IsDraft        bool      `json:"isDraft"`
+	ReviewDecision string    `json:"reviewDecision"`
+	Author         struct {
 		Login string `json:"login"`
 	} `json:"author"`
 	Repository struct {
@@ -66,7 +67,7 @@ func (c *Client) GetPRsForReview(ctx context.Context) ([]PRItem, error) {
 		"--review-requested=@me",
 		"--state=open",
 		"--limit", c.fetchLimit(),
-		"--json", "number,title,url,createdAt,isDraft,author,repository,labels",
+		"--json", "number,title,url,createdAt,isDraft,reviewDecision,author,repository,labels",
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to search PRs for review: %w", err)
@@ -82,7 +83,7 @@ func (c *Client) GetMyPRs(ctx context.Context) ([]PRItem, error) {
 		"--author=@me",
 		"--state=open",
 		"--limit", c.fetchLimit(),
-		"--json", "number,title,url,createdAt,isDraft,author,repository,labels",
+		"--json", "number,title,url,createdAt,isDraft,reviewDecision,author,repository,labels",
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to search my PRs: %w", err)
@@ -141,14 +142,15 @@ func convertSearchResults(results []ghSearchPR) []PRItem {
 		}
 
 		prs = append(prs, PRItem{
-			Number:    r.Number,
-			Title:     r.Title,
-			HTMLURL:   r.URL,
-			Repo:      Repo{Owner: owner, Name: name, FullName: r.Repository.NameWithOwner},
-			Author:    User{Login: r.Author.Login},
-			Labels:    labels,
-			Draft:     r.IsDraft,
-			CreatedAt: r.CreatedAt,
+			Number:         r.Number,
+			Title:          r.Title,
+			HTMLURL:        r.URL,
+			Repo:           Repo{Owner: owner, Name: name, FullName: r.Repository.NameWithOwner},
+			Author:         User{Login: r.Author.Login},
+			Labels:         labels,
+			Draft:          r.IsDraft,
+			CreatedAt:      r.CreatedAt,
+			ReviewDecision: r.ReviewDecision,
 		})
 	}
 	return prs

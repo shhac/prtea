@@ -39,34 +39,38 @@ var prsForReview = []github.PRItem{
 		ID: 1001, Number: 101, Title: "Add rate limiting middleware",
 		HTMLURL: "https://github.com/acme/gateway/pull/101",
 		Repo: repoGateway, Author: userAlice,
-		Labels:    []github.Label{{Name: "enhancement", Color: "a2eeef"}, {Name: "api", Color: "d4c5f9"}},
-		CreatedAt: baseTime.Add(-48 * time.Hour),
-		Additions: 45, Deletions: 0, ChangedFiles: 1,
+		Labels:         []github.Label{{Name: "enhancement", Color: "a2eeef"}, {Name: "api", Color: "d4c5f9"}},
+		CreatedAt:      baseTime.Add(-48 * time.Hour),
+		Additions:      45, Deletions: 0, ChangedFiles: 2,
+		ReviewDecision: "APPROVED",
 	},
 	{
 		ID: 1002, Number: 202, Title: "Migrate to React Server Components",
 		HTMLURL: "https://github.com/acme/dashboard/pull/202",
 		Repo: repoDashboard, Author: userBob,
-		Labels:    []github.Label{{Name: "refactor", Color: "e4e669"}, {Name: "breaking", Color: "d73a4a"}},
-		Draft:     true,
-		CreatedAt: baseTime.Add(-24 * time.Hour),
-		Additions: 38, Deletions: 25, ChangedFiles: 1,
+		Labels:         []github.Label{{Name: "refactor", Color: "e4e669"}, {Name: "breaking", Color: "d73a4a"}},
+		Draft:          true,
+		CreatedAt:      baseTime.Add(-24 * time.Hour),
+		Additions:      38, Deletions: 25, ChangedFiles: 2,
+		ReviewDecision: "CHANGES_REQUESTED",
 	},
 	{
 		ID: 1003, Number: 303, Title: "Implement async connection pool",
 		HTMLURL: "https://github.com/acme/nexus/pull/303",
 		Repo: repoNexus, Author: userCarol,
-		Labels:    []github.Label{{Name: "feature", Color: "0075ca"}},
-		CreatedAt: baseTime.Add(-2 * time.Hour),
-		Additions: 52, Deletions: 0, ChangedFiles: 1,
+		Labels:         []github.Label{{Name: "feature", Color: "0075ca"}},
+		CreatedAt:      baseTime.Add(-2 * time.Hour),
+		Additions:      52, Deletions: 0, ChangedFiles: 2,
+		ReviewDecision: "REVIEW_REQUIRED",
 	},
 	{
 		ID: 1004, Number: 404, Title: "Add dependency injection for services",
 		HTMLURL: "https://github.com/acme/platform/pull/404",
 		Repo: repoPlatform, Author: userDave,
-		Labels:    []github.Label{{Name: "refactor", Color: "e4e669"}, {Name: "services", Color: "bfd4f2"}},
-		CreatedAt: baseTime.Add(-72 * time.Hour),
-		Additions: 32, Deletions: 18, ChangedFiles: 1,
+		Labels:         []github.Label{{Name: "refactor", Color: "e4e669"}, {Name: "services", Color: "bfd4f2"}},
+		CreatedAt:      baseTime.Add(-72 * time.Hour),
+		Additions:      32, Deletions: 18, ChangedFiles: 2,
+		ReviewDecision: "",
 	},
 }
 
@@ -76,17 +80,19 @@ var myPRs = []github.PRItem{
 		ID: 1005, Number: 505, Title: "Optimize memory allocator",
 		HTMLURL: "https://github.com/acme/allocator/pull/505",
 		Repo: repoAllocator, Author: userDemo,
-		Labels:    []github.Label{{Name: "performance", Color: "f9d0c4"}},
-		CreatedAt: baseTime.Add(-30 * time.Minute),
-		Additions: 25, Deletions: 10, ChangedFiles: 1,
+		Labels:         []github.Label{{Name: "performance", Color: "f9d0c4"}},
+		CreatedAt:      baseTime.Add(-30 * time.Minute),
+		Additions:      25, Deletions: 10, ChangedFiles: 2,
+		ReviewDecision: "",
 	},
 	{
 		ID: 1006, Number: 606, Title: "Add type hints to data pipeline",
 		HTMLURL: "https://github.com/acme/pipeline/pull/606",
 		Repo: repoPipeline, Author: userDemo,
-		Labels:    []github.Label{{Name: "typing", Color: "c5def5"}, {Name: "cleanup", Color: "fef2c0"}},
-		CreatedAt: baseTime.Add(-96 * time.Hour),
-		Additions: 35, Deletions: 22, ChangedFiles: 1,
+		Labels:         []github.Label{{Name: "typing", Color: "c5def5"}, {Name: "cleanup", Color: "fef2c0"}},
+		CreatedAt:      baseTime.Add(-96 * time.Hour),
+		Additions:      35, Deletions: 22, ChangedFiles: 2,
+		ReviewDecision: "APPROVED",
 	},
 }
 
@@ -210,6 +216,54 @@ var prFiles = map[int][]github.PRFile{
 +	})
 +}`,
 		},
+		{
+			Filename: "middleware/ratelimit_test.go", Status: "added",
+			Additions: 28, Deletions: 0,
+			Patch: `@@ -0,0 +1,28 @@
++package middleware
++
++import (
++	"net/http"
++	"net/http/httptest"
++	"testing"
++)
++
++func TestRateLimiter_AllowsWithinLimit(t *testing.T) {
++	rl := NewRateLimiter(10, 1)
++	handler := rl.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		w.WriteHeader(http.StatusOK)
++	}))
++
++	req := httptest.NewRequest("GET", "/", nil)
++	req.RemoteAddr = "192.168.1.1:1234"
++	rec := httptest.NewRecorder()
++
++	handler.ServeHTTP(rec, req)
++	if rec.Code != http.StatusOK {
++		t.Errorf("expected 200, got %d", rec.Code)
++	}
++}
++
++func TestRateLimiter_BlocksOverLimit(t *testing.T) {
++	rl := NewRateLimiter(1, 1)
++	handler := rl.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		w.WriteHeader(http.StatusOK)
++	}))
+@@ -29,0 +30,10 @@
++
++	req := httptest.NewRequest("GET", "/", nil)
++	req.RemoteAddr = "10.0.0.1:5678"
++	rec := httptest.NewRecorder()
++
++	// First request should succeed, second should be blocked
++	handler.ServeHTTP(rec, req)
++	rec = httptest.NewRecorder()
++	handler.ServeHTTP(rec, req)
++	if rec.Code != http.StatusTooManyRequests {
++		t.Errorf("expected 429, got %d", rec.Code)
++	}
++}`,
+		},
 	},
 	202: {
 		{
@@ -278,6 +332,37 @@ var prFiles = map[int][]github.PRFile{
 +  );
 +}`,
 		},
+		{
+			Filename: "components/ErrorBoundary.tsx", Status: "added",
+			Additions: 18, Deletions: 0,
+			Patch: `@@ -0,0 +1,18 @@
++import { Component, type ReactNode } from 'react';
++
++interface Props {
++  children: ReactNode;
++  fallback: ReactNode;
++}
++
++interface State {
++  hasError: boolean;
++}
++
++export class ErrorBoundary extends Component<Props, State> {
++  state: State = { hasError: false };
++
++  static getDerivedStateFromError(): State {
++    return { hasError: true };
++  }
+@@ -19,0 +20,8 @@
++
++  render() {
++    if (this.state.hasError) {
++      return this.props.fallback;
++    }
++    return this.props.children;
++  }
++}`,
+		},
 	},
 	303: {
 		{
@@ -341,6 +426,17 @@ var prFiles = map[int][]github.PRFile{
 +    }
 +}`,
 		},
+		{
+			Filename: "src/lib.rs", Status: "modified",
+			Additions: 3, Deletions: 0,
+			Patch: `@@ -1,4 +1,7 @@
+ pub mod config;
+ pub mod error;
++pub mod pool;
++
++pub use pool::ConnectionPool;
++pub use pool::PoolGuard;`,
+		},
 	},
 	404: {
 		{
@@ -396,6 +492,22 @@ var prFiles = map[int][]github.PRFile{
 +    public async Task<Order?> GetOrder(Guid id) => await _repository.FindAsync(id);
  }`,
 		},
+		{
+			Filename: "Services/ServiceRegistration.cs", Status: "modified",
+			Additions: 6, Deletions: 2,
+			Patch: `@@ -8,7 +8,11 @@ public static class ServiceRegistration
+     {
+         public static IServiceCollection AddPlatformServices(this IServiceCollection services)
+         {
+-            services.AddSingleton<OrderService>();
++            services.AddScoped<IOrderService, OrderService>();
++            services.AddScoped<IPaymentGateway, StripePaymentGateway>();
++            services.AddScoped<IInventoryService, InventoryService>();
++            services.AddScoped<IOrderRepository, SqlOrderRepository>();
+             return services;
+         }
+     }`,
+		},
 	},
 	505: {
 		{
@@ -443,6 +555,39 @@ var prFiles = map[int][]github.PRFile{
          return null;
      }
  };`,
+		},
+		{
+			Filename: "src/bench.zig", Status: "added",
+			Additions: 22, Deletions: 0,
+			Patch: `@@ -0,0 +1,22 @@
++const std = @import("std");
++const freelist = @import("freelist.zig");
++
++pub fn main() !void {
++    const stdout = std.io.getStdOut().writer();
++    var timer = try std.time.Timer.start();
++
++    var fl = freelist.FreeList{ .head = null, .len = 0 };
++
++    // Warm up
++    var i: usize = 0;
++    while (i < 1000) : (i += 1) {
++        _ = fl.alloc(64);
++    }
+@@ -23,0 +24,12 @@
++
++    // Benchmark small allocations
++    timer.reset();
++    var j: usize = 0;
++    while (j < 100_000) : (j += 1) {
++        _ = fl.alloc(32);
++    }
++    const elapsed = timer.read();
++
++    try stdout.print("100k small allocs: {d:.2}ms\n", .{
++        @intToFloat(f64, elapsed) / 1_000_000.0,
++    });
++}`,
 		},
 	},
 	606: {
@@ -503,6 +648,35 @@ var prFiles = map[int][]github.PRFile{
 +def save_data(df: pd.DataFrame, path: Path) -> None:
 +    path.parent.mkdir(parents=True, exist_ok=True)
 +    df.to_csv(path, index=False)`,
+		},
+		{
+			Filename: "tests/test_transform.py", Status: "modified",
+			Additions: 15, Deletions: 5,
+			Patch: `@@ -1,8 +1,18 @@
++from pathlib import Path
++
+ import pandas as pd
+ import pytest
+
+-from pipeline.transform import load_data, clean_data
++from pipeline.transform import PipelineConfig, load_data, clean_data
+
+
+-def test_clean_data_drops_na():
+-    df = pd.DataFrame({"a": [1, None, 3]})
+-    result = clean_data(df)
++def test_clean_data_fills_na():
++    df = pd.DataFrame({"a": [1.0, float("nan"), 3.0]})
++    result = clean_data(df, fill_value=0.0)
++    assert result["a"].tolist() == [1.0, 0.0, 3.0]
++
++
++def test_load_data_drops_columns(tmp_path: Path):
++    csv = tmp_path / "input.csv"
++    csv.write_text("a,b,c\n1,2,3\n")
++    config = PipelineConfig(input_path=csv, output_path=tmp_path / "out.csv", drop_columns=["b"])
++    df = load_data(config)
++    assert list(df.columns) == ["a", "c"]`,
 		},
 	},
 }

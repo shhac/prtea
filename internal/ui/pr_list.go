@@ -32,13 +32,15 @@ const (
 
 // PRItem represents a PR in the list.
 type PRItem struct {
-	number   int
-	title    string
-	repo     string // short repo name (e.g. "api")
-	owner    string // repo owner (e.g. "shhac")
-	repoFull string // full name (e.g. "shhac/api")
-	author   string
-	htmlURL  string
+	number         int
+	title          string
+	repo           string // short repo name (e.g. "api")
+	owner          string // repo owner (e.g. "shhac")
+	repoFull       string // full name (e.g. "shhac/api")
+	author         string
+	htmlURL        string
+	reviewDecision string // "APPROVED", "CHANGES_REQUESTED", "REVIEW_REQUIRED", ""
+	isDraft        bool
 }
 
 func (i PRItem) FilterValue() string {
@@ -77,20 +79,29 @@ func (d prItemDelegate) Render(w io.Writer, m list.Model, index int, item list.I
 	isCursor := index == m.Index()
 	isActive := d.selectedPRNumber != nil && *d.selectedPRNumber != 0 && i.number == *d.selectedPRNumber
 
-	// Compute CI + review badges for the active/selected PR
+	// Compute badges: review state for all items, CI only for active PR
 	var badges string
 	badgeWidth := 0
-	if isActive {
-		if d.ciOverallStatus != nil && *d.ciOverallStatus != "" {
-			b, w := ciBadgeForList(*d.ciOverallStatus)
-			badges += b
-			badgeWidth += w
-		}
-		if d.reviewDecision != nil && *d.reviewDecision != "" {
-			b, w := reviewBadgeForList(*d.reviewDecision)
-			badges += b
-			badgeWidth += w
-		}
+	if isActive && d.ciOverallStatus != nil && *d.ciOverallStatus != "" {
+		b, w := ciBadgeForList(*d.ciOverallStatus)
+		badges += b
+		badgeWidth += w
+	}
+	// Show review badge from item data (available for all items from search results).
+	// For the active PR, prefer the detail-level decision if available.
+	itemReviewDecision := i.reviewDecision
+	if isActive && d.reviewDecision != nil && *d.reviewDecision != "" {
+		itemReviewDecision = *d.reviewDecision
+	}
+	if itemReviewDecision != "" {
+		b, w := reviewBadgeForList(itemReviewDecision)
+		badges += b
+		badgeWidth += w
+	}
+	if i.isDraft {
+		b := " " + lipgloss.NewStyle().Foreground(lipgloss.Color("243")).Render("draft")
+		badges += b
+		badgeWidth += 6
 	}
 
 	// Truncate text to fit — leave 2 chars for prefix (▸ or padding)

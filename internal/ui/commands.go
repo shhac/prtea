@@ -55,13 +55,15 @@ func convertPRItems(prs []github.PRItem) []list.Item {
 	items := make([]list.Item, len(prs))
 	for i, pr := range prs {
 		items[i] = PRItem{
-			number:   pr.Number,
-			title:    pr.Title,
-			repo:     pr.Repo.Name,
-			owner:    pr.Repo.Owner,
-			repoFull: pr.Repo.FullName,
-			author:   pr.Author.Login,
-			htmlURL:  pr.HTMLURL,
+			number:         pr.Number,
+			title:          pr.Title,
+			repo:           pr.Repo.Name,
+			owner:          pr.Repo.Owner,
+			repoFull:       pr.Repo.FullName,
+			author:         pr.Author.Login,
+			htmlURL:        pr.HTMLURL,
+			reviewDecision: pr.ReviewDecision,
+			isDraft:        pr.Draft,
 		}
 	}
 	return items

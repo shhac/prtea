@@ -23,18 +23,19 @@ type Label struct {
 
 // PRItem is a lightweight PR representation for list views.
 type PRItem struct {
-	ID           int64
-	Number       int
-	Title        string
-	HTMLURL      string
-	Repo         Repo
-	Author       User
-	Labels       []Label
-	Draft        bool
-	CreatedAt    time.Time
-	Additions    int
-	Deletions    int
-	ChangedFiles int
+	ID             int64
+	Number         int
+	Title          string
+	HTMLURL        string
+	Repo           Repo
+	Author         User
+	Labels         []Label
+	Draft          bool
+	CreatedAt      time.Time
+	Additions      int
+	Deletions      int
+	ChangedFiles   int
+	ReviewDecision string // "APPROVED", "CHANGES_REQUESTED", "REVIEW_REQUIRED", ""
 }
 
 // PRDetail is the full PR representation including merge state.
