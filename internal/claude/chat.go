@@ -215,20 +215,25 @@ func buildChatPrompt(session *ChatSession, input ChatInput, maxTokens, maxHistor
 // onChunk is called with each text chunk as it arrives.
 // Returns the complete response text.
 func (cs *ChatService) ChatStream(ctx context.Context, input ChatInput, onChunk func(text string)) (string, error) {
-	ctx, cancel := context.WithTimeout(ctx, cs.timeout)
+	// Snapshot config under lock to avoid races with Set* methods.
+	cs.mu.Lock()
+	timeout := cs.timeout
+	maxTokens := cs.maxPromptTokens
+	maxHistory := cs.maxHistoryMessages
+	turns := cs.maxTurns
+	cs.mu.Unlock()
+
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	session := cs.getOrCreateSession(input)
 
-	maxTokens := cs.maxPromptTokens
 	if maxTokens == 0 {
 		maxTokens = defaultMaxPromptTokens
 	}
-	maxHistory := cs.maxHistoryMessages
 	if maxHistory == 0 {
 		maxHistory = defaultMaxHistoryMessages
 	}
-	turns := cs.maxTurns
 	if turns == 0 {
 		turns = defaultChatMaxTurns
 	}
@@ -323,7 +328,7 @@ func (cs *ChatService) ChatStream(ctx context.Context, input ChatInput, onChunk 
 
 	if err := cmd.Wait(); err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
-			return "", fmt.Errorf("claude chat timed out after %s", cs.timeout)
+			return "", fmt.Errorf("claude chat timed out after %s", timeout)
 		}
 		errMsg := stderrBuf.String()
 		if len(errMsg) > 300 {
@@ -373,22 +378,30 @@ func extractResultText(event *StreamEvent) string {
 
 // SetTimeout updates the command timeout for future chat requests.
 func (cs *ChatService) SetTimeout(d time.Duration) {
+	cs.mu.Lock()
 	cs.timeout = d
+	cs.mu.Unlock()
 }
 
 // SetMaxPromptTokens updates the max prompt token budget for future chat requests.
 func (cs *ChatService) SetMaxPromptTokens(n int) {
+	cs.mu.Lock()
 	cs.maxPromptTokens = n
+	cs.mu.Unlock()
 }
 
 // SetMaxHistoryMessages updates the max history messages for future chat requests.
 func (cs *ChatService) SetMaxHistoryMessages(n int) {
+	cs.mu.Lock()
 	cs.maxHistoryMessages = n
+	cs.mu.Unlock()
 }
 
 // SetMaxTurns updates the max agentic turns for future chat requests.
 func (cs *ChatService) SetMaxTurns(n int) {
+	cs.mu.Lock()
 	cs.maxTurns = n
+	cs.mu.Unlock()
 }
 
 func sessionKey(owner, repo string, prNumber int) string {

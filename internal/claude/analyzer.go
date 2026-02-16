@@ -8,14 +8,17 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 )
 
 // Analyzer spawns claude CLI to produce structured PR analysis.
 type Analyzer struct {
-	claudePath       string
+	claudePath string
+	promptsDir string
+
+	mu               sync.RWMutex
 	timeout          time.Duration
-	promptsDir       string
 	analysisMaxTurns int
 }
 
@@ -34,12 +37,16 @@ func NewAnalyzer(claudePath string, timeout time.Duration, promptsDir string, an
 
 // SetTimeout updates the command timeout for future analysis requests.
 func (a *Analyzer) SetTimeout(d time.Duration) {
+	a.mu.Lock()
 	a.timeout = d
+	a.mu.Unlock()
 }
 
 // SetAnalysisMaxTurns updates the max agentic turns for future analysis requests.
 func (a *Analyzer) SetAnalysisMaxTurns(n int) {
+	a.mu.Lock()
 	a.analysisMaxTurns = n
+	a.mu.Unlock()
 }
 
 // AnalyzeInput contains the parameters for a PR analysis.
@@ -64,14 +71,23 @@ type AnalyzeDiffInput struct {
 	DiffContent string // unified diff patches for all changed files
 }
 
+// config returns a snapshot of mutable config fields under read lock.
+func (a *Analyzer) config() (timeout time.Duration, maxTurns int) {
+	a.mu.RLock()
+	timeout = a.timeout
+	maxTurns = a.analysisMaxTurns
+	a.mu.RUnlock()
+	return
+}
+
 // Analyze runs Claude CLI analysis on a PR and returns the structured result.
 func (a *Analyzer) Analyze(ctx context.Context, input AnalyzeInput, onProgress ProgressFunc) (*AnalysisResult, error) {
-	ctx, cancel := context.WithTimeout(ctx, a.timeout)
+	timeout, maxTurns := a.config()
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	prompt := a.buildAnalysisPrompt(input)
 
-	maxTurns := a.analysisMaxTurns
 	if maxTurns == 0 {
 		maxTurns = 30
 	}
@@ -106,7 +122,8 @@ type ReviewInput struct {
 
 // AnalyzeForReview runs Claude to generate a GitHub-ready review with inline comments.
 func (a *Analyzer) AnalyzeForReview(ctx context.Context, input ReviewInput, onProgress ProgressFunc) (*ReviewAnalysis, error) {
-	ctx, cancel := context.WithTimeout(ctx, a.timeout)
+	timeout, _ := a.config()
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	prompt := a.buildReviewPrompt(input)
@@ -127,7 +144,8 @@ func (a *Analyzer) AnalyzeForReview(ctx context.Context, input ReviewInput, onPr
 
 // AnalyzeDiff runs analysis using inline diff content (no local repo needed).
 func (a *Analyzer) AnalyzeDiff(ctx context.Context, input AnalyzeDiffInput, onProgress ProgressFunc) (*AnalysisResult, error) {
-	ctx, cancel := context.WithTimeout(ctx, a.timeout)
+	timeout, _ := a.config()
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	prompt := a.buildDiffAnalysisPrompt(input)
@@ -149,7 +167,8 @@ func (a *Analyzer) AnalyzeDiff(ctx context.Context, input AnalyzeDiffInput, onPr
 // AnalyzeDiffStream is like AnalyzeDiff but with token-level streaming.
 // onChunk is called with each text delta as it arrives from the Claude CLI.
 func (a *Analyzer) AnalyzeDiffStream(ctx context.Context, input AnalyzeDiffInput, onChunk func(string)) (*AnalysisResult, error) {
-	ctx, cancel := context.WithTimeout(ctx, a.timeout)
+	timeout, _ := a.config()
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	prompt := a.buildDiffAnalysisPrompt(input)
@@ -235,7 +254,7 @@ func (a *Analyzer) runAndParseStream(ctx context.Context, cmd *exec.Cmd, onChunk
 
 	if err := cmd.Wait(); err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
-			return nil, fmt.Errorf("claude analysis timed out after %s", a.timeout)
+			return nil, fmt.Errorf("claude analysis timed out")
 		}
 		errMsg := stderrBuf.String()
 		if len(errMsg) > 500 {
@@ -308,7 +327,7 @@ func (a *Analyzer) runAndParse(ctx context.Context, cmd *exec.Cmd, onProgress Pr
 
 	if err := cmd.Wait(); err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
-			return nil, fmt.Errorf("claude analysis timed out after %s", a.timeout)
+			return nil, fmt.Errorf("claude analysis timed out")
 		}
 		errMsg := stderrBuf.String()
 		if len(errMsg) > 500 {
@@ -538,7 +557,7 @@ func (a *Analyzer) runAndParseReview(ctx context.Context, cmd *exec.Cmd, onProgr
 
 	if err := cmd.Wait(); err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
-			return nil, fmt.Errorf("claude review timed out after %s", a.timeout)
+			return nil, fmt.Errorf("claude review timed out")
 		}
 		errMsg := stderrBuf.String()
 		if len(errMsg) > 500 {
