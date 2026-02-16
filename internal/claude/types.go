@@ -62,10 +62,12 @@ type ReviewAnalysis struct {
 
 // InlineReviewComment is a single inline comment targeting a specific file/line.
 type InlineReviewComment struct {
-	Path string `json:"path"`           // relative file path
-	Line int    `json:"line"`           // file line number (new side)
-	Side string `json:"side,omitempty"` // "RIGHT" (default) or "LEFT"
-	Body string `json:"body"`           // comment text
+	Path      string `json:"path"`                 // relative file path
+	Line      int    `json:"line"`                 // file line number (new side); end line for multi-line
+	Side      string `json:"side,omitempty"`       // "RIGHT" (default) or "LEFT"
+	Body      string `json:"body"`                 // comment text
+	StartLine int    `json:"start_line,omitempty"` // start line for multi-line comments
+	StartSide string `json:"start_side,omitempty"` // start side for multi-line comments
 }
 
 // ChatMessage represents a single message in a chat conversation.

@@ -254,12 +254,21 @@ func submitReviewCmd(client GitHubService, owner, repo string, number int, actio
 				if side == "" {
 					side = "RIGHT"
 				}
-				comments[i] = github.ReviewCommentPayload{
+				payload := github.ReviewCommentPayload{
 					Path: c.Path,
 					Line: c.Line,
 					Side: side,
 					Body: c.Body,
 				}
+				if c.StartLine > 0 {
+					payload.StartLine = c.StartLine
+					startSide := c.StartSide
+					if startSide == "" {
+						startSide = side
+					}
+					payload.StartSide = startSide
+				}
+				comments[i] = payload
 			}
 			err = client.SubmitReviewWithComments(ctx, owner, repo, number, eventMap[action], body, comments)
 		} else {

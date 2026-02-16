@@ -1282,7 +1282,7 @@ func (m App) handleInlineCommentAdd(msg InlineCommentAddMsg) (tea.Model, tea.Cmd
 		}
 	}
 	if !found {
-		m.pendingInlineComments = append(m.pendingInlineComments, PendingInlineComment{
+		comment := PendingInlineComment{
 			InlineReviewComment: claude.InlineReviewComment{
 				Path: msg.Path,
 				Line: msg.Line,
@@ -1290,7 +1290,12 @@ func (m App) handleInlineCommentAdd(msg InlineCommentAddMsg) (tea.Model, tea.Cmd
 				Body: msg.Body,
 			},
 			Source: "user",
-		})
+		}
+		if msg.StartLine > 0 {
+			comment.StartLine = msg.StartLine
+			comment.StartSide = "RIGHT"
+		}
+		m.pendingInlineComments = append(m.pendingInlineComments, comment)
 	}
 	m.diffViewer.SetPendingInlineComments(m.pendingInlineComments)
 	m.chatPanel.SetPendingCommentCount(len(m.pendingInlineComments))
@@ -1298,8 +1303,14 @@ func (m App) handleInlineCommentAdd(msg InlineCommentAddMsg) (tea.Model, tea.Cmd
 	if found {
 		action = "updated"
 	}
+	var target string
+	if msg.StartLine > 0 {
+		target = fmt.Sprintf("%s:%d-%d", msg.Path, msg.StartLine, msg.Line)
+	} else {
+		target = fmt.Sprintf("%s:%d", msg.Path, msg.Line)
+	}
 	clearCmd := m.statusBar.SetTemporaryMessage(
-		fmt.Sprintf("Comment %s on %s:%d", action, msg.Path, msg.Line), 2*time.Second)
+		fmt.Sprintf("Comment %s on %s", action, target), 2*time.Second)
 	return m, clearCmd
 }
 

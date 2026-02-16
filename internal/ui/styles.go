@@ -62,6 +62,12 @@ var (
 	diffCursorBg          = lipgloss.Color("237")
 )
 
+// Multi-line selection (visual mode) highlight
+var (
+	diffSelectionGutterStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("75")).Bold(true)
+	diffSelectionBg          = lipgloss.Color("24")
+)
+
 // Search match highlight backgrounds
 var (
 	diffSearchMatchBg        = lipgloss.Color("58")  // dark olive for all matches

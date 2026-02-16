@@ -138,6 +138,11 @@ type DiffViewerModel struct {
 	// cursorLine indexes into cachedLines and cachedLineInfo.
 	cursorLine int
 
+	// Multi-line selection (visual mode) for range comments.
+	// selectionAnchor is the cachedLineInfo index where selection started.
+	// -1 means no active selection.
+	selectionAnchor int
+
 	// AI inline comment state
 	aiInlineComments      []claude.InlineReviewComment
 	aiCommentsByFileLine  map[string][]claude.InlineReviewComment // "path:line" → comments
@@ -149,10 +154,11 @@ type DiffViewerModel struct {
 	pendingCommentsByFileLine map[string][]PendingInlineComment // "path:line" → comments
 
 	// Comment input mode
-	commentMode       bool
-	commentInput      textinput.Model
-	commentTargetFile string
-	commentTargetLine int
+	commentMode           bool
+	commentInput          textinput.Model
+	commentTargetFile     string
+	commentTargetLine     int
+	commentTargetStartLine int // non-zero for multi-line range comments
 
 	// Search state
 	searchMode          bool
@@ -188,9 +194,10 @@ func NewDiffViewerModel() DiffViewerModel {
 	ci.CharLimit = 500
 
 	return DiffViewerModel{
-		spinner:      newLoadingSpinner(),
-		searchInput:  si,
-		commentInput: ci,
+		spinner:         newLoadingSpinner(),
+		searchInput:     si,
+		commentInput:    ci,
+		selectionAnchor: -1,
 	}
 }
 
@@ -215,17 +222,20 @@ func (m DiffViewerModel) Update(msg tea.Msg) (DiffViewerModel, tea.Cmd) {
 				m.commentMode = false
 				m.commentInput.SetValue("")
 				m.commentInput.Blur()
+				m.cancelSelection()
 				m.refreshContent()
 				return m, nil
 			case "enter":
 				body := strings.TrimSpace(m.commentInput.Value())
 				path := m.commentTargetFile
 				line := m.commentTargetLine
+				startLine := m.commentTargetStartLine
 				m.commentMode = false
 				m.commentInput.Blur()
+				m.cancelSelection()
 				m.refreshContent()
 				return m, func() tea.Msg {
-					return InlineCommentAddMsg{Path: path, Line: line, Body: body}
+					return InlineCommentAddMsg{Path: path, Line: line, Body: body, StartLine: startLine}
 				}
 			default:
 				var cmd tea.Cmd
@@ -326,6 +336,7 @@ func (m DiffViewerModel) Update(msg tea.Msg) (DiffViewerModel, tea.Cmd) {
 			return m, nil
 		case key.Matches(msg, DiffViewerKeys.NextHunk):
 			if m.activeTab == TabDiff && len(m.hunks) > 0 {
+				m.cancelSelection()
 				if m.focusedHunkIdx < len(m.hunks)-1 {
 					m.focusedHunkIdx++
 				}
@@ -336,6 +347,7 @@ func (m DiffViewerModel) Update(msg tea.Msg) (DiffViewerModel, tea.Cmd) {
 			return m, nil
 		case key.Matches(msg, DiffViewerKeys.PrevHunk):
 			if m.activeTab == TabDiff && len(m.hunks) > 0 {
+				m.cancelSelection()
 				if m.focusedHunkIdx > 0 {
 					m.focusedHunkIdx--
 				}
@@ -345,31 +357,50 @@ func (m DiffViewerModel) Update(msg tea.Msg) (DiffViewerModel, tea.Cmd) {
 			}
 			return m, nil
 		case key.Matches(msg, DiffViewerKeys.HalfDown):
+			m.cancelSelection()
 			m.viewport.HalfViewDown()
 			m.syncFocusToScroll()
 			m.syncCursorToScroll()
 			m.refreshContent()
 			return m, nil
 		case key.Matches(msg, DiffViewerKeys.HalfUp):
+			m.cancelSelection()
 			m.viewport.HalfViewUp()
 			m.syncFocusToScroll()
 			m.syncCursorToScroll()
 			m.refreshContent()
 			return m, nil
 		case key.Matches(msg, DiffViewerKeys.Top):
+			m.cancelSelection()
 			m.viewport.GotoTop()
 			m.syncFocusToScroll()
 			m.syncCursorToScroll()
 			m.refreshContent()
 			return m, nil
 		case key.Matches(msg, DiffViewerKeys.Bottom):
+			m.cancelSelection()
 			m.viewport.GotoBottom()
 			m.syncFocusToScroll()
 			m.syncCursorToScroll()
 			m.refreshContent()
 			return m, nil
+		case key.Matches(msg, DiffViewerKeys.SelectDown):
+			if m.activeTab == TabDiff && len(m.cachedLineInfo) > 0 {
+				m.extendSelection(1)
+				m.refreshContent()
+				return m, nil
+			}
+			return m, nil
+		case key.Matches(msg, DiffViewerKeys.SelectUp):
+			if m.activeTab == TabDiff && len(m.cachedLineInfo) > 0 {
+				m.extendSelection(-1)
+				m.refreshContent()
+				return m, nil
+			}
+			return m, nil
 		case key.Matches(msg, DiffViewerKeys.Down):
 			if m.activeTab == TabDiff && len(m.cachedLineInfo) > 0 {
+				m.cancelSelection()
 				m.moveCursor(1)
 				m.refreshContent()
 				return m, nil
@@ -381,6 +412,7 @@ func (m DiffViewerModel) Update(msg tea.Msg) (DiffViewerModel, tea.Cmd) {
 			return m, cmd
 		case key.Matches(msg, DiffViewerKeys.Up):
 			if m.activeTab == TabDiff && len(m.cachedLineInfo) > 0 {
+				m.cancelSelection()
 				m.moveCursor(-1)
 				m.refreshContent()
 				return m, nil
@@ -518,6 +550,7 @@ func (m *DiffViewerModel) SetLoading(prNumber int) {
 	m.hunkOffsets = nil
 	m.focusedHunkIdx = 0
 	m.cursorLine = 0
+	m.selectionAnchor = -1
 	m.selectedHunks = nil
 	m.cachedLines = nil
 	m.cachedLineInfo = nil
@@ -554,6 +587,7 @@ func (m *DiffViewerModel) SetDiff(files []github.PRFile) {
 	m.currentFileIdx = 0
 	m.focusedHunkIdx = 0
 	m.cursorLine = 0
+	m.selectionAnchor = -1
 	m.selectedHunks = nil
 	m.clearSearch()
 	m.parseAllHunks()
@@ -640,6 +674,7 @@ func (m *DiffViewerModel) ClearAIInlineComments() {
 // EnterCommentMode activates comment input mode targeting the cursor line.
 // If the cursor is on a non-commentable line, it snaps to the nearest commentable
 // line within the same hunk. Returns nil if no commentable line is found.
+// When a multi-line selection is active, the comment targets the full range.
 func (m *DiffViewerModel) EnterCommentMode() tea.Cmd {
 	if len(m.hunks) == 0 || m.activeTab != TabDiff || len(m.cachedLineInfo) == 0 {
 		return nil
@@ -653,6 +688,21 @@ func (m *DiffViewerModel) EnterCommentMode() tea.Cmd {
 
 	m.commentTargetFile = targetFile
 	m.commentTargetLine = targetLine
+	m.commentTargetStartLine = 0
+
+	// If a multi-line selection is active, resolve the range
+	if m.selectionAnchor >= 0 {
+		startLine, endLine := m.resolveSelectionRange()
+		if startLine > 0 && endLine > 0 && startLine != endLine {
+			// GitHub API requires start_line < line
+			if startLine > endLine {
+				startLine, endLine = endLine, startLine
+			}
+			m.commentTargetStartLine = startLine
+			m.commentTargetLine = endLine
+		}
+	}
+
 	m.commentMode = true
 
 	// Pre-fill if editing existing comment at this location
@@ -666,6 +716,36 @@ func (m *DiffViewerModel) EnterCommentMode() tea.Cmd {
 
 	m.refreshContent()
 	return m.commentInput.Focus()
+}
+
+// resolveSelectionRange finds the commentable new-side line numbers at the
+// boundaries of the current multi-line selection. Returns (startLine, endLine)
+// where both are new-side file line numbers, or (0, 0) if no valid range found.
+func (m *DiffViewerModel) resolveSelectionRange() (int, int) {
+	lo, hi := m.selectionRange()
+	if lo < 0 {
+		return 0, 0
+	}
+
+	// Find first commentable line from selection start (forward)
+	startLine := 0
+	for i := lo; i <= hi; i++ {
+		if i < len(m.cachedLineInfo) && m.cachedLineInfo[i].isCommentable && m.cachedLineInfo[i].newLineNum > 0 {
+			startLine = m.cachedLineInfo[i].newLineNum
+			break
+		}
+	}
+
+	// Find last commentable line from selection end (backward)
+	endLine := 0
+	for i := hi; i >= lo; i-- {
+		if i < len(m.cachedLineInfo) && m.cachedLineInfo[i].isCommentable && m.cachedLineInfo[i].newLineNum > 0 {
+			endLine = m.cachedLineInfo[i].newLineNum
+			break
+		}
+	}
+
+	return startLine, endLine
 }
 
 // commentTargetFromCursor returns the file path and line number for the cursor's
@@ -731,7 +811,12 @@ func (m *DiffViewerModel) SetPendingInlineComments(comments []PendingInlineComme
 
 // renderCommentBar renders the comment input bar shown during comment mode.
 func (m DiffViewerModel) renderCommentBar() string {
-	target := fmt.Sprintf("%s:%d", m.commentTargetFile, m.commentTargetLine)
+	var target string
+	if m.commentTargetStartLine > 0 {
+		target = fmt.Sprintf("%s:%d-%d", m.commentTargetFile, m.commentTargetStartLine, m.commentTargetLine)
+	} else {
+		target = fmt.Sprintf("%s:%d", m.commentTargetFile, m.commentTargetLine)
+	}
 	prompt := pendingCommentPrefixStyle.Render("📝 " + target + " > ")
 	return prompt + m.commentInput.View()
 }
@@ -1236,6 +1321,9 @@ func (m *DiffViewerModel) buildCachedLines() {
 	m.lastRenderedFocus = m.focusedHunkIdx
 	m.dirtyHunks = nil
 
+	// Full cache rebuild invalidates selection indices
+	m.selectionAnchor = -1
+
 	// Clamp cursor and snap to first diff line if needed
 	m.clampCursor()
 }
@@ -1271,16 +1359,26 @@ func (m *DiffViewerModel) renderHunkLines(hunkIdx int) ([]string, []lineInfo) {
 		hunkBase = m.hunkOffsets[hunkIdx]
 	}
 
+	// Multi-line selection range (if active and in this hunk)
+	selLo, selHi := m.selectionRange()
+
 	// Track new-side line number for inline comment matching
 	newLine := 0
 
 	for lineIdx, line := range hunk.Lines {
-		// Compute absolute position in cachedLines for cursor check
-		isCursorLine := hunkBase >= 0 && hunkBase+len(lines) == m.cursorLine
+		// Compute absolute position in cachedLines for cursor/selection check
+		absPos := -1
+		if hunkBase >= 0 {
+			absPos = hunkBase + len(lines)
+		}
+		isCursorLine := absPos >= 0 && absPos == m.cursorLine
+		isInSelection := absPos >= 0 && selLo >= 0 && absPos >= selLo && absPos <= selHi
 
 		if line == "" {
 			if isCursorLine {
 				lines = append(lines, diffCursorGutterStyle.Render("▸"))
+			} else if isInSelection {
+				lines = append(lines, diffSelectionGutterStyle.Render("▌"))
 			} else if isFocused {
 				lines = append(lines, diffFocusGutterStyle.Render("▎"))
 			} else {
@@ -1306,10 +1404,12 @@ func (m *DiffViewerModel) renderHunkLines(hunkIdx int) ([]string, []lineInfo) {
 
 		commentable := newLine > 0 && !strings.HasPrefix(line, "-") && !strings.HasPrefix(line, `\`) && !strings.HasPrefix(line, "@@")
 
-		// Gutter marker: ▸ for cursor, ▎ for focused hunk, space for others
+		// Gutter marker: ▸ for cursor, ▌ for selection, ▎ for focused hunk, space for others
 		var gutter string
 		if isCursorLine {
 			gutter = diffCursorGutterStyle.Render("▸") + " "
+		} else if isInSelection {
+			gutter = diffSelectionGutterStyle.Render("▌") + " "
 		} else if isFocused {
 			gutter = diffFocusGutterStyle.Render("▎") + " "
 		} else {
@@ -1347,6 +1447,9 @@ func (m *DiffViewerModel) renderHunkLines(hunkIdx int) ([]string, []lineInfo) {
 
 		if selected {
 			style = style.Background(diffSelectedBg)
+		}
+		if isInSelection {
+			style = style.Background(diffSelectionBg)
 		}
 		if isCursorLine {
 			style = style.Background(diffCursorBg)
@@ -1567,6 +1670,73 @@ func (m *DiffViewerModel) moveCursor(delta int) {
 	}
 
 	m.ensureCursorVisible()
+}
+
+// extendSelection extends the multi-line selection by moving the cursor in the
+// given direction while keeping the anchor fixed. If no selection is active, the
+// anchor is set to the current cursor position. Movement is clamped to the same hunk.
+func (m *DiffViewerModel) extendSelection(delta int) {
+	if len(m.cachedLineInfo) == 0 {
+		return
+	}
+
+	// Start selection if not active
+	if m.selectionAnchor < 0 {
+		m.selectionAnchor = m.cursorLine
+	}
+
+	anchorHunk := -1
+	if m.selectionAnchor >= 0 && m.selectionAnchor < len(m.cachedLineInfo) {
+		anchorHunk = m.cachedLineInfo[m.selectionAnchor].hunkIdx
+	}
+
+	oldCursor := m.cursorLine
+	m.moveCursor(delta)
+
+	// If cursor moved to a different hunk, undo the move
+	if m.cursorLine >= 0 && m.cursorLine < len(m.cachedLineInfo) {
+		newHunk := m.cachedLineInfo[m.cursorLine].hunkIdx
+		if newHunk != anchorHunk {
+			m.cursorLine = oldCursor
+			// Restore focused hunk
+			if anchorHunk >= 0 {
+				m.focusedHunkIdx = anchorHunk
+			}
+		}
+	}
+}
+
+// cancelSelection clears any active multi-line selection and marks affected hunks dirty.
+func (m *DiffViewerModel) cancelSelection() {
+	if m.selectionAnchor < 0 {
+		return
+	}
+	// Mark the hunk containing the selection dirty so it re-renders without highlight
+	if m.selectionAnchor >= 0 && m.selectionAnchor < len(m.cachedLineInfo) {
+		hunk := m.cachedLineInfo[m.selectionAnchor].hunkIdx
+		if hunk >= 0 {
+			m.markHunkDirty(hunk)
+		}
+	}
+	m.selectionAnchor = -1
+}
+
+// HasSelection returns true when a multi-line selection is active.
+func (m DiffViewerModel) HasSelection() bool {
+	return m.selectionAnchor >= 0
+}
+
+// selectionRange returns the ordered start/end indices in cachedLineInfo
+// for the current selection. Returns (-1, -1) if no selection is active.
+func (m DiffViewerModel) selectionRange() (int, int) {
+	if m.selectionAnchor < 0 {
+		return -1, -1
+	}
+	lo, hi := m.selectionAnchor, m.cursorLine
+	if lo > hi {
+		lo, hi = hi, lo
+	}
+	return lo, hi
 }
 
 // ensureCursorVisible scrolls the viewport so the cursor line is on-screen.

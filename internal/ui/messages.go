@@ -295,9 +295,10 @@ type pollPRsLoadedMsg struct {
 
 // InlineCommentAddMsg is emitted by the diff viewer when the user saves an inline comment.
 type InlineCommentAddMsg struct {
-	Path string
-	Line int
-	Body string
+	Path      string
+	Line      int
+	Body      string
+	StartLine int // non-zero for multi-line range comments
 }
 
 // PendingInlineComment wraps an inline review comment with source tracking

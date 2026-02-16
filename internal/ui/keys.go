@@ -130,6 +130,8 @@ var PRListKeys = PRListKeyMap{
 type DiffViewerKeyMap struct {
 	Up                    key.Binding
 	Down                  key.Binding
+	SelectDown            key.Binding
+	SelectUp              key.Binding
 	HalfDown              key.Binding
 	HalfUp                key.Binding
 	NextHunk              key.Binding
@@ -154,6 +156,14 @@ var DiffViewerKeys = DiffViewerKeyMap{
 	Down: key.NewBinding(
 		key.WithKeys("j", "down"),
 		key.WithHelp("j", "down"),
+	),
+	SelectDown: key.NewBinding(
+		key.WithKeys("J"),
+		key.WithHelp("J", "extend selection down"),
+	),
+	SelectUp: key.NewBinding(
+		key.WithKeys("K"),
+		key.WithHelp("K", "extend selection up"),
 	),
 	HalfDown: key.NewBinding(
 		key.WithKeys("ctrl+d"),

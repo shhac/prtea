@@ -210,6 +210,7 @@ func (m HelpOverlayModel) renderHelpContent() string {
 			keys: []helpEntry{
 				{"h / l", "Prev/next tab"},
 				{"j / k", "Scroll up/down"},
+				{"J / K", "Extend line selection (for range comments)"},
 				{"Ctrl+d / Ctrl+u", "Half page down/up"},
 				{"n / N", "Next/prev hunk (or search match)"},
 				{"g / G", "Jump to top/bottom"},

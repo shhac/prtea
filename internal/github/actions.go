@@ -76,10 +76,12 @@ func (c *Client) RerunWorkflow(ctx context.Context, owner, repo string, runID in
 
 // ReviewCommentPayload is a single inline comment in a review submission.
 type ReviewCommentPayload struct {
-	Path string `json:"path"`
-	Line int    `json:"line"`
-	Side string `json:"side,omitempty"`
-	Body string `json:"body"`
+	Path      string `json:"path"`
+	Line      int    `json:"line"`
+	Side      string `json:"side,omitempty"`
+	Body      string `json:"body"`
+	StartLine int    `json:"start_line,omitempty"`
+	StartSide string `json:"start_side,omitempty"`
 }
 
 // SubmitReviewWithComments submits a review with inline comments via the GitHub REST API.
