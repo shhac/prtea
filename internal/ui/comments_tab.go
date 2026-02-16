@@ -93,20 +93,16 @@ func (t *CommentsTabModel) Render(width int, spinnerView string, md *MarkdownRen
 		return t.cache
 	}
 
-	sectionStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("33"))
-	authorStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("220"))
-	dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
-
 	var b strings.Builder
 
 	if len(t.comments) > 0 {
-		b.WriteString(sectionStyle.Render(fmt.Sprintf("Conversation (%d)", len(t.comments))))
+		b.WriteString(sectionHeaderStyle.Render(fmt.Sprintf("Conversation (%d)", len(t.comments))))
 		b.WriteString("\n")
 		for i, c := range t.comments {
 			if i > 0 {
 				b.WriteString("\n")
 			}
-			b.WriteString(authorStyle.Render(c.Author.Login))
+			b.WriteString(contentAuthorStyle.Render(c.Author.Login))
 			b.WriteString(dimStyle.Render(" · " + c.CreatedAt.Format("Jan 2 15:04")))
 			b.WriteString("\n")
 			b.WriteString(md.RenderMarkdown(c.Body, width))
