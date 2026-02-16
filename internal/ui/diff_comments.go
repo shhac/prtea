@@ -45,7 +45,7 @@ func (m *DiffViewerModel) SetAIInlineComments(comments []claude.InlineReviewComm
 	m.aiInlineComments = comments
 	m.aiCommentsByFileLine = make(map[string][]claude.InlineReviewComment)
 	for _, c := range comments {
-		key := fmt.Sprintf("%s:%d", c.Path, c.Line)
+		key := commentKey(c.Path, c.Line)
 		m.aiCommentsByFileLine[key] = append(m.aiCommentsByFileLine[key], c)
 	}
 	// Full cache invalidation since comment lines change hunk sizes
@@ -67,7 +67,7 @@ func (m *DiffViewerModel) ClearAIInlineComments() {
 func (m *DiffViewerModel) SetPendingInlineComments(comments []PendingInlineComment) {
 	m.pendingCommentsByFileLine = make(map[string][]PendingInlineComment)
 	for _, c := range comments {
-		key := fmt.Sprintf("%s:%d", c.Path, c.Line)
+		key := commentKey(c.Path, c.Line)
 		m.pendingCommentsByFileLine[key] = append(m.pendingCommentsByFileLine[key], c)
 	}
 	m.cachedLines = nil
@@ -120,7 +120,7 @@ func (m *DiffViewerModel) SetGitHubInlineComments(comments []github.InlineCommen
 	m.ghCommentThreads = make(map[string][]ghCommentThread)
 	for _, id := range rootOrder {
 		t := rootByID[id]
-		key := fmt.Sprintf("%s:%d", t.Root.Path, t.Root.Line)
+		key := commentKey(t.Root.Path, t.Root.Line)
 		m.ghCommentThreads[key] = append(m.ghCommentThreads[key], *t)
 	}
 
@@ -164,7 +164,7 @@ func (m *DiffViewerModel) EnterCommentMode() tea.Cmd {
 	m.commentMode = true
 
 	// Pre-fill if editing existing comment at this location
-	key := fmt.Sprintf("%s:%d", m.commentTargetFile, m.commentTargetLine)
+	key := commentKey(m.commentTargetFile, m.commentTargetLine)
 	if comments, ok := m.pendingCommentsByFileLine[key]; ok && len(comments) > 0 {
 		m.commentInput.SetValue(comments[0].Body)
 		m.commentInput.CursorEnd()
@@ -313,7 +313,7 @@ func (m *DiffViewerModel) buildCommentOverlayMsg() *ShowCommentOverlayMsg {
 	ctxEnd := min(len(hunk.Lines), targetIdx+3)
 	diffLines := hunk.Lines[ctxStart:ctxEnd]
 
-	key := fmt.Sprintf("%s:%d", targetFile, targetLine)
+	key := commentKey(targetFile, targetLine)
 
 	// Gather threads. For multi-line selections, only include threads
 	// whose line range exactly matches the selection.
@@ -484,7 +484,7 @@ func (m *DiffViewerModel) injectInlineComments(
 	hunkIdx int, filename string, newLine int,
 	isFocused bool, cursorTargetKey string,
 ) ([]string, []lineInfo) {
-	key := fmt.Sprintf("%s:%d", filename, newLine)
+	key := commentKey(filename, newLine)
 	boxInnerWidth := m.viewport.Width - 2 - 2 - 2
 	if boxInnerWidth < 10 {
 		boxInnerWidth = 10

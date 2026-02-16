@@ -64,6 +64,11 @@ type searchMatch struct {
 	endCol     int
 }
 
+// commentKey returns the map key for inline comments at a file:line position.
+func commentKey(filepath string, line int) string {
+	return fmt.Sprintf("%s:%d", filepath, line)
+}
+
 // parsePatchHunks splits a file's patch string into individual hunks.
 func parsePatchHunks(fileIndex int, filename string, patch string) []DiffHunk {
 	lines := strings.Split(patch, "\n")

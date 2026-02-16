@@ -1,7 +1,6 @@
 package ui
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -89,7 +88,7 @@ func (m *DiffViewerModel) renderHunkLines(hunkIdx int) ([]string, []lineInfo) {
 	// Compute cursor's comment target key so we can highlight the targeted comment box.
 	cursorTargetKey := ""
 	if targetLine, targetFile := m.commentTargetFromCursor(); targetLine > 0 {
-		cursorTargetKey = fmt.Sprintf("%s:%d", targetFile, targetLine)
+		cursorTargetKey = commentKey(targetFile, targetLine)
 	}
 
 	// Base offset of this hunk in cachedLines (for cursor comparison).
