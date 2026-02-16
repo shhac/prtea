@@ -75,51 +75,19 @@ var (
 	diffSearchInfoStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
 )
 
-// AI inline comment styles for diff viewer
+// Inline comment box border colors
 var (
-	aiCommentStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("252")).
-		Background(lipgloss.Color("23")).
-		PaddingLeft(4)
-	aiCommentPrefixStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("75")).
-		Background(lipgloss.Color("23")).
-		Bold(true)
+	commentBoxAIBorder      = lipgloss.Color("75")  // blue
+	commentBoxGitHubBorder  = lipgloss.Color("220") // yellow
+	commentBoxPendingBorder = lipgloss.Color("214") // orange
 )
 
-// GitHub inline comment styles for diff viewer
+// Inline comment box header styles (used inside the box)
 var (
-	ghCommentBodyStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("252")).
-		Background(lipgloss.Color("236")).
-		PaddingLeft(4)
-	ghCommentAuthorStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("220")).
-		Background(lipgloss.Color("236")).
-		Bold(true)
-	ghCommentMetaStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("244")).
-		Background(lipgloss.Color("236"))
-	ghCommentReplyStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("252")).
-		Background(lipgloss.Color("236")).
-		PaddingLeft(6)
-	ghCommentOutdatedStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("244")).
-		Background(lipgloss.Color("236")).
-		Italic(true)
-)
-
-// Pending user inline comment styles for diff viewer
-var (
-	pendingCommentStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("252")).
-		Background(lipgloss.Color("58")).
-		PaddingLeft(4)
-	pendingCommentPrefixStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("214")).
-		Background(lipgloss.Color("58")).
-		Bold(true)
+	commentBoxHeaderStyle = lipgloss.NewStyle().Bold(true)
+	commentBoxMetaStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+	commentBoxTrimStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Italic(true)
+	commentBoxReplyStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
 )
 
 // PR list styles

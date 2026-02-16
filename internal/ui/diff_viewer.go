@@ -833,7 +833,8 @@ func (m DiffViewerModel) renderCommentBar() string {
 	} else {
 		target = fmt.Sprintf("%s:%d", m.commentTargetFile, m.commentTargetLine)
 	}
-	prompt := pendingCommentPrefixStyle.Render("📝 " + target + " > ")
+	promptStyle := lipgloss.NewStyle().Foreground(commentBoxPendingBorder).Bold(true)
+	prompt := promptStyle.Render("📝 " + target + " > ")
 	return prompt + m.commentInput.View()
 }
 
@@ -1597,15 +1598,22 @@ func (m *DiffViewerModel) renderHunkLines(hunkIdx int) ([]string, []lineInfo) {
 		// Inject inline comments after matching lines (+ or context lines)
 		if commentable {
 			key := fmt.Sprintf("%s:%d", hunk.Filename, newLine)
+			boxInnerWidth := m.viewport.Width - 2 - 2 - 2 // margin, border, padding
+			if boxInnerWidth < 10 {
+				boxInnerWidth = 10
+			}
 
 			// AI inline comments
 			if hasAIComments {
 				if comments, ok := m.aiCommentsByFileLine[key]; ok {
 					for _, c := range comments {
-						prefix := aiCommentPrefixStyle.Render("  💬 ")
-						body := aiCommentStyle.Render(c.Body)
-						lines = append(lines, prefix+body)
-						infos = append(infos, lineInfo{hunkIdx: hunkIdx, filename: hunk.Filename, comment: commentAI})
+						header := commentBoxHeaderStyle.Render("💬 Claude AI")
+						body := m.renderMarkdown(c.Body, boxInnerWidth)
+						boxLines := m.renderCommentBox(header, body, commentBoxAIBorder)
+						for range boxLines {
+							infos = append(infos, lineInfo{hunkIdx: hunkIdx, filename: hunk.Filename, comment: commentAI})
+						}
+						lines = append(lines, boxLines...)
 					}
 				}
 			}
@@ -1627,10 +1635,17 @@ func (m *DiffViewerModel) renderHunkLines(hunkIdx int) ([]string, []lineInfo) {
 			if hasPendingComments {
 				if comments, ok := m.pendingCommentsByFileLine[key]; ok {
 					for _, c := range comments {
-						prefix := pendingCommentPrefixStyle.Render("  📝 ")
-						body := pendingCommentStyle.Render(c.Body)
-						lines = append(lines, prefix+body)
-						infos = append(infos, lineInfo{hunkIdx: hunkIdx, filename: hunk.Filename, comment: commentPending})
+						source := "Draft"
+						if c.Source == "ai" {
+							source = "Draft (AI)"
+						}
+						header := commentBoxHeaderStyle.Render("📝 " + source)
+						body := m.renderMarkdown(c.Body, boxInnerWidth)
+						boxLines := m.renderCommentBox(header, body, commentBoxPendingBorder)
+						for range boxLines {
+							infos = append(infos, lineInfo{hunkIdx: hunkIdx, filename: hunk.Filename, comment: commentPending})
+						}
+						lines = append(lines, boxLines...)
 					}
 				}
 			}
@@ -1645,26 +1660,88 @@ func (m *DiffViewerModel) renderHunkLines(hunkIdx int) ([]string, []lineInfo) {
 	return lines, infos
 }
 
-// renderGHCommentThread renders a single GitHub comment thread (root + replies).
-func (m *DiffViewerModel) renderGHCommentThread(t ghCommentThread) []string {
-	var lines []string
+// commentBoxMaxPreviewLines is the maximum body lines shown in the inline preview.
+const commentBoxMaxPreviewLines = 3
 
-	// Root comment: 💬 @author · Jan 2 15:04
-	header := ghCommentAuthorStyle.Render("  💬 @"+t.Root.Author.Login) +
-		ghCommentMetaStyle.Render(" · "+t.Root.CreatedAt.Format("Jan 2 15:04"))
-	lines = append(lines, header)
-	lines = append(lines, ghCommentBodyStyle.Render(t.Root.Body))
-
-	// Replies: ↳ @author · Jan 2 15:04
-	for _, r := range t.Replies {
-		replyHeader := ghCommentMetaStyle.Render("    ↳ ") +
-			ghCommentAuthorStyle.Render("@"+r.Author.Login) +
-			ghCommentMetaStyle.Render(" · "+r.CreatedAt.Format("Jan 2 15:04"))
-		lines = append(lines, replyHeader)
-		lines = append(lines, ghCommentReplyStyle.Render(r.Body))
+// renderCommentBox renders content inside a bordered box, split into viewport lines.
+// header is the first line inside the box (e.g. "💬 Claude AI").
+// body is the pre-rendered content (already glamour-processed or plain text).
+// borderColor is the lipgloss color for the rounded border.
+// The box is indented 2 chars from the left to visually inset from diff code.
+func (m *DiffViewerModel) renderCommentBox(header, body string, borderColor lipgloss.Color) []string {
+	boxWidth := m.viewport.Width - 2 // 2-char left margin
+	if boxWidth < 14 {
+		boxWidth = 14
 	}
 
-	return lines
+	// Assemble content: header + body
+	var content strings.Builder
+	content.WriteString(header)
+	if body != "" {
+		content.WriteString("\n")
+		// Trim and apply preview limit
+		bodyLines := strings.Split(body, "\n")
+		// Remove trailing empty lines from glamour output
+		for len(bodyLines) > 0 && strings.TrimSpace(bodyLines[len(bodyLines)-1]) == "" {
+			bodyLines = bodyLines[:len(bodyLines)-1]
+		}
+		if len(bodyLines) > commentBoxMaxPreviewLines {
+			remaining := len(bodyLines) - commentBoxMaxPreviewLines
+			bodyLines = bodyLines[:commentBoxMaxPreviewLines]
+			bodyLines = append(bodyLines, commentBoxTrimStyle.Render(fmt.Sprintf("[+%d lines]", remaining)))
+		}
+		content.WriteString(strings.Join(bodyLines, "\n"))
+	}
+
+	boxStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(borderColor).
+		Width(boxWidth - 2). // -2 for border chars
+		PaddingLeft(1).PaddingRight(1)
+
+	rendered := boxStyle.Render(content.String())
+
+	// Split into viewport lines and add left margin
+	result := strings.Split(rendered, "\n")
+	for i, line := range result {
+		result[i] = "  " + line
+	}
+	return result
+}
+
+// renderGHCommentThread renders a single GitHub comment thread inside a bordered box.
+func (m *DiffViewerModel) renderGHCommentThread(t ghCommentThread) []string {
+	boxInnerWidth := m.viewport.Width - 2 - 2 - 2 // margin, border, padding
+	if boxInnerWidth < 10 {
+		boxInnerWidth = 10
+	}
+
+	// Header: 💬 @author · Jan 2 15:04
+	header := commentBoxHeaderStyle.Render("💬 @"+t.Root.Author.Login) +
+		commentBoxMetaStyle.Render(" · "+t.Root.CreatedAt.Format("Jan 2 15:04"))
+
+	// Build body: root body + replies
+	var body strings.Builder
+	body.WriteString(m.renderMarkdown(t.Root.Body, boxInnerWidth))
+
+	for i, r := range t.Replies {
+		if i >= 1 {
+			// Trim after first reply
+			remaining := len(t.Replies) - 1
+			body.WriteString("\n")
+			body.WriteString(commentBoxTrimStyle.Render(fmt.Sprintf("[+%d more replies]", remaining)))
+			break
+		}
+		body.WriteString("\n")
+		replyHeader := commentBoxReplyStyle.Render("↳ ") +
+			commentBoxHeaderStyle.Render("@"+r.Author.Login) +
+			commentBoxMetaStyle.Render(" · "+r.CreatedAt.Format("Jan 2 15:04"))
+		body.WriteString(replyHeader)
+		body.WriteString("\n")
+		body.WriteString(m.renderMarkdown(r.Body, boxInnerWidth))
+	}
+
+	return m.renderCommentBox(header, body.String(), commentBoxGitHubBorder)
 }
 
 // rerenderHunkInCache re-renders a single hunk's styled lines in the cache.

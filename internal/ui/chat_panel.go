@@ -758,7 +758,6 @@ func (m *ChatPanelModel) renderComments() string {
 	sectionStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("33"))
 	authorStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("220"))
 	dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
-	fileStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("42"))
 
 	var b strings.Builder
 
@@ -778,34 +777,13 @@ func (m *ChatPanelModel) renderComments() string {
 		}
 	}
 
-	// Inline review comments
+	// Inline review comments — shown inline in diff, just show count here
 	if len(m.inlineComments) > 0 {
 		if len(m.comments) > 0 {
 			b.WriteString("\n")
 		}
-		b.WriteString(sectionStyle.Render(fmt.Sprintf("Review Comments (%d)", len(m.inlineComments))))
+		b.WriteString(dimStyle.Render(fmt.Sprintf("%d review comments shown inline in diff", len(m.inlineComments))))
 		b.WriteString("\n")
-		for i, c := range m.inlineComments {
-			if i > 0 {
-				b.WriteString("\n")
-			}
-			b.WriteString(authorStyle.Render(c.Author.Login))
-			b.WriteString(dimStyle.Render(" · " + c.CreatedAt.Format("Jan 2 15:04")))
-			if c.Path != "" {
-				b.WriteString(" ")
-				label := c.Path
-				if c.Line > 0 {
-					label = fmt.Sprintf("%s:%d", c.Path, c.Line)
-				}
-				b.WriteString(fileStyle.Render(label))
-			}
-			if c.Outdated {
-				b.WriteString(dimStyle.Render(" (outdated)"))
-			}
-			b.WriteString("\n")
-			b.WriteString(m.renderMarkdown(c.Body, innerWidth))
-			b.WriteString("\n")
-		}
 	}
 
 	result := b.String()
