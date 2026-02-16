@@ -300,7 +300,7 @@ func replyToCommentCmd(client GitHubService, owner, repo string, prNumber int, c
 }
 
 // aiReviewCmd returns a command that runs Claude to generate an AI review with inline comments.
-func aiReviewCmd(analyzer *claude.Analyzer, pr *SelectedPR, files []github.PRFile) tea.Cmd {
+func aiReviewCmd(analyzer AIAnalyzer, pr *SelectedPR, files []github.PRFile) tea.Cmd {
 	return func() tea.Msg {
 		ctx := context.Background()
 

@@ -41,8 +41,8 @@ type App struct {
 	// Claude integration
 	claudePath    string
 	appConfig     *config.Config
-	analyzer      *claude.Analyzer
-	chatService   *claude.ChatService
+	analyzer      AIAnalyzer
+	chatService   AIChatService
 	analysisStore *claude.AnalysisStore
 	chatStore     *claude.ChatStore
 	analyzing            bool
@@ -90,11 +90,12 @@ func NewApp() App {
 
 	chatStore := claude.NewChatStore(config.ChatCacheDir())
 
-	var analyzer *claude.Analyzer
-	var chatSvc *claude.ChatService
+	var analyzer AIAnalyzer
+	var chatSvc AIChatService
 	if claudePath != "" {
-		analyzer = claude.NewAnalyzer(claudePath, cfg.ClaudeTimeoutDuration(), config.PromptsDir(), cfg.AnalysisMaxTurns)
-		chatSvc = claude.NewChatService(claudePath, cfg.ClaudeTimeoutDuration(), chatStore, cfg.MaxPromptTokens, cfg.MaxChatHistory, cfg.ChatMaxTurns)
+		executor := claude.NewCLIExecutor(claudePath)
+		analyzer = claude.NewAnalyzer(executor, cfg.ClaudeTimeoutDuration(), config.PromptsDir(), cfg.AnalysisMaxTurns)
+		chatSvc = claude.NewChatService(executor, cfg.ClaudeTimeoutDuration(), chatStore, cfg.MaxPromptTokens, cfg.MaxChatHistory, cfg.ChatMaxTurns)
 	}
 
 	store := claude.NewAnalysisStore(config.AnalysesCacheDir())
