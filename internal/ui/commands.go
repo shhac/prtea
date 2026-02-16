@@ -300,7 +300,7 @@ func replyToCommentCmd(client GitHubService, owner, repo string, prNumber int, c
 }
 
 // aiReviewCmd returns a command that runs Claude to generate an AI review with inline comments.
-func aiReviewCmd(analyzer AIAnalyzer, pr *SelectedPR, files []github.PRFile) tea.Cmd {
+func aiReviewCmd(analyzer AIAnalyzer, pr *PRSession, files []github.PRFile) tea.Cmd {
 	return func() tea.Msg {
 		ctx := context.Background()
 
@@ -352,7 +352,7 @@ func listenForAnalysisStream(ch analysisStreamChan) tea.Cmd {
 // -- Context builders --
 
 // buildChatContext constructs the PR context string for chat from metadata + diff.
-func buildChatContext(pr *SelectedPR, files []github.PRFile) string {
+func buildChatContext(pr *PRSession, files []github.PRFile) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "PR #%d: \"%s\" in %s/%s\n", pr.Number, pr.Title, pr.Owner, pr.Repo)
 	if len(files) > 0 {
@@ -366,7 +366,7 @@ func buildChatContext(pr *SelectedPR, files []github.PRFile) string {
 
 // buildSelectedHunkContext constructs PR context with selected hunks as the primary
 // focus, plus a brief file list for broader context.
-func buildSelectedHunkContext(pr *SelectedPR, files []github.PRFile, selectedDiff string) string {
+func buildSelectedHunkContext(pr *PRSession, files []github.PRFile, selectedDiff string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "PR #%d: \"%s\" in %s/%s\n", pr.Number, pr.Title, pr.Owner, pr.Repo)
 

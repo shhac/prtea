@@ -49,15 +49,6 @@ type PRSelectedAndAdvanceMsg struct {
 	HTMLURL string
 }
 
-// SelectedPR tracks the currently selected PR's metadata for global actions.
-type SelectedPR struct {
-	Owner   string
-	Repo    string
-	Number  int
-	Title   string
-	HTMLURL string
-}
-
 // -- Diff / PR detail --
 
 // DiffLoadedMsg is sent when PR diff data has been fetched.

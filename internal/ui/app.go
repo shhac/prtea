@@ -3,11 +3,10 @@ package ui
 import (
 	"context"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/bubbles/key"
-	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -33,10 +32,8 @@ type App struct {
 	// GitHub client (nil until GHClientReadyMsg)
 	ghClient GitHubService
 
-	// Currently selected PR (nil until a PR is selected)
-	selectedPR *SelectedPR
-	diffFiles             []github.PRFile          // stored for analysis context
-	pendingInlineComments []PendingInlineComment   // unified pool of pending comments
+	// Currently selected PR session (nil until a PR is selected)
+	session *PRSession
 
 	// Claude integration
 	claudePath    string
@@ -45,21 +42,16 @@ type App struct {
 	chatService   AIChatService
 	analysisStore *claude.AnalysisStore
 	chatStore     *claude.ChatStore
-	analyzing            bool
-	streamChan           chatStreamChan      // active chat streaming channel
-	streamCancel         context.CancelFunc  // cancels active stream goroutine
-	analysisStreamCh     analysisStreamChan  // active analysis streaming channel
-	analysisStreamCancel context.CancelFunc  // cancels active analysis stream
 
 	// Layout state
-	focused            Panel
-	width              int
-	height             int
-	panelVisible       [3]bool // which panels are currently visible
-	zoomed             bool    // zoom mode: only focused panel shown
-	preZoomVisible     [3]bool // saved visibility before zoom
-	initialized        bool    // whether first WindowSizeMsg has been processed
-	collapseThreshold  int     // terminal width below which panels auto-collapse
+	focused           Panel
+	width             int
+	height            int
+	panelVisible      [3]bool // which panels are currently visible
+	zoomed            bool    // zoom mode: only focused panel shown
+	preZoomVisible    [3]bool // saved visibility before zoom
+	initialized       bool    // whether first WindowSizeMsg has been processed
+	collapseThreshold int     // terminal width below which panels auto-collapse
 
 	// Mode
 	mode AppMode
@@ -74,16 +66,19 @@ type App struct {
 	pollEnabled  bool          // whether polling is enabled
 
 	// Notification state
-	notifyEnabled    bool            // whether OS notifications are enabled
-	initialLoadDone  bool            // true after first successful PR fetch
-	knownPRs         map[string]bool // PR keys seen since boot (for new-PR detection)
+	notifyEnabled   bool            // whether OS notifications are enabled
+	initialLoadDone bool            // true after first successful PR fetch
+	knownPRs        map[string]bool // PR keys seen since boot (for new-PR detection)
 }
 
 // NewApp creates a new App model with default state.
 func NewApp() App {
-	cfg, _ := config.Load()
+	cfg, cfgErr := config.Load()
 	if cfg == nil {
 		cfg = &config.Config{ClaudeTimeout: config.DefaultClaudeTimeoutMs}
+	}
+	if cfgErr != nil {
+		log.Printf("warning: config load failed, using defaults: %v", cfgErr)
 	}
 
 	claudePath, _ := claude.FindClaude()
@@ -157,633 +152,89 @@ func (m App) Init() tea.Cmd {
 	return tea.Batch(initGHClientCmd, m.prList.spinner.Tick)
 }
 
+// Update dispatches messages to domain-specific sub-handlers.
 func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
+	switch msg.(type) {
+	// Window resize (handled inline — unique)
 	case tea.WindowSizeMsg:
-		m.width = msg.Width
-		m.height = msg.Height
-		m.helpOverlay.SetSize(m.width, m.height)
-		m.commandMode.SetSize(m.width, m.height)
-		m.settingsPanel.SetSize(m.width, m.height)
-		m.commentOverlay.SetSize(m.width, m.height)
-		// Auto-collapse panels on first render if terminal is narrow
-		if !m.initialized {
-			m.initialized = true
-			if m.width < m.collapseThreshold {
-				m.panelVisible[PanelRight] = false
-				if m.focused == PanelRight {
-					m.focusPanel(nextVisiblePanel(m.focused, m.panelVisible))
-				}
-			}
-		}
-		m.recalcLayout()
-		return m, nil
+		return m.handleWindowSize(msg.(tea.WindowSizeMsg))
 
-	case GHClientReadyMsg:
-		if gc, ok := msg.Client.(*github.Client); ok {
-			gc.FetchLimit = m.appConfig.PRFetchLimit
-		}
-		m.ghClient = msg.Client
-		return m, fetchPRsCmd(m.ghClient)
+	// PR list domain: client init, fetching, polling, selection
+	case GHClientReadyMsg, GHClientErrorMsg,
+		PRsLoadedMsg, PRsErrorMsg,
+		pollTickMsg, pollPRsLoadedMsg,
+		PRSelectedMsg, PRSelectedAndAdvanceMsg:
+		return m.handlePRListMsg(msg)
 
-	case GHClientErrorMsg:
-		m.prList.SetError(msg.Err.Error())
-		return m, nil
+	// Diff domain: diff loading, PR detail, comments, CI, reviews
+	case HunkSelectedAndAdvanceMsg,
+		DiffLoadedMsg, PRDetailLoadedMsg,
+		CommentsLoadedMsg, CIStatusLoadedMsg,
+		CIRerunRequestMsg, CIRerunDoneMsg, CIRerunErrMsg,
+		ReviewsLoadedMsg:
+		return m.handleDiffMsg(msg)
 
-	case PRsLoadedMsg:
-		toReview := convertPRItems(msg.ToReview)
-		myPRs := convertPRItems(msg.MyPRs)
-		m.prList.SetItems(toReview, myPRs)
-		// Snapshot known PRs on initial load (boot set for notification detection)
-		if !m.initialLoadDone {
-			m.initialLoadDone = true
-			m.snapshotKnownPRs(msg.ToReview, msg.MyPRs)
-		}
-		// Start background polling after the first successful load
-		if m.pollEnabled && m.pollInterval > 0 {
-			return m, pollTickCmd(m.pollInterval)
-		}
-		return m, nil
+	// Analysis domain: AI analysis and AI review
+	case AnalysisStreamChunkMsg, AnalysisCompleteMsg, AnalysisErrorMsg,
+		AIReviewCompleteMsg, AIReviewErrorMsg:
+		return m.handleAnalysisMsg(msg)
 
-	case PRsErrorMsg:
-		m.prList.SetError(msg.Err.Error())
-		return m, nil
+	// Chat domain: chat streaming, comments, inline comments
+	case ChatClearMsg, ChatSendMsg,
+		ChatStreamChunkMsg, ChatResponseMsg,
+		CommentPostMsg, CommentPostedMsg,
+		InlineCommentAddMsg,
+		InlineCommentReplyMsg, InlineCommentReplyDoneMsg:
+		return m.handleChatMsg(msg)
 
-	case pollTickMsg:
-		if m.pollEnabled && m.ghClient != nil && m.prList.state == stateLoaded {
-			return m, tea.Batch(
-				pollFetchPRsCmd(m.ghClient),
-				pollTickCmd(m.pollInterval),
-			)
-		}
-		// Not ready or disabled — reschedule so polling resumes if re-enabled
-		if m.pollEnabled && m.pollInterval > 0 {
-			return m, pollTickCmd(m.pollInterval)
-		}
-		return m, nil
+	// Review domain: review submission, approval, PR close
+	case ReviewValidationMsg, ReviewSubmitMsg,
+		ReviewSubmitDoneMsg, ReviewSubmitErrMsg,
+		PRApproveDoneMsg, PRApproveErrMsg,
+		PRCloseDoneMsg, PRCloseErrMsg:
+		return m.handleReviewMsg(msg)
 
-	case pollPRsLoadedMsg:
-		toReview := convertPRItems(msg.ToReview)
-		myPRs := convertPRItems(msg.MyPRs)
-		m.prList.MergeItems(toReview, myPRs)
-		// Detect new PRs and send notifications
-		var cmds []tea.Cmd
-		if m.notifyEnabled {
-			newPRs := m.detectNewPRs(msg.ToReview)
-			if len(newPRs) > 0 {
-				cmds = append(cmds, notifyNewPRsCmd(newPRs, m.appConfig.NotificationThreshold))
-			}
-		}
-		// Always update the known set (even if notifications disabled)
-		m.snapshotKnownPRs(msg.ToReview, msg.MyPRs)
-		return m, tea.Batch(cmds...)
+	// Config domain: settings, overlays, mode changes, commands
+	case ConfigChangedMsg, HelpClosedMsg, SettingsClosedMsg,
+		ShowCommentOverlayMsg, CommentOverlayClosedMsg,
+		CommandExecuteMsg, CommandModeExitMsg, CommandNotFoundMsg,
+		ModeChangedMsg:
+		return m.handleConfigMsg(msg)
 
-	case HelpClosedMsg:
-		m.mode = ModeNavigation
-		m.statusBar.SetState(m.focused, m.mode)
-		return m, nil
-
-	case SettingsClosedMsg:
-		m.mode = ModeNavigation
-		m.statusBar.SetState(m.focused, m.mode)
-		return m, nil
-
-	case ShowCommentOverlayMsg:
-		m.commentOverlay.SetSize(m.width, m.height)
-		cmd := m.commentOverlay.Show(msg)
-		m.mode = ModeOverlay
-		m.statusBar.SetState(m.focused, m.mode)
-		return m, cmd
-
-	case CommentOverlayClosedMsg:
-		m.mode = ModeNavigation
-		m.statusBar.SetState(m.focused, m.mode)
-		return m, nil
-
-	case InlineCommentReplyMsg:
-		if m.selectedPR == nil || m.ghClient == nil {
-			return m, nil
-		}
-		pr := m.selectedPR
-		clearCmd := m.statusBar.SetTemporaryMessage("Posting reply...", 2*time.Second)
-		return m, tea.Batch(clearCmd, replyToCommentCmd(m.ghClient, pr.Owner, pr.Repo, pr.Number, msg.CommentID, msg.Body))
-
-	case InlineCommentReplyDoneMsg:
-		if msg.Err != nil {
-			clearCmd := m.statusBar.SetTemporaryMessage(
-				fmt.Sprintf("Reply failed: %v", msg.Err), 3*time.Second)
-			return m, clearCmd
-		}
-		// Refresh inline comments to show the new reply
-		clearCmd := m.statusBar.SetTemporaryMessage("Reply posted", 2*time.Second)
-		var refreshCmd tea.Cmd
-		if m.selectedPR != nil && m.ghClient != nil {
-			pr := m.selectedPR
-			refreshCmd = fetchCommentsCmd(m.ghClient, pr.Owner, pr.Repo, pr.Number)
-		}
-		return m, tea.Batch(clearCmd, refreshCmd)
-
-	case ConfigChangedMsg:
-		if m.settingsPanel.IsDirty() {
-			cfg := m.settingsPanel.Config()
-			m.appConfig = cfg
-			_ = config.Save(cfg)
-			// Update polling state from new config
-			wasEnabled := m.pollEnabled
-			m.pollEnabled = cfg.PollEnabled
-			m.pollInterval = cfg.PollIntervalDuration()
-			m.notifyEnabled = cfg.NotificationsEnabled
-			// If polling was just enabled, start the tick
-			if !wasEnabled && m.pollEnabled && m.pollInterval > 0 && m.prList.state == stateLoaded {
-				return m, pollTickCmd(m.pollInterval)
-			}
-			// Propagate display/review settings
-			m.chatPanel.SetStreamCheckpoint(time.Duration(cfg.StreamCheckpointMs) * time.Millisecond)
-			m.chatPanel.UpdateDefaultReviewAction(cfg.DefaultReviewAction)
-			// Propagate layout settings
-			m.collapseThreshold = cfg.CollapseThreshold
-			// Propagate PR fetch limit
-			if gc, ok := m.ghClient.(*github.Client); ok {
-				gc.FetchLimit = cfg.PRFetchLimit
-			}
-			// Propagate AI tuning settings
-			if m.analyzer != nil {
-				m.analyzer.SetTimeout(cfg.ClaudeTimeoutDuration())
-				m.analyzer.SetAnalysisMaxTurns(cfg.AnalysisMaxTurns)
-			}
-			if m.chatService != nil {
-				m.chatService.SetTimeout(cfg.ClaudeTimeoutDuration())
-				m.chatService.SetMaxPromptTokens(cfg.MaxPromptTokens)
-				m.chatService.SetMaxHistoryMessages(cfg.MaxChatHistory)
-				m.chatService.SetMaxTurns(cfg.ChatMaxTurns)
-			}
-		}
-		return m, nil
-
-	case CommandExecuteMsg:
-		m.mode = ModeNavigation
-		m.statusBar.SetState(m.focused, m.mode)
-		return m.executeCommand(msg.Name)
-
-	case CommandModeExitMsg:
-		m.mode = ModeNavigation
-		m.statusBar.SetState(m.focused, m.mode)
-		return m, nil
-
-	case CommandNotFoundMsg:
-		clearCmd := m.statusBar.SetTemporaryMessage(fmt.Sprintf("Unknown command: %s", msg.Input), 2*time.Second)
-		return m, clearCmd
-
-	case ModeChangedMsg:
-		if msg.Mode == ChatModeInsert {
-			m.mode = ModeInsert
-		} else {
-			m.mode = ModeNavigation
-		}
-		m.statusBar.SetState(m.focused, m.mode)
-		return m, nil
-
-	case PRSelectedMsg:
-		return m.selectPR(msg.Owner, msg.Repo, msg.Number, msg.HTMLURL, false)
-
-	case PRSelectedAndAdvanceMsg:
-		return m.selectPR(msg.Owner, msg.Repo, msg.Number, msg.HTMLURL, true)
-
-	case HunkSelectedAndAdvanceMsg:
-		m.showAndFocusPanel(PanelRight)
-		return m, nil
-
-	case DiffLoadedMsg:
-		// Race guard: only apply if this is for the currently displayed PR
-		if msg.PRNumber != m.diffViewer.prNumber {
-			return m, nil
-		}
-		if msg.Err != nil {
-			m.diffViewer.SetError(msg.Err)
-		} else {
-			m.diffViewer.SetDiff(msg.Files)
-			m.diffFiles = msg.Files
-		}
-		return m, m.refreshFetchDone(msg.PRNumber)
-
-	case PRDetailLoadedMsg:
-		// Race guard: only apply if this is for the currently selected PR
-		if m.selectedPR == nil || msg.PRNumber != m.selectedPR.Number {
-			return m, nil
-		}
-		if msg.Err != nil {
-			m.diffViewer.SetPRInfoError(msg.Err.Error())
-		} else if msg.Detail != nil {
-			m.diffViewer.SetPRInfo(
-				msg.Detail.Title,
-				msg.Detail.Body,
-				msg.Detail.Author.Login,
-				msg.Detail.HTMLURL,
-			)
-		}
-		return m, m.refreshFetchDone(msg.PRNumber)
-
-	case CommentsLoadedMsg:
-		// Race guard: only apply if this is for the currently selected PR
-		if m.selectedPR == nil || msg.PRNumber != m.selectedPR.Number {
-			return m, nil
-		}
-		if msg.Err != nil {
-			m.chatPanel.SetCommentsError(msg.Err.Error())
-		} else {
-			m.chatPanel.SetComments(msg.Comments, msg.InlineComments)
-			m.diffViewer.SetGitHubInlineComments(msg.InlineComments)
-		}
-		return m, m.refreshFetchDone(msg.PRNumber)
-
-	case CIStatusLoadedMsg:
-		// Race guard: only apply if this is for the currently selected PR
-		if m.selectedPR == nil || msg.PRNumber != m.selectedPR.Number {
-			return m, nil
-		}
-		if msg.Err != nil {
-			m.diffViewer.SetCIError(msg.Err.Error())
-		} else if msg.Status != nil {
-			m.diffViewer.SetCIStatus(msg.Status)
-			m.prList.SetCIStatus(msg.Status.OverallStatus)
-		}
-		return m, m.refreshFetchDone(msg.PRNumber)
-
-	case CIRerunRequestMsg:
-		if m.selectedPR == nil || m.ghClient == nil {
-			return m, nil
-		}
-		runIDs := m.diffViewer.ciStatus.FailedRunIDs()
-		if len(runIDs) == 0 {
-			clearCmd := m.statusBar.SetTemporaryMessage("No re-runnable failed checks", 2*time.Second)
-			return m, clearCmd
-		}
-		clearCmd := m.statusBar.SetTemporaryMessage(
-			fmt.Sprintf("Re-running %d failed workflow(s)...", len(runIDs)), 15*time.Second,
-		)
-		pr := m.selectedPR
-		return m, tea.Batch(clearCmd, rerunFailedCICmd(m.ghClient, pr.Owner, pr.Repo, pr.Number, runIDs))
-
-	case CIRerunDoneMsg:
-		clearCmd := m.statusBar.SetTemporaryMessage(
-			fmt.Sprintf("Re-ran %d workflow(s) — refreshing CI...", msg.Count), 3*time.Second,
-		)
-		// Refresh CI status after re-run
-		var fetchCmd tea.Cmd
-		if m.selectedPR != nil && m.ghClient != nil && msg.PRNumber == m.selectedPR.Number {
-			fetchCmd = fetchCIStatusCmd(m.ghClient, m.selectedPR.Owner, m.selectedPR.Repo, m.selectedPR.Number)
-		}
-		return m, tea.Batch(clearCmd, fetchCmd)
-
-	case CIRerunErrMsg:
-		clearCmd := m.statusBar.SetTemporaryMessage(
-			fmt.Sprintf("CI re-run failed: %s", formatUserError(msg.Err.Error())), 5*time.Second,
-		)
-		return m, clearCmd
-
-	case ReviewsLoadedMsg:
-		// Race guard: only apply if this is for the currently selected PR
-		if m.selectedPR == nil || msg.PRNumber != m.selectedPR.Number {
-			return m, nil
-		}
-		if msg.Err != nil {
-			m.diffViewer.SetReviewError(msg.Err.Error())
-		} else if msg.Summary != nil {
-			m.diffViewer.SetReviewSummary(msg.Summary)
-			m.prList.SetReviewDecision(msg.Summary.ReviewDecision)
-		}
-		return m, m.refreshFetchDone(msg.PRNumber)
-
-	case AnalysisStreamChunkMsg:
-		if m.analysisStreamCh == nil {
-			return m, nil
-		}
-		m.chatPanel.AppendAnalysisStreamChunk(msg.Content)
-		return m, listenForAnalysisStream(m.analysisStreamCh)
-
-	case AnalysisCompleteMsg:
-		m.analyzing = false
-		m.analysisStreamCh = nil
-		if m.selectedPR != nil && msg.PRNumber == m.selectedPR.Number {
-			m.chatPanel.SetAnalysisResult(msg.Result)
-			// Cache the result
-			_ = m.analysisStore.Put(
-				m.selectedPR.Owner, m.selectedPR.Repo, m.selectedPR.Number,
-				msg.DiffHash, msg.Result,
-			)
-		}
-		return m, nil
-
-	case AnalysisErrorMsg:
-		m.analyzing = false
-		m.analysisStreamCh = nil
-		if m.selectedPR != nil && msg.PRNumber == m.selectedPR.Number {
-			m.chatPanel.SetAnalysisError(msg.Err.Error())
-		}
-		return m, nil
-
-	case AIReviewCompleteMsg:
-		if m.selectedPR != nil && msg.PRNumber == m.selectedPR.Number {
-			m.chatPanel.SetAIReviewResult(msg.Result)
-			// Merge AI comments into pending pool (replaces old AI comments, preserves user comments)
-			m.mergeAIComments(msg.Result.Comments)
-			m.diffViewer.ClearAIInlineComments()
-			m.diffViewer.SetPendingInlineComments(m.pendingInlineComments)
-			m.chatPanel.SetPendingCommentCount(len(m.pendingInlineComments))
-			clearCmd := m.statusBar.SetTemporaryMessage(
-				fmt.Sprintf("AI review ready: %d inline comments", len(msg.Result.Comments)),
-				3*time.Second,
-			)
-			return m, clearCmd
-		}
-		return m, nil
-
-	case AIReviewErrorMsg:
-		if m.selectedPR != nil && msg.PRNumber == m.selectedPR.Number {
-			m.chatPanel.SetAIReviewError(msg.Err.Error())
-			clearCmd := m.statusBar.SetTemporaryMessage(
-				"AI review failed: "+formatUserError(msg.Err.Error()),
-				5*time.Second,
-			)
-			return m, clearCmd
-		}
-		return m, nil
-
-	case InlineCommentAddMsg:
-		return m.handleInlineCommentAdd(msg)
-
-	case CommentPostMsg:
-		return m.handleCommentPost(msg.Body)
-
-	case CommentPostedMsg:
-		m.chatPanel.SetCommentPosted(msg.Err)
-		if msg.Err == nil && m.ghClient != nil && m.selectedPR != nil {
-			// Refresh comments after successful post
-			return m, fetchCommentsCmd(m.ghClient, m.selectedPR.Owner, m.selectedPR.Repo, m.selectedPR.Number)
-		}
-		return m, nil
-
-	case ReviewValidationMsg:
-		clearCmd := m.statusBar.SetTemporaryMessage(msg.Message, 3*time.Second)
-		return m, clearCmd
-
-	case ReviewSubmitMsg:
-		return m.handleReviewSubmit(msg)
-
-	case ReviewSubmitDoneMsg:
-		if m.selectedPR == nil || msg.PRNumber != m.selectedPR.Number {
-			return m, nil
-		}
-		actionLabels := map[ReviewAction]string{
-			ReviewApprove:        "Approved",
-			ReviewComment:        "Commented on",
-			ReviewRequestChanges: "Requested changes on",
-		}
-		label := actionLabels[msg.Action]
-		clearCmd := m.statusBar.SetTemporaryMessage(fmt.Sprintf("✓ %s PR #%d", label, msg.PRNumber), 3*time.Second)
-		m.chatPanel.SetReviewSubmitted(nil)
-		// Clear pending comments — they've been submitted
-		m.pendingInlineComments = nil
-		m.diffViewer.SetPendingInlineComments(nil)
-		m.chatPanel.SetPendingCommentCount(0)
-		return m, tea.Batch(clearCmd, fetchReviewsCmd(m.ghClient, m.selectedPR.Owner, m.selectedPR.Repo, m.selectedPR.Number))
-
-	case ReviewSubmitErrMsg:
-		if m.selectedPR != nil && msg.PRNumber == m.selectedPR.Number {
-			m.chatPanel.SetReviewSubmitted(msg.Err)
-		}
-		clearCmd := m.statusBar.SetTemporaryMessage(fmt.Sprintf("✗ Review failed: %s", msg.Err), 5*time.Second)
-		return m, clearCmd
-
-	case PRApproveDoneMsg:
-		if m.selectedPR == nil || msg.PRNumber != m.selectedPR.Number {
-			return m, nil
-		}
-		clearCmd := m.statusBar.SetTemporaryMessage(fmt.Sprintf("✓ Approved PR #%d", msg.PRNumber), 3*time.Second)
-		return m, tea.Batch(clearCmd, fetchReviewsCmd(m.ghClient, m.selectedPR.Owner, m.selectedPR.Repo, m.selectedPR.Number))
-
-	case PRApproveErrMsg:
-		clearCmd := m.statusBar.SetTemporaryMessage(fmt.Sprintf("✗ Approve failed: %s", msg.Err), 5*time.Second)
-		return m, clearCmd
-
-	case PRCloseDoneMsg:
-		if m.selectedPR == nil || msg.PRNumber != m.selectedPR.Number {
-			return m, nil
-		}
-		clearCmd := m.statusBar.SetTemporaryMessage(fmt.Sprintf("✓ Closed PR #%d", msg.PRNumber), 3*time.Second)
-		if m.ghClient != nil {
-			return m, tea.Batch(clearCmd, fetchPRsCmd(m.ghClient))
-		}
-		return m, clearCmd
-
-	case PRCloseErrMsg:
-		clearCmd := m.statusBar.SetTemporaryMessage(fmt.Sprintf("✗ Close failed: %s", msg.Err), 5*time.Second)
-		return m, clearCmd
+	// Infrastructure: spinner ticks, status bar, filter matches
+	case spinner.TickMsg:
+		return m.handleSpinnerTick(msg.(spinner.TickMsg))
 
 	case StatusBarClearMsg:
-		m.statusBar.ClearIfSeqMatch(msg.Seq)
+		m.statusBar.ClearIfSeqMatch(msg.(StatusBarClearMsg).Seq)
 		return m, nil
 
-	case list.FilterMatchesMsg:
-		// Route filter match results back to the PR list so filtering actually works.
-		var cmd tea.Cmd
-		m.prList, cmd = m.prList.Update(msg)
-		return m, cmd
-
-	case spinner.TickMsg:
-		// Route spinner ticks to all panels (each panel only processes its own spinner)
-		var cmds []tea.Cmd
-		var cmd tea.Cmd
-		m.prList, cmd = m.prList.Update(msg)
-		cmds = append(cmds, cmd)
-		m.diffViewer, cmd = m.diffViewer.Update(msg)
-		cmds = append(cmds, cmd)
-		m.chatPanel, cmd = m.chatPanel.Update(msg)
-		cmds = append(cmds, cmd)
-		return m, tea.Batch(cmds...)
-
-	case ChatClearMsg:
-		m.chatPanel.ClearChat()
-		if m.streamCancel != nil { // cancel active stream goroutine
-			m.streamCancel()
-			m.streamCancel = nil
-		}
-		m.streamChan = nil // stop any active stream
-		if m.chatService != nil && m.selectedPR != nil {
-			m.chatService.ClearSession(m.selectedPR.Owner, m.selectedPR.Repo, m.selectedPR.Number)
-		}
-		clearCmd := m.statusBar.SetTemporaryMessage("Chat cleared", 2*time.Second)
-		return m, clearCmd
-
-	case ChatSendMsg:
-		return m.handleChatSend(msg.Message)
-
-	case ChatStreamChunkMsg:
-		// Ignore stale chunks from a previous PR's stream
-		if m.streamChan == nil {
-			return m, nil
-		}
-		m.chatPanel.AppendStreamChunk(msg.Content)
-		return m, listenForChatStream(m.streamChan)
-
-	case ChatResponseMsg:
-		// Ignore stale responses from a previous PR's stream
-		if m.streamChan == nil {
-			return m, nil
-		}
-		m.streamChan = nil
-		if msg.Err != nil {
-			m.chatPanel.SetChatError(msg.Err.Error())
-		} else {
-			m.chatPanel.AddResponse(msg.Content)
-		}
-		return m, nil
-
+	// Key input
 	case tea.KeyMsg:
-		// Overlay mode captures all keys
-		if m.mode == ModeOverlay {
-			if m.commentOverlay.IsVisible() {
-				var cmd tea.Cmd
-				m.commentOverlay, cmd = m.commentOverlay.Update(msg)
-				return m, cmd
-			}
-			if m.settingsPanel.IsVisible() {
-				var cmd tea.Cmd
-				m.settingsPanel, cmd = m.settingsPanel.Update(msg)
-				return m, cmd
-			}
-			var cmd tea.Cmd
-			m.helpOverlay, cmd = m.helpOverlay.Update(msg)
-			return m, cmd
-		}
-
-		// In insert mode, only Esc is handled globally (via chat panel)
-		if m.mode == ModeInsert {
-			return m.updateChatPanel(msg)
-		}
-
-		// Command mode captures all keys
-		if m.mode == ModeCommand {
-			var cmd tea.Cmd
-			m.commandMode, cmd = m.commandMode.Update(msg)
-			return m, cmd
-		}
-
-		// While filtering the PR list, route all keys to the list
-		if m.focused == PanelLeft && m.prList.IsFiltering() {
-			return m.updateFocusedPanel(msg)
-		}
-
-		// While searching in the diff viewer, route all keys to the diff viewer
-		if m.focused == PanelCenter && m.diffViewer.IsSearching() {
-			return m.updateFocusedPanel(msg)
-		}
-
-		// While commenting in the diff viewer, route all keys to the diff viewer
-		if m.focused == PanelCenter && m.diffViewer.IsCommenting() {
-			return m.updateFocusedPanel(msg)
-		}
-
-		// Global key handling in navigation mode
-		switch {
-		case key.Matches(msg, GlobalKeys.Help):
-			m.mode = ModeOverlay
-			m.helpOverlay.SetSize(m.width, m.height)
-			m.helpOverlay.Show(m.focused)
-			m.statusBar.SetState(m.focused, m.mode)
-			return m, nil
-
-		case key.Matches(msg, GlobalKeys.Quit):
-			return m, tea.Quit
-
-		case key.Matches(msg, GlobalKeys.Tab):
-			if m.zoomed {
-				m.exitZoom()
-				m.recalcLayout()
-			}
-			m.focusPanel(nextVisiblePanel(m.focused, m.panelVisible))
-			return m, nil
-
-		case key.Matches(msg, GlobalKeys.ShiftTab):
-			if m.zoomed {
-				m.exitZoom()
-				m.recalcLayout()
-			}
-			m.focusPanel(prevVisiblePanel(m.focused, m.panelVisible))
-			return m, nil
-
-		case key.Matches(msg, GlobalKeys.Panel1):
-			m.showAndFocusPanel(PanelLeft)
-			return m, nil
-
-		case key.Matches(msg, GlobalKeys.Panel2):
-			m.showAndFocusPanel(PanelCenter)
-			return m, nil
-
-		case key.Matches(msg, GlobalKeys.Panel3):
-			m.showAndFocusPanel(PanelRight)
-			return m, nil
-
-		case key.Matches(msg, GlobalKeys.ToggleLeft):
-			if m.zoomed {
-				m.exitZoom()
-			}
-			m.togglePanel(PanelLeft)
-			return m, nil
-
-		case key.Matches(msg, GlobalKeys.ToggleCenter):
-			if m.zoomed {
-				m.exitZoom()
-			}
-			m.togglePanel(PanelCenter)
-			return m, nil
-
-		case key.Matches(msg, GlobalKeys.ToggleRight):
-			if m.zoomed {
-				m.exitZoom()
-			}
-			m.togglePanel(PanelRight)
-			return m, nil
-
-		case key.Matches(msg, GlobalKeys.Zoom):
-			m.toggleZoom()
-			return m, nil
-
-		case key.Matches(msg, GlobalKeys.OpenBrowser):
-			if m.selectedPR != nil && m.selectedPR.HTMLURL != "" {
-				return m, openBrowserCmd(m.selectedPR.HTMLURL)
-			}
-			return m, nil
-
-		case key.Matches(msg, GlobalKeys.Analyze):
-			return m.startAnalysis()
-
-		case key.Matches(msg, GlobalKeys.Refresh):
-			if m.focused == PanelLeft {
-				return m.refreshPRList()
-			}
-			return m.refreshSelectedPR()
-
-		case key.Matches(msg, GlobalKeys.CommandMode):
-			m.mode = ModeCommand
-			m.commandMode.SetSize(m.width, m.height)
-			cmd := m.commandMode.Open(true)
-			m.statusBar.SetState(m.focused, m.mode)
-			return m, cmd
-
-		case key.Matches(msg, GlobalKeys.ExCommand):
-			m.mode = ModeCommand
-			m.commandMode.SetSize(m.width, m.height)
-			cmd := m.commandMode.Open(false)
-			m.statusBar.SetState(m.focused, m.mode)
-			return m, cmd
-
-		}
-
-		// Delegate to focused panel
-		return m.updateFocusedPanel(msg)
+		return m.handleKeyMsg(msg.(tea.KeyMsg))
 	}
 
+	return m, nil
+}
+
+// handleWindowSize processes terminal resize events.
+func (m App) handleWindowSize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
+	m.width = msg.Width
+	m.height = msg.Height
+	m.helpOverlay.SetSize(m.width, m.height)
+	m.commandMode.SetSize(m.width, m.height)
+	m.settingsPanel.SetSize(m.width, m.height)
+	m.commentOverlay.SetSize(m.width, m.height)
+	if !m.initialized {
+		m.initialized = true
+		if m.width < m.collapseThreshold {
+			m.panelVisible[PanelRight] = false
+			if m.focused == PanelRight {
+				m.focusPanel(nextVisiblePanel(m.focused, m.panelVisible))
+			}
+		}
+	}
+	m.recalcLayout()
 	return m, nil
 }
 
@@ -840,38 +291,32 @@ func (m App) View() string {
 	return base
 }
 
-// selectPR handles shared setup when a PR is selected: resets panel state,
-// kicks off data fetches, and optionally advances focus to the diff viewer.
+// selectPR handles shared setup when a PR is selected: creates a fresh PRSession,
+// resets panel state, kicks off data fetches, and optionally advances focus.
 func (m App) selectPR(owner, repo string, number int, htmlURL string, advance bool) (tea.Model, tea.Cmd) {
 	title := ""
 	if item, ok := m.prList.list.SelectedItem().(PRItem); ok {
 		title = item.title
 	}
 	// Save current chat session before switching PRs
-	if m.chatService != nil && m.selectedPR != nil {
-		m.chatService.SaveSession(m.selectedPR.Owner, m.selectedPR.Repo, m.selectedPR.Number)
+	if m.chatService != nil && m.session != nil {
+		m.chatService.SaveSession(m.session.Owner, m.session.Repo, m.session.Number)
 	}
 
-	m.selectedPR = &SelectedPR{
+	// Cancel any active streams from the previous session
+	if m.session != nil {
+		m.session.CancelStreams()
+	}
+
+	// Create a fresh session for the new PR
+	m.session = &PRSession{
 		Owner:   owner,
 		Repo:    repo,
 		Number:  number,
 		Title:   title,
 		HTMLURL: htmlURL,
 	}
-	if m.streamCancel != nil { // cancel active chat stream goroutine
-		m.streamCancel()
-		m.streamCancel = nil
-	}
-	m.streamChan = nil // stop listening to old chat stream
-	if m.analysisStreamCancel != nil { // cancel active analysis stream
-		m.analysisStreamCancel()
-		m.analysisStreamCancel = nil
-	}
-	m.analysisStreamCh = nil           // stop listening to old analysis stream
-	m.analyzing = false
-	m.diffFiles = nil                  // clear old diff data
-	m.pendingInlineComments = nil      // clear old pending comments
+
 	m.chatPanel.SetAnalysisResult(nil) // clear old analysis
 	m.chatPanel.ClearComments()        // clear old comments
 	m.chatPanel.ClearReview()          // clear old review
@@ -1020,7 +465,7 @@ func (m App) updateChatPanel(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // startAnalysis validates state and kicks off Claude analysis.
 func (m App) startAnalysis() (tea.Model, tea.Cmd) {
-	if m.selectedPR == nil {
+	if m.session == nil {
 		m.chatPanel.SetAnalysisError("No PR selected. Select a PR first.")
 		m.chatPanel.activeTab = ChatTabAnalysis
 		m.showAndFocusPanel(PanelRight)
@@ -1032,10 +477,10 @@ func (m App) startAnalysis() (tea.Model, tea.Cmd) {
 		m.showAndFocusPanel(PanelRight)
 		return m, nil
 	}
-	if m.analyzing {
+	if m.session.Analyzing {
 		return m, nil
 	}
-	if len(m.diffFiles) == 0 {
+	if len(m.session.DiffFiles) == 0 {
 		m.chatPanel.SetAnalysisError("No diff loaded. Select a PR to load its diff first.")
 		m.chatPanel.activeTab = ChatTabAnalysis
 		m.showAndFocusPanel(PanelRight)
@@ -1043,8 +488,8 @@ func (m App) startAnalysis() (tea.Model, tea.Cmd) {
 	}
 
 	// Check cache
-	hash := diffContentHash(m.diffFiles)
-	cached, _ := m.analysisStore.Get(m.selectedPR.Owner, m.selectedPR.Repo, m.selectedPR.Number)
+	hash := diffContentHash(m.session.DiffFiles)
+	cached, _ := m.analysisStore.Get(m.session.Owner, m.session.Repo, m.session.Number)
 	if cached != nil && !m.analysisStore.IsStale(cached, hash) {
 		m.chatPanel.SetAnalysisResult(cached.Result)
 		m.chatPanel.activeTab = ChatTabAnalysis
@@ -1053,18 +498,18 @@ func (m App) startAnalysis() (tea.Model, tea.Cmd) {
 	}
 
 	// Cancel any previous analysis stream
-	if m.analysisStreamCancel != nil {
-		m.analysisStreamCancel()
+	if m.session.AnalysisStreamCancel != nil {
+		m.session.AnalysisStreamCancel()
 	}
 
 	// Start async streaming analysis
-	m.analyzing = true
+	m.session.Analyzing = true
 	m.chatPanel.SetAnalysisLoading()
 	m.chatPanel.activeTab = ChatTabAnalysis
 	m.showAndFocusPanel(PanelRight)
 
-	pr := m.selectedPR
-	files := m.diffFiles
+	s := m.session
+	files := s.DiffFiles
 	analyzer := m.analyzer
 	ctx, cancel := context.WithCancel(context.Background())
 	ch := make(analysisStreamChan)
@@ -1073,10 +518,10 @@ func (m App) startAnalysis() (tea.Model, tea.Cmd) {
 		defer close(ch)
 		diffContent := buildDiffContent(files)
 		input := claude.AnalyzeDiffInput{
-			Owner:       pr.Owner,
-			Repo:        pr.Repo,
-			PRNumber:    pr.Number,
-			PRTitle:     pr.Title,
+			Owner:       s.Owner,
+			Repo:        s.Repo,
+			PRNumber:    s.Number,
+			PRTitle:     s.Title,
 			DiffContent: diffContent,
 		}
 
@@ -1088,25 +533,25 @@ func (m App) startAnalysis() (tea.Model, tea.Cmd) {
 		})
 		if err != nil {
 			select {
-			case ch <- AnalysisErrorMsg{PRNumber: pr.Number, Err: err}:
+			case ch <- AnalysisErrorMsg{PRNumber: s.Number, Err: err}:
 			case <-ctx.Done():
 			}
 		} else {
 			select {
-			case ch <- AnalysisCompleteMsg{PRNumber: pr.Number, DiffHash: hash, Result: result}:
+			case ch <- AnalysisCompleteMsg{PRNumber: s.Number, DiffHash: hash, Result: result}:
 			case <-ctx.Done():
 			}
 		}
 	}()
 
-	m.analysisStreamCh = ch
-	m.analysisStreamCancel = cancel
+	m.session.AnalysisStreamCh = ch
+	m.session.AnalysisStreamCancel = cancel
 	return m, tea.Batch(listenForAnalysisStream(ch), m.chatPanel.spinner.Tick)
 }
 
 // startAIReview kicks off AI review generation and navigates to the Review tab.
 func (m App) startAIReview() (tea.Model, tea.Cmd) {
-	if m.selectedPR == nil {
+	if m.session == nil {
 		m.chatPanel.SetAIReviewError("No PR selected. Select a PR first.")
 		m.chatPanel.activeTab = ChatTabReview
 		m.showAndFocusPanel(PanelRight)
@@ -1121,7 +566,7 @@ func (m App) startAIReview() (tea.Model, tea.Cmd) {
 	if m.chatPanel.aiReviewLoading {
 		return m, nil
 	}
-	if len(m.diffFiles) == 0 {
+	if len(m.session.DiffFiles) == 0 {
 		m.chatPanel.SetAIReviewError("No diff loaded. Select a PR to load its diff first.")
 		m.chatPanel.activeTab = ChatTabReview
 		m.showAndFocusPanel(PanelRight)
@@ -1132,7 +577,7 @@ func (m App) startAIReview() (tea.Model, tea.Cmd) {
 	m.chatPanel.activeTab = ChatTabReview
 	m.showAndFocusPanel(PanelRight)
 
-	return m, tea.Batch(aiReviewCmd(m.analyzer, m.selectedPR, m.diffFiles), m.chatPanel.spinner.Tick)
+	return m, tea.Batch(aiReviewCmd(m.analyzer, m.session, m.session.DiffFiles), m.chatPanel.spinner.Tick)
 }
 
 // refreshPRList re-fetches the PR lists (To Review + My PRs).
@@ -1147,35 +592,33 @@ func (m App) refreshPRList() (tea.Model, tea.Cmd) {
 // refreshSelectedPR re-fetches all data for the currently selected PR
 // without clearing chat history, Claude session, or analysis results.
 func (m App) refreshSelectedPR() (tea.Model, tea.Cmd) {
-	if m.selectedPR == nil {
+	if m.session == nil {
 		return m.refreshPRList()
 	}
 
-	pr := m.selectedPR
+	s := m.session
 	if m.ghClient == nil {
 		return m, nil
 	}
 
 	// Track 5 pending fetches so we can show a success message when all complete.
 	m.refreshPending = 5
-	m.refreshPRNum = pr.Number
-	// Show "Refreshing..." with a long safety-net timeout; it will be replaced
-	// by the success message once all fetches finish.
-	clearCmd := m.statusBar.SetTemporaryMessage(fmt.Sprintf("Refreshing PR #%d...", pr.Number), 30*time.Second)
+	m.refreshPRNum = s.Number
+	clearCmd := m.statusBar.SetTemporaryMessage(fmt.Sprintf("Refreshing PR #%d...", s.Number), 30*time.Second)
 
 	return m, tea.Batch(
 		clearCmd,
-		fetchDiffCmd(m.ghClient, pr.Owner, pr.Repo, pr.Number),
-		fetchPRDetailCmd(m.ghClient, pr.Owner, pr.Repo, pr.Number),
-		fetchCommentsCmd(m.ghClient, pr.Owner, pr.Repo, pr.Number),
-		fetchCIStatusCmd(m.ghClient, pr.Owner, pr.Repo, pr.Number),
-		fetchReviewsCmd(m.ghClient, pr.Owner, pr.Repo, pr.Number),
+		fetchDiffCmd(m.ghClient, s.Owner, s.Repo, s.Number),
+		fetchPRDetailCmd(m.ghClient, s.Owner, s.Repo, s.Number),
+		fetchCommentsCmd(m.ghClient, s.Owner, s.Repo, s.Number),
+		fetchCIStatusCmd(m.ghClient, s.Owner, s.Repo, s.Number),
+		fetchReviewsCmd(m.ghClient, s.Owner, s.Repo, s.Number),
 	)
 }
 
 // handleChatSend validates state and kicks off streaming Claude chat.
 func (m App) handleChatSend(message string) (tea.Model, tea.Cmd) {
-	if m.selectedPR == nil {
+	if m.session == nil {
 		m.chatPanel.SetChatError("No PR selected. Select a PR first.")
 		return m, nil
 	}
@@ -1184,27 +627,28 @@ func (m App) handleChatSend(message string) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	s := m.session
 	var prContext string
 	var hunksSelected bool
 	if selected := m.diffViewer.GetSelectedHunkContent(); selected != "" {
-		prContext = buildSelectedHunkContext(m.selectedPR, m.diffFiles, selected)
+		prContext = buildSelectedHunkContext(s, s.DiffFiles, selected)
 		hunksSelected = true
 	} else {
-		prContext = buildChatContext(m.selectedPR, m.diffFiles)
+		prContext = buildChatContext(s, s.DiffFiles)
 	}
 
 	input := claude.ChatInput{
-		Owner:         m.selectedPR.Owner,
-		Repo:          m.selectedPR.Repo,
-		PRNumber:      m.selectedPR.Number,
+		Owner:         s.Owner,
+		Repo:          s.Repo,
+		PRNumber:      s.Number,
 		PRContext:     prContext,
 		HunksSelected: hunksSelected,
 		Message:       message,
 	}
 
 	// Cancel any previous stream before starting a new one
-	if m.streamCancel != nil {
-		m.streamCancel()
+	if s.StreamCancel != nil {
+		s.StreamCancel()
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -1230,14 +674,14 @@ func (m App) handleChatSend(message string) (tea.Model, tea.Cmd) {
 		}
 	}()
 
-	m.streamChan = ch
-	m.streamCancel = cancel
+	s.StreamChan = ch
+	s.StreamCancel = cancel
 	return m, listenForChatStream(ch)
 }
 
 // handleReviewSubmit validates state and dispatches the review action.
 func (m App) handleReviewSubmit(msg ReviewSubmitMsg) (tea.Model, tea.Cmd) {
-	if m.selectedPR == nil {
+	if m.session == nil {
 		m.chatPanel.SetReviewSubmitted(fmt.Errorf("no PR selected"))
 		return m, nil
 	}
@@ -1246,7 +690,7 @@ func (m App) handleReviewSubmit(msg ReviewSubmitMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	pr := m.selectedPR
+	s := m.session
 	client := m.ghClient
 	action := msg.Action
 	body := msg.Body
@@ -1256,14 +700,14 @@ func (m App) handleReviewSubmit(msg ReviewSubmitMsg) (tea.Model, tea.Cmd) {
 		ReviewComment:        "Submitting comment on",
 		ReviewRequestChanges: "Requesting changes on",
 	}
-	clearCmd := m.statusBar.SetTemporaryMessage(fmt.Sprintf("%s PR #%d...", actionLabels[action], pr.Number), 3*time.Second)
+	clearCmd := m.statusBar.SetTemporaryMessage(fmt.Sprintf("%s PR #%d...", actionLabels[action], s.Number), 3*time.Second)
 
-	// Use app's pending pool instead of msg.InlineComments
+	// Use session's pending pool instead of msg.InlineComments
 	var inlineComments []claude.InlineReviewComment
-	for _, c := range m.pendingInlineComments {
+	for _, c := range s.PendingInlineComments {
 		inlineComments = append(inlineComments, c.InlineReviewComment)
 	}
-	return m, tea.Batch(clearCmd, submitReviewCmd(client, pr.Owner, pr.Repo, pr.Number, action, body, inlineComments))
+	return m, tea.Batch(clearCmd, submitReviewCmd(client, s.Owner, s.Repo, s.Number, action, body, inlineComments))
 }
 
 // refreshFetchDone decrements the pending refresh counter and, when all
@@ -1281,7 +725,7 @@ func (m *App) refreshFetchDone(prNumber int) tea.Cmd {
 
 // handleCommentPost validates state and posts a comment on the selected PR.
 func (m App) handleCommentPost(body string) (tea.Model, tea.Cmd) {
-	if m.selectedPR == nil {
+	if m.session == nil {
 		m.chatPanel.SetCommentPosted(fmt.Errorf("no PR selected"))
 		return m, nil
 	}
@@ -1290,28 +734,32 @@ func (m App) handleCommentPost(body string) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	pr := m.selectedPR
+	s := m.session
 	client := m.ghClient
 	return m, func() tea.Msg {
-		err := client.PostComment(context.Background(), pr.Owner, pr.Repo, pr.Number, body)
+		err := client.PostComment(context.Background(), s.Owner, s.Repo, s.Number, body)
 		return CommentPostedMsg{Err: err}
 	}
 }
 
 // handleInlineCommentAdd manages the pending inline comment pool.
 func (m App) handleInlineCommentAdd(msg InlineCommentAddMsg) (tea.Model, tea.Cmd) {
+	if m.session == nil {
+		return m, nil
+	}
+
 	if msg.Body == "" {
 		// Delete: remove the first pending comment at this path:line
 		removed := false
-		for i, c := range m.pendingInlineComments {
+		for i, c := range m.session.PendingInlineComments {
 			if c.Path == msg.Path && c.Line == msg.Line {
-				m.pendingInlineComments = append(m.pendingInlineComments[:i], m.pendingInlineComments[i+1:]...)
+				m.session.PendingInlineComments = append(m.session.PendingInlineComments[:i], m.session.PendingInlineComments[i+1:]...)
 				removed = true
 				break
 			}
 		}
-		m.diffViewer.SetPendingInlineComments(m.pendingInlineComments)
-		m.chatPanel.SetPendingCommentCount(len(m.pendingInlineComments))
+		m.diffViewer.SetPendingInlineComments(m.session.PendingInlineComments)
+		m.chatPanel.SetPendingCommentCount(len(m.session.PendingInlineComments))
 		if removed {
 			clearCmd := m.statusBar.SetTemporaryMessage(
 				fmt.Sprintf("Comment removed on %s:%d", msg.Path, msg.Line), 2*time.Second)
@@ -1322,10 +770,10 @@ func (m App) handleInlineCommentAdd(msg InlineCommentAddMsg) (tea.Model, tea.Cmd
 
 	// Check if editing existing comment at this path:line
 	found := false
-	for i, c := range m.pendingInlineComments {
+	for i, c := range m.session.PendingInlineComments {
 		if c.Path == msg.Path && c.Line == msg.Line {
-			m.pendingInlineComments[i].Body = msg.Body
-			m.pendingInlineComments[i].Source = "user"
+			m.session.PendingInlineComments[i].Body = msg.Body
+			m.session.PendingInlineComments[i].Source = "user"
 			found = true
 			break
 		}
@@ -1344,10 +792,10 @@ func (m App) handleInlineCommentAdd(msg InlineCommentAddMsg) (tea.Model, tea.Cmd
 			comment.StartLine = msg.StartLine
 			comment.StartSide = "RIGHT"
 		}
-		m.pendingInlineComments = append(m.pendingInlineComments, comment)
+		m.session.PendingInlineComments = append(m.session.PendingInlineComments, comment)
 	}
-	m.diffViewer.SetPendingInlineComments(m.pendingInlineComments)
-	m.chatPanel.SetPendingCommentCount(len(m.pendingInlineComments))
+	m.diffViewer.SetPendingInlineComments(m.session.PendingInlineComments)
+	m.chatPanel.SetPendingCommentCount(len(m.session.PendingInlineComments))
 	action := "added"
 	if found {
 		action = "updated"
@@ -1366,18 +814,22 @@ func (m App) handleInlineCommentAdd(msg InlineCommentAddMsg) (tea.Model, tea.Cmd
 // mergeAIComments integrates AI review comments into the pending pool.
 // Old AI-sourced comments are replaced; user-sourced comments are preserved.
 func (m *App) mergeAIComments(aiComments []claude.InlineReviewComment) {
+	if m.session == nil {
+		return
+	}
+
 	// Remove old AI-sourced comments
-	filtered := m.pendingInlineComments[:0]
-	for _, c := range m.pendingInlineComments {
+	filtered := m.session.PendingInlineComments[:0]
+	for _, c := range m.session.PendingInlineComments {
 		if c.Source != "ai" {
 			filtered = append(filtered, c)
 		}
 	}
-	m.pendingInlineComments = filtered
+	m.session.PendingInlineComments = filtered
 
 	// Build set of lines with user comments
 	userLines := make(map[string]bool)
-	for _, c := range m.pendingInlineComments {
+	for _, c := range m.session.PendingInlineComments {
 		key := fmt.Sprintf("%s:%d", c.Path, c.Line)
 		userLines[key] = true
 	}
@@ -1386,7 +838,7 @@ func (m *App) mergeAIComments(aiComments []claude.InlineReviewComment) {
 	for _, c := range aiComments {
 		key := fmt.Sprintf("%s:%d", c.Path, c.Line)
 		if !userLines[key] {
-			m.pendingInlineComments = append(m.pendingInlineComments, PendingInlineComment{
+			m.session.PendingInlineComments = append(m.session.PendingInlineComments, PendingInlineComment{
 				InlineReviewComment: c,
 				Source:              "ai",
 			})
@@ -1424,8 +876,8 @@ func (m App) executeCommand(name string) (tea.Model, tea.Cmd) {
 	case "review":
 		return m.startAIReview()
 	case "open":
-		if m.selectedPR != nil && m.selectedPR.HTMLURL != "" {
-			return m, openBrowserCmd(m.selectedPR.HTMLURL)
+		if m.session != nil && m.session.HTMLURL != "" {
+			return m, openBrowserCmd(m.session.HTMLURL)
 		}
 		return m, nil
 	case "clear selection":
@@ -1535,4 +987,3 @@ func (m App) renderCommandOverlay(base string) string {
 
 	return strings.Join(baseLines, "\n")
 }
-
