@@ -10,10 +10,12 @@ import (
 
 // AnalysisTabModel manages the analysis tab state and rendering.
 type AnalysisTabModel struct {
-	result  *claude.AnalysisResult
-	loading bool
-	error   string
-	stream  AnalysisStreamRenderer
+	result     *claude.AnalysisResult
+	loading    bool
+	error      string
+	stream     AnalysisStreamRenderer
+	cache      string
+	cacheWidth int
 }
 
 // SetLoading puts the analysis tab into loading state.
@@ -22,6 +24,7 @@ func (t *AnalysisTabModel) SetLoading() {
 	t.error = ""
 	t.result = nil
 	t.stream.Reset()
+	t.cache = ""
 }
 
 // SetResult sets the analysis result and clears loading state.
@@ -30,6 +33,7 @@ func (t *AnalysisTabModel) SetResult(result *claude.AnalysisResult) {
 	t.loading = false
 	t.error = ""
 	t.stream.Reset()
+	t.cache = ""
 }
 
 // SetError sets an error message on the analysis tab.
@@ -38,16 +42,19 @@ func (t *AnalysisTabModel) SetError(err string) {
 	t.loading = false
 	t.result = nil
 	t.stream.Reset()
+	t.cache = ""
 }
 
 // AppendStreamChunk appends a text chunk during analysis streaming.
 func (t *AnalysisTabModel) AppendStreamChunk(chunk string) {
 	t.stream.Append(chunk)
+	t.cache = ""
 }
 
 // Render renders the analysis tab content for the viewport.
-func (t AnalysisTabModel) Render(width int, spinnerView string) string {
+func (t *AnalysisTabModel) Render(width int, spinnerView string) string {
 	if t.loading {
+		// Don't cache during streaming — content changes rapidly
 		if t.stream.HasContent() {
 			var b strings.Builder
 			b.WriteString(lipgloss.NewStyle().
@@ -75,7 +82,16 @@ func (t AnalysisTabModel) Render(width int, spinnerView string) string {
 	if t.result == nil {
 		return renderEmptyState("No analysis yet", "Press 'a' to analyze this PR with Claude")
 	}
-	return renderAnalysisContent(t.result, width)
+
+	// Return cached render if available and width hasn't changed
+	if t.cache != "" && t.cacheWidth == width {
+		return t.cache
+	}
+
+	result := renderAnalysisContent(t.result, width)
+	t.cache = result
+	t.cacheWidth = width
+	return result
 }
 
 // renderAnalysisContent renders an AnalysisResult with lipgloss styling.
@@ -83,7 +99,6 @@ func (t AnalysisTabModel) Render(width int, spinnerView string) string {
 // complete results and partial (streaming) results.
 func renderAnalysisContent(r *claude.AnalysisResult, width int) string {
 	var b strings.Builder
-	sectionStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("33"))
 
 	// Risk badge
 	if r.Risk.Level != "" {
@@ -103,7 +118,7 @@ func renderAnalysisContent(r *claude.AnalysisResult, width int) string {
 
 	// Summary
 	if r.Summary != "" {
-		b.WriteString(sectionStyle.Render("Summary"))
+		b.WriteString(sectionHeaderStyle.Render("Summary"))
 		b.WriteString("\n")
 		b.WriteString(wordWrap(r.Summary, width))
 		b.WriteString("\n\n")
@@ -111,7 +126,7 @@ func renderAnalysisContent(r *claude.AnalysisResult, width int) string {
 
 	// Architecture impact
 	if r.ArchitectureImpact.HasImpact {
-		b.WriteString(sectionStyle.Render("Architecture Impact"))
+		b.WriteString(sectionHeaderStyle.Render("Architecture Impact"))
 		b.WriteString("\n")
 		if r.ArchitectureImpact.Description != "" {
 			b.WriteString(wordWrap(r.ArchitectureImpact.Description, width))
@@ -125,19 +140,22 @@ func renderAnalysisContent(r *claude.AnalysisResult, width int) string {
 
 	// File reviews
 	if len(r.FileReviews) > 0 {
-		b.WriteString(sectionStyle.Render(fmt.Sprintf("File Reviews (%d)", len(r.FileReviews))))
+		b.WriteString(sectionHeaderStyle.Render(fmt.Sprintf("File Reviews (%d)", len(r.FileReviews))))
 		b.WriteString("\n")
-		fileStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("220"))
 		for _, fr := range r.FileReviews {
 			b.WriteString("\n")
-			b.WriteString(fileStyle.Render(fr.File))
+			b.WriteString(contentAuthorStyle.Render(fr.File))
 			b.WriteString("\n")
 			if fr.Summary != "" {
 				b.WriteString(wordWrap(fr.Summary, width))
 				b.WriteString("\n")
 			}
 			for _, c := range fr.Comments {
-				sevLabel := severityStyle(c.Severity).Render(c.Severity)
+				sev, ok := severityStyles[c.Severity]
+				if !ok {
+					sev = defaultSeverityStyle
+				}
+				sevLabel := sev.Render(c.Severity)
 				if c.Line > 0 {
 					sevLabel += fmt.Sprintf(" L%d", c.Line)
 				}
@@ -153,7 +171,7 @@ func renderAnalysisContent(r *claude.AnalysisResult, width int) string {
 
 	// Test coverage
 	if r.TestCoverage.Assessment != "" {
-		b.WriteString(sectionStyle.Render("Test Coverage"))
+		b.WriteString(sectionHeaderStyle.Render("Test Coverage"))
 		b.WriteString("\n")
 		b.WriteString(wordWrap(r.TestCoverage.Assessment, width))
 		if len(r.TestCoverage.Gaps) > 0 {
@@ -168,12 +186,11 @@ func renderAnalysisContent(r *claude.AnalysisResult, width int) string {
 
 	// Suggestions
 	if len(r.Suggestions) > 0 {
-		b.WriteString(sectionStyle.Render(fmt.Sprintf("Suggestions (%d)", len(r.Suggestions))))
+		b.WriteString(sectionHeaderStyle.Render(fmt.Sprintf("Suggestions (%d)", len(r.Suggestions))))
 		b.WriteString("\n")
-		titleStyle := lipgloss.NewStyle().Bold(true)
 		for _, s := range r.Suggestions {
 			b.WriteString("\n  • ")
-			b.WriteString(titleStyle.Render(s.Title))
+			b.WriteString(boldStyle.Render(s.Title))
 			if s.Description != "" {
 				b.WriteString("\n    ")
 				b.WriteString(wordWrap(s.Description, width-4))
@@ -201,17 +218,3 @@ func riskLevelColor(level string) lipgloss.Color {
 	}
 }
 
-func severityStyle(severity string) lipgloss.Style {
-	switch severity {
-	case "critical":
-		return lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("196"))
-	case "warning":
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
-	case "suggestion":
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("33"))
-	case "praise":
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("42"))
-	default:
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
-	}
-}

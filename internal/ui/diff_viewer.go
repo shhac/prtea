@@ -86,6 +86,10 @@ type DiffViewerModel struct {
 	// Shared markdown renderer (cached per width)
 	md MarkdownRenderer
 
+	// PR Info tab render cache
+	prInfoCache      string
+	prInfoCacheWidth int
+
 	// CI status data
 	ciStatus *github.CIStatus
 	ciError  string

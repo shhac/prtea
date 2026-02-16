@@ -15,24 +15,28 @@ func (m *DiffViewerModel) SetPRInfo(title, body, author, url string) {
 	m.prAuthor = author
 	m.prURL = url
 	m.prInfoErr = ""
+	m.prInfoCache = ""
 	m.refreshContent()
 }
 
 // SetPRInfoError sets an error message for the PR Info tab.
 func (m *DiffViewerModel) SetPRInfoError(err string) {
 	m.prInfoErr = err
+	m.prInfoCache = ""
 	m.refreshContent()
 }
 
 // SetReviewSummary sets review status data for the PR Info tab.
 func (m *DiffViewerModel) SetReviewSummary(summary *github.ReviewSummary) {
 	m.reviewSummary = summary
+	m.prInfoCache = ""
 	m.refreshContent()
 }
 
 // SetReviewError sets an error message for review status loading.
 func (m *DiffViewerModel) SetReviewError(err string) {
 	m.reviewError = err
+	m.prInfoCache = ""
 	m.refreshContent()
 }
 
@@ -61,15 +65,17 @@ func (m *DiffViewerModel) renderPRInfo() string {
 		innerWidth = 10
 	}
 
-	sectionStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("33"))
-	dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+	// Return cached render if available and width hasn't changed
+	if m.prInfoCache != "" && m.prInfoCacheWidth == innerWidth {
+		return m.prInfoCache
+	}
 
 	var b strings.Builder
 
 	// Title
-	b.WriteString(sectionStyle.Render(fmt.Sprintf("PR #%d", m.prNumber)))
+	b.WriteString(sectionHeaderStyle.Render(fmt.Sprintf("PR #%d", m.prNumber)))
 	b.WriteString("\n")
-	b.WriteString(lipgloss.NewStyle().Bold(true).Render(m.prTitle))
+	b.WriteString(boldStyle.Render(m.prTitle))
 	b.WriteString("\n\n")
 
 	// Author
@@ -87,14 +93,13 @@ func (m *DiffViewerModel) renderPRInfo() string {
 	// Reviews
 	if m.reviewError != "" {
 		b.WriteString("\n")
-		b.WriteString(sectionStyle.Render("Reviews"))
+		b.WriteString(sectionHeaderStyle.Render("Reviews"))
 		b.WriteString("\n")
-		errStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
-		b.WriteString(errStyle.Render(formatUserError(m.reviewError)))
+		b.WriteString(errTextStyle.Render(formatUserError(m.reviewError)))
 		b.WriteString("\n")
 	} else if m.reviewSummary != nil {
 		b.WriteString("\n")
-		b.WriteString(sectionStyle.Render("Reviews"))
+		b.WriteString(sectionHeaderStyle.Render("Reviews"))
 		b.WriteString("\n")
 
 		// Overall decision badge
@@ -135,7 +140,7 @@ func (m *DiffViewerModel) renderPRInfo() string {
 	// Description
 	if m.prBody != "" {
 		b.WriteString("\n")
-		b.WriteString(sectionStyle.Render("Description"))
+		b.WriteString(sectionHeaderStyle.Render("Description"))
 		b.WriteString("\n")
 		b.WriteString(m.renderMarkdown(m.prBody, innerWidth))
 	} else {
@@ -143,7 +148,10 @@ func (m *DiffViewerModel) renderPRInfo() string {
 		b.WriteString(dimStyle.Render("No description provided."))
 	}
 
-	return b.String()
+	result := b.String()
+	m.prInfoCache = result
+	m.prInfoCacheWidth = innerWidth
+	return result
 }
 
 // reviewDecisionIconColor returns the icon and lipgloss color for a review decision.
