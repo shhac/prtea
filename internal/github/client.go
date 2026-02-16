@@ -67,6 +67,11 @@ func (c *Client) GetUsername() string {
 	return c.username
 }
 
+// SetFetchLimit updates the max PRs per query.
+func (c *Client) SetFetchLimit(limit int) {
+	c.FetchLimit = limit
+}
+
 // defaultRunner executes the gh CLI via exec.Command.
 func defaultRunner(ctx context.Context, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "gh", args...)
