@@ -21,8 +21,31 @@ const (
 	settingSection             // non-interactive section header
 )
 
+// settingID uniquely identifies a setting for type-safe config access.
+type settingID int
+
+const (
+	sidNone               settingID = iota // section headers
+	sidDefaultPRTab                        // Layout
+	sidCollapseRight                       // Layout
+	sidAutoCollapseWidth                   // Layout
+	sidPollEnabled                         // Polling
+	sidPollInterval                        // Polling
+	sidNotifyEnabled                       // Notifications
+	sidNotifyBatchThresh                   // Notifications
+	sidPRFetchLimit                        // Fetching
+	sidClaudeTimeout                       // AI
+	sidChatHistory                         // AI
+	sidPromptTokenLimit                    // AI
+	sidChatMaxTurns                        // AI
+	sidAnalysisMaxTurns                    // AI
+	sidRenderRefresh                       // Display
+	sidDefaultAction                       // Review
+)
+
 // settingItem describes a single configurable setting.
 type settingItem struct {
+	id      settingID
 	label   string
 	desc    string
 	kind    settingKind
@@ -38,41 +61,41 @@ type settingItem struct {
 // settingsSchema defines all settings grouped into sections.
 var settingsSchema = []settingItem{
 	// Layout
-	{label: "Layout", kind: settingSection},
-	{label: "Default PR Tab", desc: "Which tab to show on startup", kind: settingSelect,
+	{id: sidNone, label: "Layout", kind: settingSection},
+	{id: sidDefaultPRTab, label: "Default PR Tab", desc: "Which tab to show on startup", kind: settingSelect,
 		options: []string{"To Review", "My PRs"}, values: []string{"review", "mine"}},
-	{label: "Collapse Right", desc: "Hide right panel on startup", kind: settingToggle},
-	{label: "Auto-collapse Width", desc: "Terminal width to auto-hide panels", kind: settingNumber, min: 80, max: 200, step: 10},
+	{id: sidCollapseRight, label: "Collapse Right", desc: "Hide right panel on startup", kind: settingToggle},
+	{id: sidAutoCollapseWidth, label: "Auto-collapse Width", desc: "Terminal width to auto-hide panels", kind: settingNumber, min: 80, max: 200, step: 10},
 
 	// Polling
-	{label: "Polling", kind: settingSection},
-	{label: "Enabled", desc: "Auto-refresh PR list in the background", kind: settingToggle},
-	{label: "Interval", desc: "Seconds between background refreshes", kind: settingNumber, min: 10, max: 600, step: 10, unitSec: true},
+	{id: sidNone, label: "Polling", kind: settingSection},
+	{id: sidPollEnabled, label: "Enabled", desc: "Auto-refresh PR list in the background", kind: settingToggle},
+	{id: sidPollInterval, label: "Interval", desc: "Seconds between background refreshes", kind: settingNumber, min: 10, max: 600, step: 10, unitSec: true},
 
 	// Notifications
-	{label: "Notifications", kind: settingSection},
-	{label: "Enabled", desc: "Desktop notifications for new activity", kind: settingToggle},
-	{label: "Batch Threshold", desc: "Summarize when more than N new PRs", kind: settingNumber, min: 1, max: 20, step: 1},
+	{id: sidNone, label: "Notifications", kind: settingSection},
+	{id: sidNotifyEnabled, label: "Enabled", desc: "Desktop notifications for new activity", kind: settingToggle},
+	{id: sidNotifyBatchThresh, label: "Batch Threshold", desc: "Summarize when more than N new PRs", kind: settingNumber, min: 1, max: 20, step: 1},
 
 	// Fetching
-	{label: "Fetching", kind: settingSection},
-	{label: "PR Fetch Limit", desc: "Max PRs to fetch per query", kind: settingNumber, min: 10, max: 500, step: 10},
+	{id: sidNone, label: "Fetching", kind: settingSection},
+	{id: sidPRFetchLimit, label: "PR Fetch Limit", desc: "Max PRs to fetch per query", kind: settingNumber, min: 10, max: 500, step: 10},
 
 	// AI
-	{label: "AI", kind: settingSection},
-	{label: "Claude Timeout", desc: "Seconds before analysis times out", kind: settingNumber, min: 30, max: 600, step: 30, unitSec: true},
-	{label: "Chat History", desc: "Max messages kept in chat context", kind: settingNumber, min: 4, max: 64, step: 4},
-	{label: "Prompt Token Limit", desc: "Max tokens for prompt context", kind: settingNumber, min: 10000, max: 500000, step: 10000},
-	{label: "Chat Max Turns", desc: "Max agentic turns per chat message", kind: settingNumber, min: 1, max: 10, step: 1},
-	{label: "Analysis Max Turns", desc: "Max turns for full PR analysis", kind: settingNumber, min: 5, max: 100, step: 5},
+	{id: sidNone, label: "AI", kind: settingSection},
+	{id: sidClaudeTimeout, label: "Claude Timeout", desc: "Seconds before analysis times out", kind: settingNumber, min: 30, max: 600, step: 30, unitSec: true},
+	{id: sidChatHistory, label: "Chat History", desc: "Max messages kept in chat context", kind: settingNumber, min: 4, max: 64, step: 4},
+	{id: sidPromptTokenLimit, label: "Prompt Token Limit", desc: "Max tokens for prompt context", kind: settingNumber, min: 10000, max: 500000, step: 10000},
+	{id: sidChatMaxTurns, label: "Chat Max Turns", desc: "Max agentic turns per chat message", kind: settingNumber, min: 1, max: 10, step: 1},
+	{id: sidAnalysisMaxTurns, label: "Analysis Max Turns", desc: "Max turns for full PR analysis", kind: settingNumber, min: 5, max: 100, step: 5},
 
 	// Display
-	{label: "Display", kind: settingSection},
-	{label: "Render Refresh", desc: "Stream rendering interval", kind: settingNumber, min: 50, max: 1000, step: 50, unitMs: true},
+	{id: sidNone, label: "Display", kind: settingSection},
+	{id: sidRenderRefresh, label: "Render Refresh", desc: "Stream rendering interval", kind: settingNumber, min: 50, max: 1000, step: 50, unitMs: true},
 
 	// Review
-	{label: "Review", kind: settingSection},
-	{label: "Default Action", desc: "Pre-selected review action", kind: settingSelect,
+	{id: sidNone, label: "Review", kind: settingSection},
+	{id: sidDefaultAction, label: "Default Action", desc: "Pre-selected review action", kind: settingSelect,
 		options: []string{"Approve", "Comment", "Request Changes"}, values: []string{"approve", "comment", "request_changes"}},
 }
 
@@ -303,17 +326,12 @@ func (m *SettingsModel) cycleSelect(idx, dir int) {
 
 // getToggle returns the boolean value for a toggle setting.
 func (m SettingsModel) getToggle(idx int) bool {
-	switch settingsSchema[idx].label {
-	case "Enabled":
-		// Disambiguate by finding the section this belongs to
-		section := m.sectionFor(idx)
-		switch section {
-		case "Polling":
-			return m.cfg.PollEnabled
-		case "Notifications":
-			return m.cfg.NotificationsEnabled
-		}
-	case "Collapse Right":
+	switch settingsSchema[idx].id {
+	case sidPollEnabled:
+		return m.cfg.PollEnabled
+	case sidNotifyEnabled:
+		return m.cfg.NotificationsEnabled
+	case sidCollapseRight:
 		for _, s := range m.cfg.StartCollapsed {
 			if s == "right" {
 				return true
@@ -326,16 +344,12 @@ func (m SettingsModel) getToggle(idx int) bool {
 
 // setToggle sets the boolean value for a toggle setting.
 func (m *SettingsModel) setToggle(idx int, val bool) {
-	switch settingsSchema[idx].label {
-	case "Enabled":
-		section := m.sectionFor(idx)
-		switch section {
-		case "Polling":
-			m.cfg.PollEnabled = val
-		case "Notifications":
-			m.cfg.NotificationsEnabled = val
-		}
-	case "Collapse Right":
+	switch settingsSchema[idx].id {
+	case sidPollEnabled:
+		m.cfg.PollEnabled = val
+	case sidNotifyEnabled:
+		m.cfg.NotificationsEnabled = val
+	case sidCollapseRight:
 		if val {
 			// Add "right" if not present
 			found := false
@@ -363,26 +377,26 @@ func (m *SettingsModel) setToggle(idx int, val bool) {
 
 // getNumber returns the numeric value for a number setting.
 func (m SettingsModel) getNumber(idx int) int {
-	switch settingsSchema[idx].label {
-	case "Interval":
+	switch settingsSchema[idx].id {
+	case sidPollInterval:
 		return m.cfg.PollInterval
-	case "Claude Timeout":
+	case sidClaudeTimeout:
 		return m.cfg.ClaudeTimeout
-	case "Auto-collapse Width":
+	case sidAutoCollapseWidth:
 		return m.cfg.CollapseThreshold
-	case "PR Fetch Limit":
+	case sidPRFetchLimit:
 		return m.cfg.PRFetchLimit
-	case "Batch Threshold":
+	case sidNotifyBatchThresh:
 		return m.cfg.NotificationThreshold
-	case "Chat History":
+	case sidChatHistory:
 		return m.cfg.MaxChatHistory
-	case "Prompt Token Limit":
+	case sidPromptTokenLimit:
 		return m.cfg.MaxPromptTokens
-	case "Chat Max Turns":
+	case sidChatMaxTurns:
 		return m.cfg.ChatMaxTurns
-	case "Analysis Max Turns":
+	case sidAnalysisMaxTurns:
 		return m.cfg.AnalysisMaxTurns
-	case "Render Refresh":
+	case sidRenderRefresh:
 		return m.cfg.StreamCheckpointMs
 	}
 	return 0
@@ -390,39 +404,39 @@ func (m SettingsModel) getNumber(idx int) int {
 
 // setNumber sets the numeric value for a number setting.
 func (m *SettingsModel) setNumber(idx int, val int) {
-	switch settingsSchema[idx].label {
-	case "Interval":
+	switch settingsSchema[idx].id {
+	case sidPollInterval:
 		m.cfg.PollInterval = val
-	case "Claude Timeout":
+	case sidClaudeTimeout:
 		m.cfg.ClaudeTimeout = val
-	case "Auto-collapse Width":
+	case sidAutoCollapseWidth:
 		m.cfg.CollapseThreshold = val
-	case "PR Fetch Limit":
+	case sidPRFetchLimit:
 		m.cfg.PRFetchLimit = val
-	case "Batch Threshold":
+	case sidNotifyBatchThresh:
 		m.cfg.NotificationThreshold = val
-	case "Chat History":
+	case sidChatHistory:
 		m.cfg.MaxChatHistory = val
-	case "Prompt Token Limit":
+	case sidPromptTokenLimit:
 		m.cfg.MaxPromptTokens = val
-	case "Chat Max Turns":
+	case sidChatMaxTurns:
 		m.cfg.ChatMaxTurns = val
-	case "Analysis Max Turns":
+	case sidAnalysisMaxTurns:
 		m.cfg.AnalysisMaxTurns = val
-	case "Render Refresh":
+	case sidRenderRefresh:
 		m.cfg.StreamCheckpointMs = val
 	}
 }
 
 // getSelect returns the current string value for a select setting.
 func (m SettingsModel) getSelect(idx int) string {
-	switch settingsSchema[idx].label {
-	case "Default PR Tab":
+	switch settingsSchema[idx].id {
+	case sidDefaultPRTab:
 		if m.cfg.DefaultPRTab == "" {
 			return "review"
 		}
 		return m.cfg.DefaultPRTab
-	case "Default Action":
+	case sidDefaultAction:
 		if m.cfg.DefaultReviewAction == "" {
 			return "comment"
 		}
@@ -433,22 +447,12 @@ func (m SettingsModel) getSelect(idx int) string {
 
 // setSelect sets the string value for a select setting.
 func (m *SettingsModel) setSelect(idx int, val string) {
-	switch settingsSchema[idx].label {
-	case "Default PR Tab":
+	switch settingsSchema[idx].id {
+	case sidDefaultPRTab:
 		m.cfg.DefaultPRTab = val
-	case "Default Action":
+	case sidDefaultAction:
 		m.cfg.DefaultReviewAction = val
 	}
-}
-
-// sectionFor walks backwards from idx to find the nearest section header label.
-func (m SettingsModel) sectionFor(idx int) string {
-	for i := idx - 1; i >= 0; i-- {
-		if settingsSchema[i].kind == settingSection {
-			return settingsSchema[i].label
-		}
-	}
-	return ""
 }
 
 // ensureVisible scrolls the viewport so the focused row is visible.
