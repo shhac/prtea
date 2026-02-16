@@ -158,11 +158,11 @@ var DiffViewerKeys = DiffViewerKeyMap{
 		key.WithHelp("j", "down"),
 	),
 	SelectDown: key.NewBinding(
-		key.WithKeys("J"),
+		key.WithKeys("J", "shift+down"),
 		key.WithHelp("J", "extend selection down"),
 	),
 	SelectUp: key.NewBinding(
-		key.WithKeys("K"),
+		key.WithKeys("K", "shift+up"),
 		key.WithHelp("K", "extend selection up"),
 	),
 	HalfDown: key.NewBinding(
