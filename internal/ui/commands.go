@@ -25,25 +25,28 @@ func initGHClientCmd() tea.Msg {
 	return GHClientReadyMsg{Client: client}
 }
 
+// fetchPRData fetches both PR lists from GitHub. Shared by foreground and poll fetchers.
+func fetchPRData(client GitHubService) ([]github.PRItem, []github.PRItem, error) {
+	ctx := context.Background()
+	toReview, err := client.GetPRsForReview(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	myPRs, err := client.GetMyPRs(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	return toReview, myPRs, nil
+}
+
 // fetchPRsCmd returns a command that fetches both PR lists.
 func fetchPRsCmd(client GitHubService) tea.Cmd {
 	return func() tea.Msg {
-		ctx := context.Background()
-
-		toReview, err := client.GetPRsForReview(ctx)
+		toReview, myPRs, err := fetchPRData(client)
 		if err != nil {
 			return PRsErrorMsg{Err: err}
 		}
-
-		myPRs, err := client.GetMyPRs(ctx)
-		if err != nil {
-			return PRsErrorMsg{Err: err}
-		}
-
-		return PRsLoadedMsg{
-			ToReview: toReview,
-			MyPRs:    myPRs,
-		}
+		return PRsLoadedMsg{ToReview: toReview, MyPRs: myPRs}
 	}
 }
 
@@ -72,22 +75,14 @@ func pollTickCmd(interval time.Duration) tea.Cmd {
 }
 
 // pollFetchPRsCmd returns a command that fetches PR lists for background polling.
-// Errors are silently ignored — the next tick will retry.
+// Errors are surfaced as pollErrorMsg so the user sees transient issues.
 func pollFetchPRsCmd(client GitHubService) tea.Cmd {
 	return func() tea.Msg {
-		ctx := context.Background()
-		toReview, err := client.GetPRsForReview(ctx)
+		toReview, myPRs, err := fetchPRData(client)
 		if err != nil {
-			return nil
+			return pollErrorMsg{Err: err}
 		}
-		myPRs, err := client.GetMyPRs(ctx)
-		if err != nil {
-			return nil
-		}
-		return pollPRsLoadedMsg{
-			ToReview: toReview,
-			MyPRs:    myPRs,
-		}
+		return pollPRsLoadedMsg{ToReview: toReview, MyPRs: myPRs}
 	}
 }
 
@@ -208,7 +203,9 @@ func openBrowserCmd(url string) tea.Cmd {
 		default: // linux, freebsd, etc.
 			cmd = exec.Command("xdg-open", url)
 		}
-		_ = cmd.Start()
+		if err := cmd.Start(); err == nil {
+			go cmd.Wait() // reap the child process to avoid zombies
+		}
 		return nil
 	}
 }
