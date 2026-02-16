@@ -162,7 +162,7 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// PR list domain: client init, fetching, polling, selection
 	case GHClientReadyMsg, GHClientErrorMsg,
 		PRsLoadedMsg, PRsErrorMsg,
-		pollTickMsg, pollPRsLoadedMsg,
+		pollTickMsg, pollPRsLoadedMsg, pollErrorMsg,
 		PRSelectedMsg, PRSelectedAndAdvanceMsg:
 		return m.handlePRListMsg(msg)
 
@@ -749,10 +749,10 @@ func (m App) handleInlineCommentAdd(msg InlineCommentAddMsg) (tea.Model, tea.Cmd
 	}
 
 	if msg.Body == "" {
-		// Delete: remove the first pending comment at this path:line
+		// Delete: remove the first pending comment at this path:line:startLine
 		removed := false
 		for i, c := range m.session.PendingInlineComments {
-			if c.Path == msg.Path && c.Line == msg.Line {
+			if c.Path == msg.Path && c.Line == msg.Line && c.StartLine == msg.StartLine {
 				m.session.PendingInlineComments = append(m.session.PendingInlineComments[:i], m.session.PendingInlineComments[i+1:]...)
 				removed = true
 				break
@@ -768,10 +768,10 @@ func (m App) handleInlineCommentAdd(msg InlineCommentAddMsg) (tea.Model, tea.Cmd
 		return m, nil
 	}
 
-	// Check if editing existing comment at this path:line
+	// Check if editing existing comment at this path:line:startLine
 	found := false
 	for i, c := range m.session.PendingInlineComments {
-		if c.Path == msg.Path && c.Line == msg.Line {
+		if c.Path == msg.Path && c.Line == msg.Line && c.StartLine == msg.StartLine {
 			m.session.PendingInlineComments[i].Body = msg.Body
 			m.session.PendingInlineComments[i].Source = "user"
 			found = true

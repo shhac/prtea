@@ -282,6 +282,12 @@ type pollPRsLoadedMsg struct {
 	MyPRs    []github.PRItem
 }
 
+// pollErrorMsg is sent when background polling fails, so transient issues
+// (auth expiry, network errors) are visible to the user.
+type pollErrorMsg struct {
+	Err error
+}
+
 // -- Inline comment authoring --
 
 // InlineCommentAddMsg is emitted by the diff viewer when the user saves an inline comment.

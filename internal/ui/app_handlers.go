@@ -54,6 +54,12 @@ func (m App) handlePRListMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case pollErrorMsg:
+		clearCmd := m.statusBar.SetTemporaryMessage(
+			"Poll error: "+formatUserError(msg.Err.Error()), 5*time.Second,
+		)
+		return m, clearCmd
+
 	case pollPRsLoadedMsg:
 		toReview := convertPRItems(msg.ToReview)
 		myPRs := convertPRItems(msg.MyPRs)
