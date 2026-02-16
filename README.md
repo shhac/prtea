@@ -68,6 +68,16 @@ Check your installed version with `prtea --version`.
 
 Launch from any directory. The PR list loads your review requests and authored PRs from GitHub.
 
+### Demo Mode
+
+Try prtea without any prerequisites:
+
+```bash
+prtea --demo
+```
+
+Demo mode loads 6 fictional PRs with realistic diffs, comments, CI statuses, and reviews. No `gh` or `claude` CLI needed. Write operations (approve, comment, submit review) are disabled; AI features require the `claude` CLI.
+
 **Typical workflow:**
 
 1. Browse PRs in the left panel — switch between "To Review" and "My PRs" tabs with `h`/`l`
@@ -200,11 +210,13 @@ Then update the Homebrew formula in `../homebrew-tap/Formula/prtea.rb`.
 ### Project Structure
 
 ```
-cmd/prtea/main.go        Entry point
+cmd/prtea/main.go        Entry point (--version, --demo flags)
 internal/ui/              Bubbletea UI layer (panels, layout, styles, keys)
 internal/github/          GitHub API client (gh CLI based, with CommandRunner injection)
 internal/claude/          Claude CLI subprocess (analysis + chat + caching)
+internal/demo/            Demo mode mock service (in-memory fake data)
 internal/config/          Config file management
+internal/notify/          Desktop notifications
 ```
 
 ## License
