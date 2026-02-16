@@ -15,12 +15,19 @@ var (
 )
 
 func main() {
-	if len(os.Args) > 1 && (os.Args[1] == "--version" || os.Args[1] == "version") {
-		fmt.Printf("prtea %s (commit: %s, built: %s)\n", version, commit, date)
-		os.Exit(0)
+	var opts []ui.AppOption
+
+	for _, arg := range os.Args[1:] {
+		switch arg {
+		case "--version", "version":
+			fmt.Printf("prtea %s (commit: %s, built: %s)\n", version, commit, date)
+			os.Exit(0)
+		case "--demo":
+			opts = append(opts, ui.WithDemo())
+		}
 	}
 
-	p := tea.NewProgram(ui.NewApp(), tea.WithAltScreen())
+	p := tea.NewProgram(ui.NewApp(opts...), tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)

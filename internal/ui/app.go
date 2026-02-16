@@ -12,6 +12,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/shhac/prtea/internal/claude"
 	"github.com/shhac/prtea/internal/config"
+	"github.com/shhac/prtea/internal/demo"
 	"github.com/shhac/prtea/internal/github"
 )
 
@@ -69,10 +70,21 @@ type App struct {
 	notifyEnabled   bool            // whether OS notifications are enabled
 	initialLoadDone bool            // true after first successful PR fetch
 	knownPRs        map[string]bool // PR keys seen since boot (for new-PR detection)
+
+	// Demo mode
+	demoMode bool
+}
+
+// AppOption configures the App during construction.
+type AppOption func(*App)
+
+// WithDemo enables demo mode with mock GitHub data.
+func WithDemo() AppOption {
+	return func(a *App) { a.demoMode = true }
 }
 
 // NewApp creates a new App model with default state.
-func NewApp() App {
+func NewApp(opts ...AppOption) App {
 	cfg, cfgErr := config.Load()
 	if cfg == nil {
 		cfg = &config.Config{ClaudeTimeout: config.DefaultClaudeTimeoutMs}
@@ -122,7 +134,7 @@ func NewApp() App {
 	chatPanel.SetStreamCheckpoint(time.Duration(cfg.StreamCheckpointMs) * time.Millisecond)
 	chatPanel.SetDefaultReviewAction(cfg.DefaultReviewAction)
 
-	return App{
+	app := App{
 		prList:            NewPRListModel(defaultTab),
 		diffViewer:        NewDiffViewerModel(),
 		chatPanel:         chatPanel,
@@ -146,10 +158,23 @@ func NewApp() App {
 		notifyEnabled:     cfg.NotificationsEnabled,
 		knownPRs:          make(map[string]bool),
 	}
+	for _, opt := range opts {
+		opt(&app)
+	}
+	return app
 }
 
 func (m App) Init() tea.Cmd {
-	return tea.Batch(initGHClientCmd, m.prList.spinner.Tick)
+	initCmd := initGHClientCmd
+	if m.demoMode {
+		initCmd = initDemoClientCmd
+	}
+	return tea.Batch(initCmd, m.prList.spinner.Tick)
+}
+
+// initDemoClientCmd creates a demo GitHubService with fake data.
+func initDemoClientCmd() tea.Msg {
+	return GHClientReadyMsg{Client: demo.NewService()}
 }
 
 // Update dispatches messages to domain-specific sub-handlers.
