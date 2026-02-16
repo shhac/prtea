@@ -20,6 +20,7 @@ type GlobalKeyMap struct {
 	Zoom         key.Binding
 	CommandMode  key.Binding
 	ExCommand    key.Binding
+	ReviewPanel  key.Binding
 }
 
 var GlobalKeys = GlobalKeyMap{
@@ -86,6 +87,10 @@ var GlobalKeys = GlobalKeyMap{
 	ExCommand: key.NewBinding(
 		key.WithKeys(":"),
 		key.WithHelp(":", "command mode"),
+	),
+	ReviewPanel: key.NewBinding(
+		key.WithKeys("ctrl+r"),
+		key.WithHelp("Ctrl+R", "review tab"),
 	),
 }
 

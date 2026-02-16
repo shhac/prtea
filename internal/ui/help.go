@@ -184,6 +184,7 @@ func (m HelpOverlayModel) renderHelpContent() string {
 				{"r", "Refresh (PR list / selected PR)"},
 				{"a", "Analyze PR"},
 				{"o", "Open in browser"},
+				{"Ctrl+R", "Review tab"},
 				{"Ctrl+P", "Quick command palette"},
 				{":", "Command mode"},
 				{"?", "Toggle this help"},

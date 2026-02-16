@@ -131,11 +131,11 @@ func (m StatusBarModel) keyHints() string {
 		if m.diffSearchInfo != "" {
 			return " [n/N]next/prev match [Esc]clear search [/]new search [Tab]panel [?]help"
 		}
-		return " [h/l]tab [j/k]scroll [n/N]hunk [s/Space]select [S]file [c]clear [/]search [r]refresh [Tab]panel [z]zoom [?]help"
+		return " [h/l]tab [j/k]scroll [n/N]hunk [s/Space]select [S]file [c]comments [/]search [r]refresh [Tab]panel [z]zoom [?]help"
 	case PanelRight:
 		return " [h/l]tab [j/k]scroll [Enter]insert [C]new chat [r]refresh [Tab]panel [z]zoom [?]help"
 	default:
-		return " [Tab]panel [?]help [q]quit"
+		return " [Tab]panel [Ctrl+R]review [?]help [q]quit"
 	}
 }
 

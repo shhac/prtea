@@ -623,6 +623,11 @@ func (m App) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m.refreshSelectedPR()
 
+	case key.Matches(msg, GlobalKeys.ReviewPanel):
+		m.showAndFocusPanel(PanelRight)
+		m.chatPanel.SetActiveTab(ChatTabReview)
+		return m, nil
+
 	case key.Matches(msg, GlobalKeys.CommandMode):
 		m.setMode(ModeCommand)
 		m.commandMode.SetSize(m.width, m.height)
