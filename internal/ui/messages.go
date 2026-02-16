@@ -314,6 +314,7 @@ type PendingInlineComment struct {
 type ShowCommentOverlayMsg struct {
 	Path            string
 	Line            int
+	StartLine       int      // non-zero for multi-line range comments
 	DiffLines       []string // raw hunk lines for context display
 	TargetLineInCtx int      // index of target line within DiffLines
 	GHThreads       []ghCommentThread

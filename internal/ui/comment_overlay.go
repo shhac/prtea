@@ -28,9 +28,10 @@ type CommentOverlayModel struct {
 	height int
 
 	// Comment target
-	targetPath string
-	targetLine int
-	diffCtx    string // pre-rendered diff context lines
+	targetPath      string
+	targetLine      int
+	targetStartLine int    // non-zero for multi-line range comments
+	diffCtx         string // pre-rendered diff context lines
 
 	// Comment data
 	ghThreads       []ghCommentThread
@@ -57,6 +58,7 @@ func (m *CommentOverlayModel) Show(msg ShowCommentOverlayMsg) tea.Cmd {
 	m.composing = false
 	m.targetPath = msg.Path
 	m.targetLine = msg.Line
+	m.targetStartLine = msg.StartLine
 	m.ghThreads = msg.GHThreads
 	m.aiComments = msg.AIComments
 	m.pendingComments = msg.PendingComments
@@ -171,8 +173,9 @@ func (m CommentOverlayModel) updateComposing(msg tea.KeyMsg) (CommentOverlayMode
 		}
 		path := m.targetPath
 		line := m.targetLine
+		startLine := m.targetStartLine
 		return m, func() tea.Msg {
-			return InlineCommentAddMsg{Path: path, Line: line, Body: body}
+			return InlineCommentAddMsg{Path: path, Line: line, Body: body, StartLine: startLine}
 		}
 	}
 	var cmd tea.Cmd
@@ -189,7 +192,12 @@ func (m CommentOverlayModel) View() string {
 	innerW := m.innerWidth()
 
 	// Title
-	titleText := fmt.Sprintf(" 💬 %s:%d ", m.targetPath, m.targetLine)
+	var titleText string
+	if m.targetStartLine > 0 {
+		titleText = fmt.Sprintf(" 💬 %s:%d-%d ", m.targetPath, m.targetStartLine, m.targetLine)
+	} else {
+		titleText = fmt.Sprintf(" 💬 %s:%d ", m.targetPath, m.targetLine)
+	}
 	title := commentOverlayTitleStyle.Render(titleText)
 	titleLine := lipgloss.PlaceHorizontal(innerW, lipgloss.Left, title)
 

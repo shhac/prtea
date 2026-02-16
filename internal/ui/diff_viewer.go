@@ -818,6 +818,8 @@ func (m *DiffViewerModel) commentTargetFromCursor() (int, string) {
 
 // buildCommentOverlayMsg gathers context from the current cursor position
 // and returns a ShowCommentOverlayMsg, or nil if no commentable line is found.
+// When a multi-line selection is active, only threads whose line range exactly
+// matches the selection are shown; otherwise a blank thread is opened.
 func (m *DiffViewerModel) buildCommentOverlayMsg() *ShowCommentOverlayMsg {
 	if len(m.cachedLineInfo) == 0 {
 		return nil
@@ -825,6 +827,21 @@ func (m *DiffViewerModel) buildCommentOverlayMsg() *ShowCommentOverlayMsg {
 	targetLine, targetFile := m.commentTargetFromCursor()
 	if targetLine == 0 || targetFile == "" {
 		return nil
+	}
+
+	// Resolve multi-line selection range (0, 0 if no selection)
+	var startLine, endLine int
+	if m.selectionAnchor >= 0 {
+		startLine, endLine = m.resolveSelectionRange()
+		if startLine > 0 && endLine > 0 && startLine != endLine {
+			if startLine > endLine {
+				startLine, endLine = endLine, startLine
+			}
+			// Override target to match the selection range endpoints
+			targetLine = endLine
+		} else {
+			startLine = 0
+		}
 	}
 
 	// Extract diff context lines from the hunk
@@ -863,14 +880,47 @@ func (m *DiffViewerModel) buildCommentOverlayMsg() *ShowCommentOverlayMsg {
 	diffLines := hunk.Lines[ctxStart:ctxEnd]
 
 	key := fmt.Sprintf("%s:%d", targetFile, targetLine)
+
+	// Gather threads. For multi-line selections, only include threads
+	// whose line range exactly matches the selection.
+	var ghThreads []ghCommentThread
+	var aiComments []claude.InlineReviewComment
+	var pendingComments []PendingInlineComment
+
+	if startLine > 0 {
+		// Multi-line selection: exact range match only
+		for _, t := range m.ghCommentThreads[key] {
+			if t.Root.StartLine == startLine && t.Root.Line == endLine {
+				ghThreads = append(ghThreads, t)
+			}
+		}
+		// AI and pending comments with matching StartLine
+		for _, c := range m.aiCommentsByFileLine[key] {
+			if c.StartLine == startLine && c.Line == endLine {
+				aiComments = append(aiComments, c)
+			}
+		}
+		for _, c := range m.pendingCommentsByFileLine[key] {
+			if c.StartLine == startLine && c.Line == endLine {
+				pendingComments = append(pendingComments, c)
+			}
+		}
+	} else {
+		// Single-line: match all threads at this line (existing behavior)
+		ghThreads = m.ghCommentThreads[key]
+		aiComments = m.aiCommentsByFileLine[key]
+		pendingComments = m.pendingCommentsByFileLine[key]
+	}
+
 	return &ShowCommentOverlayMsg{
 		Path:            targetFile,
 		Line:            targetLine,
+		StartLine:       startLine,
 		DiffLines:       diffLines,
 		TargetLineInCtx: targetIdx - ctxStart,
-		GHThreads:       m.ghCommentThreads[key],
-		AIComments:      m.aiCommentsByFileLine[key],
-		PendingComments: m.pendingCommentsByFileLine[key],
+		GHThreads:       ghThreads,
+		AIComments:      aiComments,
+		PendingComments: pendingComments,
 	}
 }
 

@@ -117,6 +117,7 @@ type InlineComment struct {
 	CreatedAt   time.Time
 	Path        string
 	Line        int
+	StartLine   int    // non-zero for multi-line range comments
 	Side        string // "LEFT", "RIGHT"
 	InReplyToID int64
 	Outdated    bool

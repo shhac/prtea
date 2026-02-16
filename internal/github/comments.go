@@ -34,6 +34,7 @@ type ghInlineComment struct {
 	CreatedAt   time.Time `json:"created_at"`
 	Path        string    `json:"path"`
 	Line        int       `json:"line"`
+	StartLine   *int      `json:"start_line"`
 	OriginalLine int      `json:"original_line"`
 	Side        string    `json:"side"`
 	InReplyToID *int64    `json:"in_reply_to_id"`
@@ -90,6 +91,11 @@ func (c *Client) GetInlineComments(ctx context.Context, owner, repo string, numb
 			inReplyToID = *c.InReplyToID
 		}
 
+		var startLine int
+		if c.StartLine != nil {
+			startLine = *c.StartLine
+		}
+
 		outdated := c.Position == nil || *c.Position == 0
 
 		comments = append(comments, InlineComment{
@@ -99,6 +105,7 @@ func (c *Client) GetInlineComments(ctx context.Context, owner, repo string, numb
 			CreatedAt:   c.CreatedAt,
 			Path:        c.Path,
 			Line:        line,
+			StartLine:   startLine,
 			Side:        c.Side,
 			InReplyToID: inReplyToID,
 			Outdated:    outdated,
