@@ -25,4 +25,5 @@ type GitHubService interface {
 	CommentReviewPR(ctx context.Context, owner, repo string, number int, body string) error
 	SubmitReviewWithComments(ctx context.Context, owner, repo string, number int, event string, body string, comments []github.ReviewCommentPayload) error
 	RerunWorkflow(ctx context.Context, owner, repo string, runID int64, failedOnly bool) error
+	ReplyToComment(ctx context.Context, owner, repo string, prNumber int, commentID int64, body string) error
 }

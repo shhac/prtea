@@ -308,6 +308,33 @@ type PendingInlineComment struct {
 	Source string // "ai" or "user"
 }
 
+// -- Comment overlay --
+
+// ShowCommentOverlayMsg requests opening the comment view overlay.
+type ShowCommentOverlayMsg struct {
+	Path            string
+	Line            int
+	DiffLines       []string // raw hunk lines for context display
+	TargetLineInCtx int      // index of target line within DiffLines
+	GHThreads       []ghCommentThread
+	AIComments      []claude.InlineReviewComment
+	PendingComments []PendingInlineComment
+}
+
+// CommentOverlayClosedMsg signals the comment overlay was dismissed.
+type CommentOverlayClosedMsg struct{}
+
+// InlineCommentReplyMsg posts an immediate reply to a GitHub thread.
+type InlineCommentReplyMsg struct {
+	CommentID int64
+	Body      string
+}
+
+// InlineCommentReplyDoneMsg signals the reply was posted (or failed).
+type InlineCommentReplyDoneMsg struct {
+	Err error
+}
+
 // -- Internal streaming --
 
 // chatStreamChan carries streaming chunks and the final response from Claude chat.

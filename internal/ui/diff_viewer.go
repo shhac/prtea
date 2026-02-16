@@ -512,6 +512,14 @@ func (m DiffViewerModel) Update(msg tea.Msg) (DiffViewerModel, tea.Cmd) {
 			}
 			return m, nil
 		}
+
+		// "c" opens comment overlay on Diff tab
+		if m.activeTab == TabDiff && len(m.hunks) > 0 && msg.String() == "c" {
+			overlayMsg := m.buildCommentOverlayMsg()
+			if overlayMsg != nil {
+				return m, func() tea.Msg { return *overlayMsg }
+			}
+		}
 	}
 
 	var cmd tea.Cmd
@@ -806,6 +814,64 @@ func (m *DiffViewerModel) commentTargetFromCursor() (int, string) {
 	}
 
 	return 0, ""
+}
+
+// buildCommentOverlayMsg gathers context from the current cursor position
+// and returns a ShowCommentOverlayMsg, or nil if no commentable line is found.
+func (m *DiffViewerModel) buildCommentOverlayMsg() *ShowCommentOverlayMsg {
+	if len(m.cachedLineInfo) == 0 {
+		return nil
+	}
+	targetLine, targetFile := m.commentTargetFromCursor()
+	if targetLine == 0 || targetFile == "" {
+		return nil
+	}
+
+	// Extract diff context lines from the hunk
+	hunkIdx := m.cachedLineInfo[m.cursorLine].hunkIdx
+	if hunkIdx < 0 || hunkIdx >= len(m.hunks) {
+		return nil
+	}
+	hunk := m.hunks[hunkIdx]
+
+	// Find target line index within hunk and extract a window around it
+	targetIdx := -1
+	newLine := 0
+	for i, line := range hunk.Lines {
+		if strings.HasPrefix(line, "@@") {
+			// Parse start line from @@ header
+			var n int
+			if _, err := fmt.Sscanf(line, "@@ -%*d,%*d +%d", &n); err == nil {
+				newLine = n - 1
+			}
+			continue
+		}
+		if !strings.HasPrefix(line, "-") && !strings.HasPrefix(line, `\`) {
+			newLine++
+		}
+		if newLine == targetLine {
+			targetIdx = i
+			break
+		}
+	}
+	if targetIdx < 0 {
+		targetIdx = 0
+	}
+
+	ctxStart := max(0, targetIdx-2)
+	ctxEnd := min(len(hunk.Lines), targetIdx+3)
+	diffLines := hunk.Lines[ctxStart:ctxEnd]
+
+	key := fmt.Sprintf("%s:%d", targetFile, targetLine)
+	return &ShowCommentOverlayMsg{
+		Path:            targetFile,
+		Line:            targetLine,
+		DiffLines:       diffLines,
+		TargetLineInCtx: targetIdx - ctxStart,
+		GHThreads:       m.ghCommentThreads[key],
+		AIComments:      m.aiCommentsByFileLine[key],
+		PendingComments: m.pendingCommentsByFileLine[key],
+	}
 }
 
 // IsCommenting returns true when the comment input is actively being typed into.

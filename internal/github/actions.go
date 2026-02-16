@@ -137,3 +137,22 @@ func (c *Client) SubmitReviewWithComments(ctx context.Context, owner, repo strin
 	}
 	return nil
 }
+
+// ReplyToComment posts a reply to an existing pull request review comment.
+func (c *Client) ReplyToComment(ctx context.Context, owner, repo string, prNumber int, commentID int64, body string) error {
+	endpoint := fmt.Sprintf("repos/%s/%s/pulls/%d/comments/%d/replies", owner, repo, prNumber, commentID)
+	payload, err := json.Marshal(struct {
+		Body string `json:"body"`
+	}{Body: body})
+	if err != nil {
+		return fmt.Errorf("failed to marshal reply payload: %w", err)
+	}
+	if _, err := c.ghExecWithStdin(ctx, string(payload),
+		"api", endpoint, "--method", "POST",
+		"-H", "Accept: application/vnd.github+json",
+		"--input", "-",
+	); err != nil {
+		return fmt.Errorf("failed to reply to comment %d: %w", commentID, err)
+	}
+	return nil
+}

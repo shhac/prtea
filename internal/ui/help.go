@@ -217,7 +217,7 @@ func (m HelpOverlayModel) renderHelpContent() string {
 				{"s / Space", "Select/deselect hunk"},
 				{"Enter", "Select hunk + focus chat"},
 				{"S", "Select/deselect file hunks"},
-				{"c", "Clear selection"},
+				{"c", "View/reply to comments"},
 			{"/", "Search in diff"},
 			{"Esc", "Clear search"},
 			},

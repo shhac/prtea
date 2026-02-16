@@ -25,9 +25,10 @@ type App struct {
 	statusBar  StatusBarModel
 
 	// Overlays
-	helpOverlay   HelpOverlayModel
-	commandMode   CommandModeModel
-	settingsPanel SettingsModel
+	helpOverlay    HelpOverlayModel
+	commandMode    CommandModeModel
+	settingsPanel  SettingsModel
+	commentOverlay CommentOverlayModel
 
 	// GitHub client (nil until GHClientReadyMsg)
 	ghClient GitHubService
@@ -133,6 +134,7 @@ func NewApp() App {
 		helpOverlay:       NewHelpOverlayModel(),
 		commandMode:       NewCommandModeModel(),
 		settingsPanel:     NewSettingsModel(),
+		commentOverlay:    NewCommentOverlayModel(),
 		focused:           PanelLeft,
 		panelVisible:      panelVisible,
 		mode:              ModeNavigation,
@@ -162,6 +164,7 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.helpOverlay.SetSize(m.width, m.height)
 		m.commandMode.SetSize(m.width, m.height)
 		m.settingsPanel.SetSize(m.width, m.height)
+		m.commentOverlay.SetSize(m.width, m.height)
 		// Auto-collapse panels on first render if terminal is narrow
 		if !m.initialized {
 			m.initialized = true
@@ -243,6 +246,41 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.mode = ModeNavigation
 		m.statusBar.SetState(m.focused, m.mode)
 		return m, nil
+
+	case ShowCommentOverlayMsg:
+		m.commentOverlay.SetSize(m.width, m.height)
+		cmd := m.commentOverlay.Show(msg)
+		m.mode = ModeOverlay
+		m.statusBar.SetState(m.focused, m.mode)
+		return m, cmd
+
+	case CommentOverlayClosedMsg:
+		m.mode = ModeNavigation
+		m.statusBar.SetState(m.focused, m.mode)
+		return m, nil
+
+	case InlineCommentReplyMsg:
+		if m.selectedPR == nil || m.ghClient == nil {
+			return m, nil
+		}
+		pr := m.selectedPR
+		clearCmd := m.statusBar.SetTemporaryMessage("Posting reply...", 2*time.Second)
+		return m, tea.Batch(clearCmd, replyToCommentCmd(m.ghClient, pr.Owner, pr.Repo, pr.Number, msg.CommentID, msg.Body))
+
+	case InlineCommentReplyDoneMsg:
+		if msg.Err != nil {
+			clearCmd := m.statusBar.SetTemporaryMessage(
+				fmt.Sprintf("Reply failed: %v", msg.Err), 3*time.Second)
+			return m, clearCmd
+		}
+		// Refresh inline comments to show the new reply
+		clearCmd := m.statusBar.SetTemporaryMessage("Reply posted", 2*time.Second)
+		var refreshCmd tea.Cmd
+		if m.selectedPR != nil && m.ghClient != nil {
+			pr := m.selectedPR
+			refreshCmd = fetchCommentsCmd(m.ghClient, pr.Owner, pr.Repo, pr.Number)
+		}
+		return m, tea.Batch(clearCmd, refreshCmd)
 
 	case ConfigChangedMsg:
 		if m.settingsPanel.IsDirty() {
@@ -603,6 +641,11 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		// Overlay mode captures all keys
 		if m.mode == ModeOverlay {
+			if m.commentOverlay.IsVisible() {
+				var cmd tea.Cmd
+				m.commentOverlay, cmd = m.commentOverlay.Update(msg)
+				return m, cmd
+			}
 			if m.settingsPanel.IsVisible() {
 				var cmd tea.Cmd
 				m.settingsPanel, cmd = m.settingsPanel.Update(msg)
@@ -772,6 +815,11 @@ func (m App) View() string {
 	bar := m.statusBar.View()
 
 	base := lipgloss.JoinVertical(lipgloss.Left, panels, bar)
+
+	// Render comment overlay on top if active
+	if m.commentOverlay.IsVisible() {
+		return m.commentOverlay.View()
+	}
 
 	// Render help overlay on top if active
 	if m.helpOverlay.IsVisible() {

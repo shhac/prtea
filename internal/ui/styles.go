@@ -323,3 +323,22 @@ func scrollIndicator(vp viewport.Model, width int) string {
 		lipgloss.PlaceHorizontal(width, lipgloss.Right, label),
 	)
 }
+
+// Comment overlay styles
+var (
+	commentOverlayTitleStyle = lipgloss.NewStyle().
+					Bold(true).
+					Foreground(lipgloss.Color("252")).
+					Background(lipgloss.Color("62")).
+					Padding(0, 1)
+	commentOverlaySepStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("240"))
+	commentOverlayActiveToggle = lipgloss.NewStyle().
+					Foreground(lipgloss.Color("42")).
+					Bold(true)
+	commentOverlayInactiveToggle = lipgloss.NewStyle().
+					Foreground(lipgloss.Color("244"))
+	commentOverlayHintStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("244")).
+				Italic(true)
+)

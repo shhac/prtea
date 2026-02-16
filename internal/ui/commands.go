@@ -290,6 +290,15 @@ func submitReviewCmd(client GitHubService, owner, repo string, number int, actio
 	}
 }
 
+// replyToCommentCmd posts a reply to an existing GitHub review comment thread.
+func replyToCommentCmd(client GitHubService, owner, repo string, prNumber int, commentID int64, body string) tea.Cmd {
+	return func() tea.Msg {
+		ctx := context.Background()
+		err := client.ReplyToComment(ctx, owner, repo, prNumber, commentID, body)
+		return InlineCommentReplyDoneMsg{Err: err}
+	}
+}
+
 // aiReviewCmd returns a command that runs Claude to generate an AI review with inline comments.
 func aiReviewCmd(analyzer *claude.Analyzer, pr *SelectedPR, files []github.PRFile) tea.Cmd {
 	return func() tea.Msg {
