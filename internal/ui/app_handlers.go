@@ -33,9 +33,18 @@ func (m App) handlePRListMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.initialLoadDone = true
 			m.snapshotKnownPRs(msg.ToReview, msg.MyPRs)
 		}
-		if m.pollEnabled && m.pollInterval > 0 {
-			return m, pollTickCmd(m.pollInterval)
+		var cmds []tea.Cmd
+		if m.ghClient != nil {
+			allPRs := append(msg.ToReview, msg.MyPRs...)
+			cmds = append(cmds, fetchReviewDecisionsCmd(m.ghClient, allPRs))
 		}
+		if m.pollEnabled && m.pollInterval > 0 {
+			cmds = append(cmds, pollTickCmd(m.pollInterval))
+		}
+		return m, tea.Batch(cmds...)
+
+	case PRReviewDecisionsMsg:
+		m.prList.UpdateReviewDecisions(msg.Decisions)
 		return m, nil
 
 	case PRsErrorMsg:
@@ -65,6 +74,10 @@ func (m App) handlePRListMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 		myPRs := convertPRItems(msg.MyPRs)
 		m.prList.MergeItems(toReview, myPRs)
 		var cmds []tea.Cmd
+		if m.ghClient != nil {
+			allPRs := append(msg.ToReview, msg.MyPRs...)
+			cmds = append(cmds, fetchReviewDecisionsCmd(m.ghClient, allPRs))
+		}
 		if m.notifyEnabled {
 			newPRs := m.detectNewPRs(msg.ToReview)
 			if len(newPRs) > 0 {

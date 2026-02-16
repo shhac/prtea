@@ -69,6 +69,19 @@ func convertPRItems(prs []github.PRItem) []list.Item {
 	return items
 }
 
+// fetchReviewDecisionsCmd fetches review decisions for a batch of PRs asynchronously.
+// This runs in the background after the PR list loads — it does not block UI interactivity.
+func fetchReviewDecisionsCmd(client GitHubService, prs []github.PRItem) tea.Cmd {
+	return func() tea.Msg {
+		ctx := context.Background()
+		decisions, _ := client.GetReviewDecisions(ctx, prs)
+		if len(decisions) == 0 {
+			return nil
+		}
+		return PRReviewDecisionsMsg{Decisions: decisions}
+	}
+}
+
 // pollTickCmd returns a command that fires after the given interval to trigger background polling.
 func pollTickCmd(interval time.Duration) tea.Cmd {
 	return tea.Tick(interval, func(t time.Time) tea.Msg {

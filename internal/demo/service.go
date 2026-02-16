@@ -89,6 +89,18 @@ func (s *Service) GetReviews(_ context.Context, _, _ string, number int) (*githu
 	return &github.ReviewSummary{}, nil
 }
 
+// -- Batch operations --
+
+func (s *Service) GetReviewDecisions(_ context.Context, prs []github.PRItem) (map[string]string, error) {
+	decisions := make(map[string]string)
+	for _, pr := range prs {
+		if r, ok := s.reviews[pr.Number]; ok && r.ReviewDecision != "" {
+			decisions[fmt.Sprintf("%s#%d", pr.Repo.FullName, pr.Number)] = r.ReviewDecision
+		}
+	}
+	return decisions, nil
+}
+
 // -- Configuration (no-op) --
 
 func (s *Service) SetFetchLimit(_ int) {}

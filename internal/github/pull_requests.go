@@ -10,13 +10,12 @@ import (
 
 // ghSearchPR is the JSON shape returned by gh search prs.
 type ghSearchPR struct {
-	Number         int       `json:"number"`
-	Title          string    `json:"title"`
-	URL            string    `json:"url"`
-	CreatedAt      time.Time `json:"createdAt"`
-	IsDraft        bool      `json:"isDraft"`
-	ReviewDecision string    `json:"reviewDecision"`
-	Author         struct {
+	Number    int       `json:"number"`
+	Title     string    `json:"title"`
+	URL       string    `json:"url"`
+	CreatedAt time.Time `json:"createdAt"`
+	IsDraft   bool      `json:"isDraft"`
+	Author    struct {
 		Login string `json:"login"`
 	} `json:"author"`
 	Repository struct {
@@ -67,7 +66,7 @@ func (c *Client) GetPRsForReview(ctx context.Context) ([]PRItem, error) {
 		"--review-requested=@me",
 		"--state=open",
 		"--limit", c.fetchLimit(),
-		"--json", "number,title,url,createdAt,isDraft,reviewDecision,author,repository,labels",
+		"--json", "number,title,url,createdAt,isDraft,author,repository,labels",
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to search PRs for review: %w", err)
@@ -83,7 +82,7 @@ func (c *Client) GetMyPRs(ctx context.Context) ([]PRItem, error) {
 		"--author=@me",
 		"--state=open",
 		"--limit", c.fetchLimit(),
-		"--json", "number,title,url,createdAt,isDraft,reviewDecision,author,repository,labels",
+		"--json", "number,title,url,createdAt,isDraft,author,repository,labels",
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to search my PRs: %w", err)
@@ -142,18 +141,60 @@ func convertSearchResults(results []ghSearchPR) []PRItem {
 		}
 
 		prs = append(prs, PRItem{
-			Number:         r.Number,
-			Title:          r.Title,
-			HTMLURL:        r.URL,
-			Repo:           Repo{Owner: owner, Name: name, FullName: r.Repository.NameWithOwner},
-			Author:         User{Login: r.Author.Login},
-			Labels:         labels,
-			Draft:          r.IsDraft,
-			CreatedAt:      r.CreatedAt,
-			ReviewDecision: r.ReviewDecision,
+			Number:    r.Number,
+			Title:     r.Title,
+			HTMLURL:   r.URL,
+			Repo:      Repo{Owner: owner, Name: name, FullName: r.Repository.NameWithOwner},
+			Author:    User{Login: r.Author.Login},
+			Labels:    labels,
+			Draft:     r.IsDraft,
+			CreatedAt: r.CreatedAt,
 		})
 	}
 	return prs
+}
+
+// ghPRListItem is the JSON shape for review decision fetching via gh pr list.
+type ghPRListItem struct {
+	Number         int    `json:"number"`
+	ReviewDecision string `json:"reviewDecision"`
+}
+
+// GetReviewDecisions fetches review decisions for a batch of PRs.
+// Groups PRs by repo and calls gh pr list per unique repo with a search
+// filter to only match the specific PR numbers we care about.
+func (c *Client) GetReviewDecisions(ctx context.Context, prs []PRItem) (map[string]string, error) {
+	// Group PR numbers by repo
+	byRepo := make(map[string][]int) // key: "owner/repo"
+	for _, pr := range prs {
+		byRepo[pr.Repo.FullName] = append(byRepo[pr.Repo.FullName], pr.Number)
+	}
+
+	decisions := make(map[string]string)
+	for repoFull, numbers := range byRepo {
+		var items []ghPRListItem
+		err := c.ghJSON(ctx, &items,
+			"pr", "list",
+			"-R", repoFull,
+			"--state=open",
+			"--limit", fmt.Sprintf("%d", len(numbers)),
+			"--json", "number,reviewDecision",
+		)
+		if err != nil {
+			continue // best-effort: skip repos that fail
+		}
+
+		wanted := make(map[int]bool, len(numbers))
+		for _, n := range numbers {
+			wanted[n] = true
+		}
+		for _, item := range items {
+			if wanted[item.Number] && item.ReviewDecision != "" {
+				decisions[fmt.Sprintf("%s#%d", repoFull, item.Number)] = item.ReviewDecision
+			}
+		}
+	}
+	return decisions, nil
 }
 
 // parseNameWithOwner splits "owner/repo" into owner and repo.

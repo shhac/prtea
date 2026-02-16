@@ -230,6 +230,33 @@ func (m *PRListModel) SetReviewDecision(decision string) {
 	*m.reviewDecision = decision
 }
 
+// UpdateReviewDecisions merges asynchronously fetched review decisions into list items.
+func (m *PRListModel) UpdateReviewDecisions(decisions map[string]string) {
+	updateItems := func(items []list.Item) {
+		for i, item := range items {
+			if pr, ok := item.(PRItem); ok {
+				key := fmt.Sprintf("%s/%s#%d", pr.owner, pr.repo, pr.number)
+				if d, found := decisions[key]; found {
+					pr.reviewDecision = d
+					items[i] = pr
+				}
+			}
+		}
+	}
+	updateItems(m.toReview)
+	updateItems(m.myPRs)
+
+	// Refresh active tab if not filtering
+	if !m.HasActiveFilter() {
+		switch m.activeTab {
+		case TabToReview:
+			m.list.SetItems(m.toReview)
+		case TabMyPRs:
+			m.list.SetItems(m.myPRs)
+		}
+	}
+}
+
 // ciBadgeForList returns a styled CI badge string and its visual width for the PR list.
 func ciBadgeForList(status string) (string, int) {
 	var icon, color string

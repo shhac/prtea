@@ -186,7 +186,7 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// PR list domain: client init, fetching, polling, selection
 	case GHClientReadyMsg, GHClientErrorMsg,
-		PRsLoadedMsg, PRsErrorMsg,
+		PRsLoadedMsg, PRsErrorMsg, PRReviewDecisionsMsg,
 		pollTickMsg, pollPRsLoadedMsg, pollErrorMsg,
 		PRSelectedMsg, PRSelectedAndAdvanceMsg:
 		return m.handlePRListMsg(msg)

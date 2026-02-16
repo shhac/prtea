@@ -31,6 +31,11 @@ type PRsErrorMsg struct {
 	Err error
 }
 
+// PRReviewDecisionsMsg delivers review decisions fetched asynchronously after PR list load.
+type PRReviewDecisionsMsg struct {
+	Decisions map[string]string // key: "owner/repo#number", value: review decision
+}
+
 // -- PR selection --
 
 // PRSelectedMsg is sent when the user selects a PR.

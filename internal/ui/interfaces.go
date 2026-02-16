@@ -28,6 +28,7 @@ type GitHubService interface {
 	SubmitReviewWithComments(ctx context.Context, owner, repo string, number int, event string, body string, comments []github.ReviewCommentPayload) error
 	RerunWorkflow(ctx context.Context, owner, repo string, runID int64, failedOnly bool) error
 	ReplyToComment(ctx context.Context, owner, repo string, prNumber int, commentID int64, body string) error
+	GetReviewDecisions(ctx context.Context, prs []github.PRItem) (map[string]string, error)
 	SetFetchLimit(limit int)
 }
 
