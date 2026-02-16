@@ -191,7 +191,7 @@ func TestExtractResultText(t *testing.T) {
 }
 
 func TestChatService_ClearSession(t *testing.T) {
-	svc := NewChatService("/usr/local/bin/claude", 0, nil, 0, 0, 0)
+	svc := NewChatService(nil, 0, nil, 0, 0, 0)
 
 	// Create a session manually
 	svc.mu.Lock()
@@ -214,7 +214,7 @@ func TestChatService_ClearSession(t *testing.T) {
 
 func TestChatService_SaveAndGetSession(t *testing.T) {
 	store := NewChatStore(t.TempDir())
-	svc := NewChatService("/usr/local/bin/claude", 0, store, 0, 0, 0)
+	svc := NewChatService(nil, 0, store, 0, 0, 0)
 
 	// Create a session manually
 	svc.mu.Lock()
@@ -254,7 +254,7 @@ func TestChatService_SaveAndGetSession(t *testing.T) {
 }
 
 func TestChatService_GetSessionMessages_Empty(t *testing.T) {
-	svc := NewChatService("/usr/local/bin/claude", 0, nil, 0, 0, 0)
+	svc := NewChatService(nil, 0, nil, 0, 0, 0)
 	msgs := svc.GetSessionMessages("alice", "widget-factory", 99)
 	if msgs != nil {
 		t.Errorf("expected nil for non-existent session, got %+v", msgs)
@@ -263,7 +263,7 @@ func TestChatService_GetSessionMessages_Empty(t *testing.T) {
 
 func TestChatService_ClearSession_WithStore(t *testing.T) {
 	store := NewChatStore(t.TempDir())
-	svc := NewChatService("/usr/local/bin/claude", 0, store, 0, 0, 0)
+	svc := NewChatService(nil, 0, store, 0, 0, 0)
 
 	// Put a session in memory and on disk
 	svc.mu.Lock()

@@ -1,12 +1,10 @@
 package claude
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
 	"sync"
 	"time"
@@ -14,7 +12,7 @@ import (
 
 // ChatService manages Claude chat sessions for PR discussions.
 type ChatService struct {
-	claudePath         string
+	executor           CommandExecutor
 	timeout            time.Duration
 	maxPromptTokens    int
 	maxHistoryMessages int
@@ -25,9 +23,9 @@ type ChatService struct {
 }
 
 // NewChatService creates a ChatService with optional persistent storage.
-func NewChatService(claudePath string, timeout time.Duration, store *ChatStore, maxPromptTokens, maxHistory, maxTurns int) *ChatService {
+func NewChatService(executor CommandExecutor, timeout time.Duration, store *ChatStore, maxPromptTokens, maxHistory, maxTurns int) *ChatService {
 	return &ChatService{
-		claudePath:         claudePath,
+		executor:           executor,
 		timeout:            timeout,
 		maxPromptTokens:    maxPromptTokens,
 		maxHistoryMessages: maxHistory,
@@ -40,12 +38,12 @@ func NewChatService(claudePath string, timeout time.Duration, store *ChatStore, 
 // ChatInput contains the parameters for a chat request.
 // RepoPath is optional — if empty, Claude runs without filesystem access (diff-as-context mode).
 type ChatInput struct {
-	Owner        string
-	Repo         string
-	PRNumber     int
-	PRContext    string // PR metadata + diff content embedded as text
+	Owner         string
+	Repo          string
+	PRNumber      int
+	PRContext     string // PR metadata + diff content embedded as text
 	HunksSelected bool   // true when the user has selected specific hunks
-	Message      string
+	Message       string
 }
 
 // ClearSession removes the chat history for a PR (in memory and on disk).
@@ -130,87 +128,6 @@ const (
 	defaultChatMaxTurns       = 3
 )
 
-// estimateTokens returns a rough token count for a string.
-// Code and diffs average ~3 chars per token; prose ~4 chars.
-// We use 3 as a conservative estimate (overestimates slightly for prose).
-func estimateTokens(s string) int {
-	return len(s) / 3
-}
-
-func buildChatPrompt(session *ChatSession, input ChatInput, maxTokens, maxHistory int) string {
-	var b strings.Builder
-
-	// System instruction (always included)
-	systemPrefix := "You are helping review a pull request. Here is the context:\n\n"
-	b.WriteString(systemPrefix)
-
-	var instruction string
-	if input.HunksSelected {
-		instruction = "\n\nThe user has selected specific code hunks from the diff above. " +
-			"Focus your answer primarily on these selected hunks. " +
-			"Explain what the selected code does, flag potential issues, and suggest improvements.\n"
-	} else {
-		instruction = "\n\nAnswer questions about this PR based on the diff and metadata provided above.\n"
-	}
-
-	currentMsg := fmt.Sprintf("\nUser: %s\n\nRespond helpfully and concisely.", input.Message)
-
-	// Calculate fixed token costs
-	fixedTokens := estimateTokens(systemPrefix) + estimateTokens(instruction) + estimateTokens(currentMsg)
-	contextTokens := estimateTokens(input.PRContext)
-
-	// Determine which messages to include (most recent first, up to budget)
-	messages := session.Messages
-	if len(messages) > maxHistory {
-		messages = messages[len(messages)-maxHistory:]
-	}
-
-	// Further trim messages if total exceeds token budget
-	historyTokens := 0
-	for _, msg := range messages {
-		historyTokens += estimateTokens(msg.Content) + 10 // 10 for "User: " / "Assistant: " prefix
-	}
-
-	totalTokens := fixedTokens + contextTokens + historyTokens
-	if totalTokens > maxTokens && len(messages) > 2 {
-		// Drop oldest messages until we fit (keep at least the last 2 messages)
-		for totalTokens > maxTokens && len(messages) > 2 {
-			dropped := messages[0]
-			messages = messages[1:]
-			totalTokens -= estimateTokens(dropped.Content) + 10
-		}
-	}
-
-	// If still over budget after trimming history, truncate the diff context
-	prContext := input.PRContext
-	if totalTokens > maxTokens {
-		// Calculate how many tokens we can afford for the context
-		availableContextTokens := maxTokens - fixedTokens - historyTokens
-		if availableContextTokens < 0 {
-			availableContextTokens = 0
-		}
-		maxContextChars := availableContextTokens * 3 // reverse the estimation
-		if maxContextChars > 0 && maxContextChars < len(prContext) {
-			prContext = prContext[:maxContextChars] + "\n\n[... diff truncated to fit context window ...]"
-		}
-	}
-
-	b.WriteString(prContext)
-	b.WriteString(instruction)
-
-	for _, msg := range messages {
-		if msg.Role == "user" {
-			fmt.Fprintf(&b, "\nUser: %s", msg.Content)
-		} else {
-			fmt.Fprintf(&b, "\nAssistant: %s", msg.Content)
-		}
-	}
-
-	b.WriteString(currentMsg)
-
-	return b.String()
-}
-
 // ChatStream sends a message to Claude with streaming JSON output.
 // onChunk is called with each text chunk as it arrives.
 // Returns the complete response text.
@@ -248,58 +165,12 @@ func (cs *ChatService) ChatStream(ctx context.Context, input ChatInput, onChunk 
 		"--max-turns", fmt.Sprintf("%d", turns),
 	}
 
-	cmd := exec.CommandContext(ctx, cs.claudePath, args...)
-	cmd.Stdin = nil
-	cmd.Env = filterEnv(os.Environ(), "ANTHROPIC_API_KEY")
-
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return "", fmt.Errorf("failed to create stdout pipe: %w", err)
+	opts := ExecOptions{
+		Env: filterEnv(os.Environ(), "ANTHROPIC_API_KEY"),
 	}
 
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		return "", fmt.Errorf("failed to create stderr pipe: %w", err)
-	}
-
-	if err := cmd.Start(); err != nil {
-		if isNotFound(err) {
-			return "", fmt.Errorf("claude CLI not found at %s: ensure 'claude' is installed", cs.claudePath)
-		}
-		return "", fmt.Errorf("failed to start claude: %w", err)
-	}
-
-	// Drain stderr in background
-	var stderrBuf strings.Builder
-	go func() {
-		scanner := bufio.NewScanner(stderr)
-		scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
-		for scanner.Scan() {
-			stderrBuf.WriteString(scanner.Text())
-			stderrBuf.WriteByte('\n')
-		}
-	}()
-
-	// Parse stream-json events from stdout.
-	// With --include-partial-messages, Claude emits "stream_event" envelopes
-	// containing content_block_delta events with text_delta for token-level streaming.
-	// We also keep the "assistant" handler as a fallback for complete turn events.
 	var streamedText strings.Builder
-	var resultText string
-	scanner := bufio.NewScanner(stdout)
-	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
-
-	for scanner.Scan() {
-		line := scanner.Text()
-		if strings.TrimSpace(line) == "" {
-			continue
-		}
-
-		var event StreamEvent
-		if err := json.Unmarshal([]byte(line), &event); err != nil {
-			continue
-		}
-
+	visitor := func(event *StreamEvent) {
 		// Token-level streaming: stream_event with content_block_delta
 		if event.Type == "stream_event" && event.Event != nil {
 			if event.Event.Type == "content_block_delta" && event.Event.Delta != nil {
@@ -308,7 +179,7 @@ func (cs *ChatService) ChatStream(ctx context.Context, input ChatInput, onChunk 
 					streamedText.WriteString(event.Event.Delta.Text)
 				}
 			}
-			continue
+			return
 		}
 
 		// Fallback: complete assistant turn (without --include-partial-messages)
@@ -319,26 +190,15 @@ func (cs *ChatService) ChatStream(ctx context.Context, input ChatInput, onChunk 
 				}
 			}
 		}
-
-		// Capture final result
-		if event.Type == "result" {
-			resultText = extractResultText(&event)
-		}
 	}
 
-	if err := cmd.Wait(); err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			return "", fmt.Errorf("claude chat timed out after %s", timeout)
-		}
-		errMsg := stderrBuf.String()
-		if len(errMsg) > 300 {
-			errMsg = errMsg[:300]
-		}
-		return "", fmt.Errorf("claude chat exited with error: %w\nstderr: %s", err, errMsg)
+	resultEvent, err := runCLI(ctx, cs.executor, args, opts, visitor)
+	if err != nil {
+		return "", err
 	}
 
 	// Prefer streamed text if available (token-level), fall back to result event
-	finalText := resultText
+	finalText := extractResultText(resultEvent)
 	if streamedText.Len() > 0 {
 		finalText = streamedText.String()
 	}
