@@ -75,11 +75,15 @@ var (
 	diffSearchInfoStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
 )
 
-// Inline comment box border colors
+// Inline comment box border colors (normal and highlighted)
 var (
 	commentBoxAIBorder      = lipgloss.Color("75")  // blue
 	commentBoxGitHubBorder  = lipgloss.Color("220") // yellow
 	commentBoxPendingBorder = lipgloss.Color("214") // orange
+
+	commentBoxAIBorderHi      = lipgloss.Color("117") // bright blue
+	commentBoxGitHubBorderHi  = lipgloss.Color("228") // bright yellow
+	commentBoxPendingBorderHi = lipgloss.Color("222") // bright orange
 )
 
 // Inline comment box header styles (used inside the box)
@@ -88,6 +92,8 @@ var (
 	commentBoxMetaStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
 	commentBoxTrimStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Italic(true)
 	commentBoxReplyStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+	commentBoxHintStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+	commentBoxHintHiStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Bold(true)
 )
 
 // PR list styles

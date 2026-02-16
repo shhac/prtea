@@ -1537,6 +1537,12 @@ func (m *DiffViewerModel) renderHunkLines(hunkIdx int) ([]string, []lineInfo) {
 	lines := make([]string, 0, len(hunk.Lines))
 	infos := make([]lineInfo, 0, len(hunk.Lines))
 
+	// Compute cursor's comment target key so we can highlight the targeted comment box.
+	cursorTargetKey := ""
+	if targetLine, targetFile := m.commentTargetFromCursor(); targetLine > 0 {
+		cursorTargetKey = fmt.Sprintf("%s:%d", targetFile, targetLine)
+	}
+
 	// Base offset of this hunk in cachedLines (for cursor comparison).
 	hunkBase := -1
 	if hunkIdx < len(m.hunkOffsets) {
@@ -1664,9 +1670,16 @@ func (m *DiffViewerModel) renderHunkLines(hunkIdx int) ([]string, []lineInfo) {
 		// Inject inline comments after matching lines (+ or context lines)
 		if commentable {
 			key := fmt.Sprintf("%s:%d", hunk.Filename, newLine)
-			boxInnerWidth := m.viewport.Width - 2 - 2 - 2 // margin, border, padding
+			boxInnerWidth := m.viewport.Width - 2 - 2 - 2 // gutter, border, padding
 			if boxInnerWidth < 10 {
 				boxInnerWidth = 10
+			}
+			isTargeted := cursorTargetKey != "" && key == cursorTargetKey
+
+			// Gutter for comment lines: continue the focused hunk indicator
+			commentGutter := "  "
+			if isFocused {
+				commentGutter = diffFocusGutterStyle.Render("▎") + " "
 			}
 
 			// AI inline comments
@@ -1675,7 +1688,11 @@ func (m *DiffViewerModel) renderHunkLines(hunkIdx int) ([]string, []lineInfo) {
 					for _, c := range comments {
 						header := commentBoxHeaderStyle.Render("💬 Claude AI")
 						body := m.renderMarkdown(c.Body, boxInnerWidth)
-						boxLines := m.renderCommentBox(header, body, commentBoxAIBorder)
+						borderColor := commentBoxAIBorder
+						if isTargeted {
+							borderColor = commentBoxAIBorderHi
+						}
+						boxLines := m.renderCommentBox(header, body, borderColor, isTargeted, commentGutter)
 						for range boxLines {
 							infos = append(infos, lineInfo{hunkIdx: hunkIdx, filename: hunk.Filename, comment: commentAI})
 						}
@@ -1688,7 +1705,7 @@ func (m *DiffViewerModel) renderHunkLines(hunkIdx int) ([]string, []lineInfo) {
 			if hasGHComments {
 				if threads, ok := m.ghCommentThreads[key]; ok {
 					for _, t := range threads {
-						threadLines := m.renderGHCommentThread(t)
+						threadLines := m.renderGHCommentThread(t, isTargeted, commentGutter)
 						for range threadLines {
 							infos = append(infos, lineInfo{hunkIdx: hunkIdx, filename: hunk.Filename, comment: commentGitHub})
 						}
@@ -1707,7 +1724,11 @@ func (m *DiffViewerModel) renderHunkLines(hunkIdx int) ([]string, []lineInfo) {
 						}
 						header := commentBoxHeaderStyle.Render("📝 " + source)
 						body := m.renderMarkdown(c.Body, boxInnerWidth)
-						boxLines := m.renderCommentBox(header, body, commentBoxPendingBorder)
+						borderColor := commentBoxPendingBorder
+						if isTargeted {
+							borderColor = commentBoxPendingBorderHi
+						}
+						boxLines := m.renderCommentBox(header, body, borderColor, isTargeted, commentGutter)
 						for range boxLines {
 							infos = append(infos, lineInfo{hunkIdx: hunkIdx, filename: hunk.Filename, comment: commentPending})
 						}
@@ -1733,9 +1754,10 @@ const commentBoxMaxPreviewLines = 3
 // header is the first line inside the box (e.g. "💬 Claude AI").
 // body is the pre-rendered content (already glamour-processed or plain text).
 // borderColor is the lipgloss color for the rounded border.
-// The box is indented 2 chars from the left to visually inset from diff code.
-func (m *DiffViewerModel) renderCommentBox(header, body string, borderColor lipgloss.Color) []string {
-	boxWidth := m.viewport.Width - 2 // 2-char left margin
+// highlighted uses a thick border and brighter color to indicate cursor targeting.
+// gutter is the left margin prefix for each line (e.g. "▎ " for focused hunk).
+func (m *DiffViewerModel) renderCommentBox(header, body string, borderColor lipgloss.Color, highlighted bool, gutter string) []string {
+	boxWidth := m.viewport.Width - 2 // 2-char gutter
 	if boxWidth < 14 {
 		boxWidth = 14
 	}
@@ -1759,25 +1781,37 @@ func (m *DiffViewerModel) renderCommentBox(header, body string, borderColor lipg
 		content.WriteString(strings.Join(bodyLines, "\n"))
 	}
 
+	// Add [c] hint on last line of content
+	hintStyle := commentBoxHintStyle
+	if highlighted {
+		hintStyle = commentBoxHintHiStyle
+	}
+	content.WriteString("  " + hintStyle.Render("[c]"))
+
+	border := lipgloss.RoundedBorder()
+	if highlighted {
+		border = lipgloss.ThickBorder()
+	}
+
 	boxStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
+		Border(border).
 		BorderForeground(borderColor).
 		Width(boxWidth - 2). // -2 for border chars
 		PaddingLeft(1).PaddingRight(1)
 
 	rendered := boxStyle.Render(content.String())
 
-	// Split into viewport lines and add left margin
+	// Split into viewport lines and prepend gutter
 	result := strings.Split(rendered, "\n")
 	for i, line := range result {
-		result[i] = "  " + line
+		result[i] = gutter + line
 	}
 	return result
 }
 
 // renderGHCommentThread renders a single GitHub comment thread inside a bordered box.
-func (m *DiffViewerModel) renderGHCommentThread(t ghCommentThread) []string {
-	boxInnerWidth := m.viewport.Width - 2 - 2 - 2 // margin, border, padding
+func (m *DiffViewerModel) renderGHCommentThread(t ghCommentThread, highlighted bool, gutter string) []string {
+	boxInnerWidth := m.viewport.Width - 2 - 2 - 2 // gutter, border, padding
 	if boxInnerWidth < 10 {
 		boxInnerWidth = 10
 	}
@@ -1807,7 +1841,11 @@ func (m *DiffViewerModel) renderGHCommentThread(t ghCommentThread) []string {
 		body.WriteString(m.renderMarkdown(r.Body, boxInnerWidth))
 	}
 
-	return m.renderCommentBox(header, body.String(), commentBoxGitHubBorder)
+	borderColor := commentBoxGitHubBorder
+	if highlighted {
+		borderColor = commentBoxGitHubBorderHi
+	}
+	return m.renderCommentBox(header, body.String(), borderColor, highlighted, gutter)
 }
 
 // rerenderHunkInCache re-renders a single hunk's styled lines in the cache.
