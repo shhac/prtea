@@ -312,6 +312,26 @@ var (
 		Foreground(lipgloss.Color("252"))
 )
 
+// Vertical scrollbar styles (1-char wide column in diff viewer)
+var (
+	scrollbarTrackStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("238"))
+	scrollbarThumbStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("248"))
+)
+
+// scrollbarCommentStyle returns the style for a comment marker at the given kind.
+func scrollbarCommentStyle(kind commentKind) lipgloss.Style {
+	switch kind {
+	case commentAI:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("75")) // blue (matches AI prefix)
+	case commentGitHub:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("220")) // yellow (matches GH author)
+	case commentPending:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("214")) // orange (matches pending prefix)
+	default:
+		return scrollbarTrackStyle
+	}
+}
+
 // Scroll indicator style
 var scrollIndicatorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
 

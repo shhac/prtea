@@ -81,13 +81,24 @@ type searchMatch struct {
 	endCol     int
 }
 
+// commentKind identifies the type of inline comment a cached line represents.
+type commentKind byte
+
+const (
+	commentNone    commentKind = iota
+	commentAI                  // AI-generated inline comment
+	commentGitHub              // GitHub review comment
+	commentPending             // Pending user/AI draft
+)
+
 // lineInfo describes what a cached viewport line represents in the source diff.
 type lineInfo struct {
-	hunkIdx       int    // which hunk this line belongs to (-1 for file headers etc.)
-	filename      string // file path for this line
-	newLineNum    int    // new-side file line number (0 = not a file line)
-	isCommentable bool   // true for + and context lines (commentable on RIGHT side)
-	isDiffLine    bool   // true for actual diff content lines (cursor can land here)
+	hunkIdx       int         // which hunk this line belongs to (-1 for file headers etc.)
+	filename      string      // file path for this line
+	newLineNum    int         // new-side file line number (0 = not a file line)
+	isCommentable bool        // true for + and context lines (commentable on RIGHT side)
+	isDiffLine    bool        // true for actual diff content lines (cursor can land here)
+	comment       commentKind // non-zero for inline comment lines
 }
 
 // parseAllHunks parses hunks from all files once and populates m.hunks.
@@ -519,8 +530,8 @@ func (m DiffViewerModel) Update(msg tea.Msg) (DiffViewerModel, tea.Cmd) {
 func (m *DiffViewerModel) SetSize(width, height int) {
 	m.width = width
 	m.height = height
-	// Account for borders (2) and header (1)
-	innerWidth := width - 4
+	// Account for borders (2), padding (2), and scrollbar gutter (1)
+	innerWidth := width - 5
 	innerHeight := height - 5
 	if innerWidth < 1 {
 		innerWidth = 1
@@ -961,12 +972,20 @@ func (m DiffViewerModel) View() string {
 	var content string
 	if m.ready {
 		content = m.viewport.View()
+		// Attach vertical scrollbar column to the right edge of viewport content
+		if m.viewport.TotalLineCount() > m.viewport.Height {
+			content = lipgloss.JoinHorizontal(lipgloss.Top, content, m.renderScrollbar())
+		} else {
+			// Reserve the scrollbar column space even when not scrollable
+			content = lipgloss.JoinHorizontal(lipgloss.Top, content, strings.Repeat(" \n", m.viewport.Height-1)+" ")
+		}
 	} else {
 		content = "Loading..."
 	}
 
+	innerWidth := m.width - 4 // viewport + scrollbar column
 	parts := []string{header, content}
-	if indicator := scrollIndicator(m.viewport, m.width-4); indicator != "" {
+	if indicator := scrollIndicator(m.viewport, innerWidth); indicator != "" {
 		parts = append(parts, indicator)
 	}
 
@@ -983,6 +1002,64 @@ func (m DiffViewerModel) View() string {
 	inner := lipgloss.JoinVertical(lipgloss.Left, parts...)
 	style := panelStyle(m.focused, false, m.width-2, m.height-2)
 	return style.Render(inner)
+}
+
+// renderScrollbar builds a 1-char-wide vertical scrollbar column with comment markers.
+// Each row maps proportionally to the total content; the thumb shows the visible portion
+// and colored markers indicate where inline comments live.
+func (m DiffViewerModel) renderScrollbar() string {
+	height := m.viewport.Height
+	totalLines := m.viewport.TotalLineCount()
+	if totalLines <= 0 || height <= 0 {
+		return strings.Repeat(" \n", height-1) + " "
+	}
+
+	// Thumb position and size
+	thumbSize := max(1, height*height/totalLines)
+	thumbStart := m.viewport.YOffset * height / totalLines
+	if thumbStart+thumbSize > height {
+		thumbStart = height - thumbSize
+	}
+
+	// Collect comment marker positions in scrollbar space.
+	// Track the highest-priority comment kind per scrollbar row.
+	commentMarkers := make([]commentKind, height)
+	if m.activeTab == TabDiff && m.cachedLineInfo != nil {
+		for i, info := range m.cachedLineInfo {
+			if info.comment == commentNone {
+				continue
+			}
+			row := i * height / totalLines
+			if row >= height {
+				row = height - 1
+			}
+			// Priority: pending > GitHub > AI (higher commentKind value wins)
+			if info.comment > commentMarkers[row] {
+				commentMarkers[row] = info.comment
+			}
+		}
+	}
+
+	// Render each scrollbar row
+	rows := make([]string, height)
+	for i := 0; i < height; i++ {
+		inThumb := i >= thumbStart && i < thumbStart+thumbSize
+		marker := commentMarkers[i]
+
+		switch {
+		case inThumb && marker != commentNone:
+			// Thumb with comment: colored thumb character
+			rows[i] = scrollbarCommentStyle(marker).Render("┃")
+		case inThumb:
+			rows[i] = scrollbarThumbStyle.Render("┃")
+		case marker != commentNone:
+			// Comment marker on track
+			rows[i] = scrollbarCommentStyle(marker).Render("●")
+		default:
+			rows[i] = scrollbarTrackStyle.Render("│")
+		}
+	}
+	return strings.Join(rows, "\n")
 }
 
 func (m DiffViewerModel) renderTabs() string {
@@ -1528,7 +1605,7 @@ func (m *DiffViewerModel) renderHunkLines(hunkIdx int) ([]string, []lineInfo) {
 						prefix := aiCommentPrefixStyle.Render("  💬 ")
 						body := aiCommentStyle.Render(c.Body)
 						lines = append(lines, prefix+body)
-						infos = append(infos, lineInfo{hunkIdx: hunkIdx, filename: hunk.Filename})
+						infos = append(infos, lineInfo{hunkIdx: hunkIdx, filename: hunk.Filename, comment: commentAI})
 					}
 				}
 			}
@@ -1539,7 +1616,7 @@ func (m *DiffViewerModel) renderHunkLines(hunkIdx int) ([]string, []lineInfo) {
 					for _, t := range threads {
 						threadLines := m.renderGHCommentThread(t)
 						for range threadLines {
-							infos = append(infos, lineInfo{hunkIdx: hunkIdx, filename: hunk.Filename})
+							infos = append(infos, lineInfo{hunkIdx: hunkIdx, filename: hunk.Filename, comment: commentGitHub})
 						}
 						lines = append(lines, threadLines...)
 					}
@@ -1553,7 +1630,7 @@ func (m *DiffViewerModel) renderHunkLines(hunkIdx int) ([]string, []lineInfo) {
 						prefix := pendingCommentPrefixStyle.Render("  📝 ")
 						body := pendingCommentStyle.Render(c.Body)
 						lines = append(lines, prefix+body)
-						infos = append(infos, lineInfo{hunkIdx: hunkIdx, filename: hunk.Filename})
+						infos = append(infos, lineInfo{hunkIdx: hunkIdx, filename: hunk.Filename, comment: commentPending})
 					}
 				}
 			}
