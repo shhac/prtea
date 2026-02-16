@@ -2,7 +2,7 @@
 
 A terminal dashboard for reviewing GitHub PRs with AI-powered analysis.
 
-<!-- TODO: Add screenshot/GIF of the three-panel layout -->
+![prtea demo screenshot](assets/demo-screenshot.png)
 
 Three-panel TUI built with [Bubbletea](https://github.com/charmbracelet/bubbletea): browse your PRs, read diffs, and chat with Claude about the changes — all without leaving the terminal.
 
