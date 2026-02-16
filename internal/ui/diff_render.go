@@ -45,10 +45,7 @@ func (m *DiffViewerModel) buildCachedLines() {
 
 		// Patch content
 		if f.Patch == "" {
-			lines = append(lines, lipgloss.NewStyle().
-				Foreground(lipgloss.Color("244")).
-				Italic(true).
-				Render("  (diff not available)"))
+			lines = append(lines, dimItalicStyle.Render("  (diff not available)"))
 			infos = append(infos, nonHunkInfo)
 			continue
 		}
@@ -234,9 +231,7 @@ func styleDiffLine(line string, isFocused, selected bool) (lipgloss.Style, strin
 	case strings.HasPrefix(line, "-"):
 		return diffRemovedStyle, displayLine
 	case strings.HasPrefix(line, `\`):
-		return lipgloss.NewStyle().
-			Foreground(lipgloss.Color("244")).
-			Italic(true), displayLine
+		return dimItalicStyle, displayLine
 	default:
 		return lipgloss.NewStyle(), displayLine
 	}

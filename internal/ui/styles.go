@@ -306,6 +306,9 @@ func scrollbarCommentStyle(kind commentKind) lipgloss.Style {
 	}
 }
 
+// Dim italic style for metadata, "no newline" markers, unavailable content, etc.
+var dimItalicStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Italic(true)
+
 // Scroll indicator style
 var scrollIndicatorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
 
