@@ -297,10 +297,8 @@ func replyToCommentCmd(client GitHubService, owner, repo string, prNumber int, c
 }
 
 // aiReviewCmd returns a command that runs Claude to generate an AI review with inline comments.
-func aiReviewCmd(analyzer AIAnalyzer, pr *PRSession, files []github.PRFile) tea.Cmd {
+func aiReviewCmd(ctx context.Context, analyzer AIAnalyzer, pr *PRSession, files []github.PRFile) tea.Cmd {
 	return func() tea.Msg {
-		ctx := context.Background()
-
 		diffContent := buildDiffContent(files)
 
 		input := claude.ReviewInput{
@@ -324,19 +322,9 @@ func aiReviewCmd(analyzer AIAnalyzer, pr *PRSession, files []github.PRFile) tea.
 	}
 }
 
-// listenForChatStream returns a tea.Cmd that reads the next message from the streaming channel.
-func listenForChatStream(ch chatStreamChan) tea.Cmd {
-	return func() tea.Msg {
-		msg, ok := <-ch
-		if !ok {
-			return nil
-		}
-		return msg
-	}
-}
-
-// listenForAnalysisStream returns a tea.Cmd that reads the next message from the analysis streaming channel.
-func listenForAnalysisStream(ch analysisStreamChan) tea.Cmd {
+// listenForStream returns a tea.Cmd that reads the next message from a streaming channel.
+// Used for both chat and analysis streams.
+func listenForStream(ch <-chan tea.Msg) tea.Cmd {
 	return func() tea.Msg {
 		msg, ok := <-ch
 		if !ok {

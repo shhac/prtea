@@ -206,7 +206,7 @@ func (m App) handleAnalysisMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.chatPanel.AppendAnalysisStreamChunk(msg.Content)
-		return m, listenForAnalysisStream(m.session.AnalysisStreamCh)
+		return m, listenForStream(m.session.AnalysisStreamCh)
 
 	case AnalysisCompleteMsg:
 		if m.session != nil {
@@ -289,7 +289,7 @@ func (m App) handleChatMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.chatPanel.AppendStreamChunk(msg.Content)
-		return m, listenForChatStream(m.session.StreamChan)
+		return m, listenForStream(m.session.StreamChan)
 
 	case ChatResponseMsg:
 		if m.session == nil || m.session.StreamChan == nil {
@@ -414,12 +414,13 @@ func (m App) handleConfigMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cfg := m.settingsPanel.Config()
 			m.appConfig = cfg
 			_ = config.Save(cfg)
+			var cmds []tea.Cmd
 			wasEnabled := m.pollEnabled
 			m.pollEnabled = cfg.PollEnabled
 			m.pollInterval = cfg.PollIntervalDuration()
 			m.notifyEnabled = cfg.NotificationsEnabled
 			if !wasEnabled && m.pollEnabled && m.pollInterval > 0 && m.prList.state == stateLoaded {
-				return m, pollTickCmd(m.pollInterval)
+				cmds = append(cmds, pollTickCmd(m.pollInterval))
 			}
 			m.chatPanel.SetStreamCheckpoint(time.Duration(cfg.StreamCheckpointMs) * time.Millisecond)
 			m.chatPanel.UpdateDefaultReviewAction(cfg.DefaultReviewAction)
@@ -437,39 +438,34 @@ func (m App) handleConfigMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.chatService.SetMaxHistoryMessages(cfg.MaxChatHistory)
 				m.chatService.SetMaxTurns(cfg.ChatMaxTurns)
 			}
+			return m, tea.Batch(cmds...)
 		}
 		return m, nil
 
 	case HelpClosedMsg:
-		m.mode = ModeNavigation
-		m.statusBar.SetState(m.focused, m.mode)
+		m.setMode(ModeNavigation)
 		return m, nil
 
 	case SettingsClosedMsg:
-		m.mode = ModeNavigation
-		m.statusBar.SetState(m.focused, m.mode)
+		m.setMode(ModeNavigation)
 		return m, nil
 
 	case ShowCommentOverlayMsg:
 		m.commentOverlay.SetSize(m.width, m.height)
 		cmd := m.commentOverlay.Show(msg)
-		m.mode = ModeOverlay
-		m.statusBar.SetState(m.focused, m.mode)
+		m.setMode(ModeOverlay)
 		return m, cmd
 
 	case CommentOverlayClosedMsg:
-		m.mode = ModeNavigation
-		m.statusBar.SetState(m.focused, m.mode)
+		m.setMode(ModeNavigation)
 		return m, nil
 
 	case CommandExecuteMsg:
-		m.mode = ModeNavigation
-		m.statusBar.SetState(m.focused, m.mode)
+		m.setMode(ModeNavigation)
 		return m.executeCommand(msg.Name)
 
 	case CommandModeExitMsg:
-		m.mode = ModeNavigation
-		m.statusBar.SetState(m.focused, m.mode)
+		m.setMode(ModeNavigation)
 		return m, nil
 
 	case CommandNotFoundMsg:
@@ -478,11 +474,10 @@ func (m App) handleConfigMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case ModeChangedMsg:
 		if msg.Mode == ChatModeInsert {
-			m.mode = ModeInsert
+			m.setMode(ModeInsert)
 		} else {
-			m.mode = ModeNavigation
+			m.setMode(ModeNavigation)
 		}
-		m.statusBar.SetState(m.focused, m.mode)
 		return m, nil
 	}
 	return m, nil
@@ -539,10 +534,9 @@ func (m App) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Global key handling in navigation mode
 	switch {
 	case key.Matches(msg, GlobalKeys.Help):
-		m.mode = ModeOverlay
+		m.setMode(ModeOverlay)
 		m.helpOverlay.SetSize(m.width, m.height)
 		m.helpOverlay.Show(m.focused)
-		m.statusBar.SetState(m.focused, m.mode)
 		return m, nil
 
 	case key.Matches(msg, GlobalKeys.Quit):
@@ -617,17 +611,15 @@ func (m App) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.refreshSelectedPR()
 
 	case key.Matches(msg, GlobalKeys.CommandMode):
-		m.mode = ModeCommand
+		m.setMode(ModeCommand)
 		m.commandMode.SetSize(m.width, m.height)
 		cmd := m.commandMode.Open(true)
-		m.statusBar.SetState(m.focused, m.mode)
 		return m, cmd
 
 	case key.Matches(msg, GlobalKeys.ExCommand):
-		m.mode = ModeCommand
+		m.setMode(ModeCommand)
 		m.commandMode.SetSize(m.width, m.height)
 		cmd := m.commandMode.Open(false)
-		m.statusBar.SetState(m.focused, m.mode)
 		return m, cmd
 	}
 

@@ -351,6 +351,12 @@ func (m App) selectPR(owner, repo string, number int, htmlURL string, advance bo
 	return m, nil
 }
 
+// setMode updates the app mode and synchronises the status bar.
+func (m *App) setMode(mode AppMode) {
+	m.mode = mode
+	m.statusBar.SetState(m.focused, m.mode)
+}
+
 // -- Layout & panel helpers --
 
 // focusPanel sets focus to the given panel. If the panel is hidden,
@@ -546,7 +552,7 @@ func (m App) startAnalysis() (tea.Model, tea.Cmd) {
 
 	m.session.AnalysisStreamCh = ch
 	m.session.AnalysisStreamCancel = cancel
-	return m, tea.Batch(listenForAnalysisStream(ch), m.chatPanel.spinner.Tick)
+	return m, tea.Batch(listenForStream(ch), m.chatPanel.spinner.Tick)
 }
 
 // startAIReview kicks off AI review generation and navigates to the Review tab.
@@ -573,11 +579,19 @@ func (m App) startAIReview() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// Cancel any previous AI review
+	if m.session.AIReviewCancel != nil {
+		m.session.AIReviewCancel()
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	m.session.AIReviewCancel = cancel
+
 	m.chatPanel.SetAIReviewLoading()
 	m.chatPanel.SetActiveTab(ChatTabReview)
 	m.showAndFocusPanel(PanelRight)
 
-	return m, tea.Batch(aiReviewCmd(m.analyzer, m.session, m.session.DiffFiles), m.chatPanel.spinner.Tick)
+	return m, tea.Batch(aiReviewCmd(ctx, m.analyzer, m.session, m.session.DiffFiles), m.chatPanel.spinner.Tick)
 }
 
 // refreshPRList re-fetches the PR lists (To Review + My PRs).
@@ -676,7 +690,7 @@ func (m App) handleChatSend(message string) (tea.Model, tea.Cmd) {
 
 	s.StreamChan = ch
 	s.StreamCancel = cancel
-	return m, listenForChatStream(ch)
+	return m, listenForStream(ch)
 }
 
 // handleReviewSubmit validates state and dispatches the review action.
@@ -830,14 +844,12 @@ func (m *App) mergeAIComments(aiComments []claude.InlineReviewComment) {
 	// Build set of lines with user comments
 	userLines := make(map[string]bool)
 	for _, c := range m.session.PendingInlineComments {
-		key := fmt.Sprintf("%s:%d", c.Path, c.Line)
-		userLines[key] = true
+		userLines[commentKey(c.Path, c.Line)] = true
 	}
 
 	// Add new AI comments, skipping lines that already have user comments
 	for _, c := range aiComments {
-		key := fmt.Sprintf("%s:%d", c.Path, c.Line)
-		if !userLines[key] {
+		if !userLines[commentKey(c.Path, c.Line)] {
 			m.session.PendingInlineComments = append(m.session.PendingInlineComments, PendingInlineComment{
 				InlineReviewComment: c,
 				Source:              "ai",
@@ -912,16 +924,14 @@ func (m App) executeCommand(name string) (tea.Model, tea.Cmd) {
 	case "quit":
 		return m, tea.Quit
 	case "help":
-		m.mode = ModeOverlay
+		m.setMode(ModeOverlay)
 		m.helpOverlay.SetSize(m.width, m.height)
 		m.helpOverlay.Show(m.focused)
-		m.statusBar.SetState(m.focused, m.mode)
 		return m, nil
 	case "config":
-		m.mode = ModeOverlay
+		m.setMode(ModeOverlay)
 		m.settingsPanel.SetSize(m.width, m.height)
 		m.settingsPanel.Show(m.appConfig)
-		m.statusBar.SetState(m.focused, m.mode)
 		return m, nil
 	case "zoom":
 		m.toggleZoom()

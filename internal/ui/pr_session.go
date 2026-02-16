@@ -25,12 +25,13 @@ type PRSession struct {
 	StreamCancel         context.CancelFunc // cancels active stream goroutine
 	AnalysisStreamCh     analysisStreamChan // active analysis streaming channel
 	AnalysisStreamCancel context.CancelFunc // cancels active analysis stream
+	AIReviewCancel       context.CancelFunc // cancels active AI review
 
 	// Analysis state
 	Analyzing bool
 }
 
-// CancelStreams cancels any active chat and analysis stream goroutines.
+// CancelStreams cancels any active chat, analysis, and AI review goroutines.
 func (s *PRSession) CancelStreams() {
 	if s.StreamCancel != nil {
 		s.StreamCancel()
@@ -42,6 +43,10 @@ func (s *PRSession) CancelStreams() {
 		s.AnalysisStreamCancel = nil
 	}
 	s.AnalysisStreamCh = nil
+	if s.AIReviewCancel != nil {
+		s.AIReviewCancel()
+		s.AIReviewCancel = nil
+	}
 	s.Analyzing = false
 }
 

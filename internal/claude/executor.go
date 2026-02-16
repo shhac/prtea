@@ -8,6 +8,7 @@ import (
 	"io"
 	"os/exec"
 	"strings"
+	"sync"
 )
 
 // CommandExecutor abstracts Claude CLI subprocess execution.
@@ -85,7 +86,10 @@ func runCLI(ctx context.Context, executor CommandExecutor, args []string, opts E
 
 	// Drain stderr in background
 	var stderrBuf strings.Builder
+	var stderrWg sync.WaitGroup
+	stderrWg.Add(1)
 	go func() {
+		defer stderrWg.Done()
 		scanner := bufio.NewScanner(proc.Stderr)
 		scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
 		for scanner.Scan() {
@@ -119,7 +123,9 @@ func runCLI(ctx context.Context, executor CommandExecutor, args []string, opts E
 		}
 	}
 
-	if err := proc.Wait(); err != nil {
+	waitErr := proc.Wait()
+	stderrWg.Wait()
+	if waitErr != nil {
 		if ctx.Err() == context.DeadlineExceeded {
 			return nil, fmt.Errorf("claude timed out")
 		}
@@ -127,7 +133,7 @@ func runCLI(ctx context.Context, executor CommandExecutor, args []string, opts E
 		if len(errMsg) > 500 {
 			errMsg = errMsg[:500]
 		}
-		return nil, fmt.Errorf("claude exited with error: %w\nstderr: %s", err, errMsg)
+		return nil, fmt.Errorf("claude exited with error: %w\nstderr: %s", waitErr, errMsg)
 	}
 
 	if resultEvent == nil {
