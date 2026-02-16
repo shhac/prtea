@@ -467,13 +467,13 @@ func (m App) updateChatPanel(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m App) startAnalysis() (tea.Model, tea.Cmd) {
 	if m.session == nil {
 		m.chatPanel.SetAnalysisError("No PR selected. Select a PR first.")
-		m.chatPanel.activeTab = ChatTabAnalysis
+		m.chatPanel.SetActiveTab(ChatTabAnalysis)
 		m.showAndFocusPanel(PanelRight)
 		return m, nil
 	}
 	if m.claudePath == "" {
 		m.chatPanel.SetAnalysisError("Claude CLI not found.\nInstall from https://docs.anthropic.com/en/docs/claude-code")
-		m.chatPanel.activeTab = ChatTabAnalysis
+		m.chatPanel.SetActiveTab(ChatTabAnalysis)
 		m.showAndFocusPanel(PanelRight)
 		return m, nil
 	}
@@ -482,7 +482,7 @@ func (m App) startAnalysis() (tea.Model, tea.Cmd) {
 	}
 	if len(m.session.DiffFiles) == 0 {
 		m.chatPanel.SetAnalysisError("No diff loaded. Select a PR to load its diff first.")
-		m.chatPanel.activeTab = ChatTabAnalysis
+		m.chatPanel.SetActiveTab(ChatTabAnalysis)
 		m.showAndFocusPanel(PanelRight)
 		return m, nil
 	}
@@ -492,7 +492,7 @@ func (m App) startAnalysis() (tea.Model, tea.Cmd) {
 	cached, _ := m.analysisStore.Get(m.session.Owner, m.session.Repo, m.session.Number)
 	if cached != nil && !m.analysisStore.IsStale(cached, hash) {
 		m.chatPanel.SetAnalysisResult(cached.Result)
-		m.chatPanel.activeTab = ChatTabAnalysis
+		m.chatPanel.SetActiveTab(ChatTabAnalysis)
 		m.showAndFocusPanel(PanelRight)
 		return m, nil
 	}
@@ -505,7 +505,7 @@ func (m App) startAnalysis() (tea.Model, tea.Cmd) {
 	// Start async streaming analysis
 	m.session.Analyzing = true
 	m.chatPanel.SetAnalysisLoading()
-	m.chatPanel.activeTab = ChatTabAnalysis
+	m.chatPanel.SetActiveTab(ChatTabAnalysis)
 	m.showAndFocusPanel(PanelRight)
 
 	s := m.session
@@ -553,28 +553,28 @@ func (m App) startAnalysis() (tea.Model, tea.Cmd) {
 func (m App) startAIReview() (tea.Model, tea.Cmd) {
 	if m.session == nil {
 		m.chatPanel.SetAIReviewError("No PR selected. Select a PR first.")
-		m.chatPanel.activeTab = ChatTabReview
+		m.chatPanel.SetActiveTab(ChatTabReview)
 		m.showAndFocusPanel(PanelRight)
 		return m, nil
 	}
 	if m.claudePath == "" {
 		m.chatPanel.SetAIReviewError("Claude CLI not found.\nInstall from https://docs.anthropic.com/en/docs/claude-code")
-		m.chatPanel.activeTab = ChatTabReview
+		m.chatPanel.SetActiveTab(ChatTabReview)
 		m.showAndFocusPanel(PanelRight)
 		return m, nil
 	}
-	if m.chatPanel.aiReviewLoading {
+	if m.chatPanel.IsAIReviewLoading() {
 		return m, nil
 	}
 	if len(m.session.DiffFiles) == 0 {
 		m.chatPanel.SetAIReviewError("No diff loaded. Select a PR to load its diff first.")
-		m.chatPanel.activeTab = ChatTabReview
+		m.chatPanel.SetActiveTab(ChatTabReview)
 		m.showAndFocusPanel(PanelRight)
 		return m, nil
 	}
 
 	m.chatPanel.SetAIReviewLoading()
-	m.chatPanel.activeTab = ChatTabReview
+	m.chatPanel.SetActiveTab(ChatTabReview)
 	m.showAndFocusPanel(PanelRight)
 
 	return m, tea.Batch(aiReviewCmd(m.analyzer, m.session, m.session.DiffFiles), m.chatPanel.spinner.Tick)
@@ -897,7 +897,7 @@ func (m App) executeCommand(name string) (tea.Model, tea.Cmd) {
 		cmd := m.diffViewer.EnterCommentMode()
 		return m, cmd
 	case "approve":
-		m.chatPanel.activeTab = ChatTabReview
+		m.chatPanel.SetActiveTab(ChatTabReview)
 		m.showAndFocusPanel(PanelRight)
 		return m, nil
 	case "rerun ci":

@@ -10,7 +10,6 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/shhac/prtea/internal/claude"
 	"github.com/shhac/prtea/internal/github"
@@ -187,9 +186,8 @@ type DiffViewerModel struct {
 	prURL     string
 	prInfoErr string
 
-	// Glamour markdown renderer (cached per width)
-	glamourRenderer *glamour.TermRenderer
-	glamourWidth    int
+	// Shared markdown renderer (cached per width)
+	md MarkdownRenderer
 
 	// CI status data
 	ciStatus *github.CIStatus
@@ -1321,39 +1319,10 @@ func (m *DiffViewerModel) renderPRInfo() string {
 	return b.String()
 }
 
-// getOrCreateRenderer returns a cached glamour renderer for the given width,
-// creating a new one only when the width changes.
-func (m *DiffViewerModel) getOrCreateRenderer(width int) *glamour.TermRenderer {
-	if m.glamourRenderer != nil && m.glamourWidth == width {
-		return m.glamourRenderer
-	}
-	r, err := glamour.NewTermRenderer(
-		glamour.WithAutoStyle(),
-		glamour.WithWordWrap(width),
-	)
-	if err != nil {
-		return nil
-	}
-	m.glamourRenderer = r
-	m.glamourWidth = width
-	return r
-}
-
 // renderMarkdown renders markdown text with glamour for terminal display.
-// Falls back to plain wordWrap if glamour fails.
+// Delegates to the shared MarkdownRenderer.
 func (m *DiffViewerModel) renderMarkdown(markdown string, width int) string {
-	if width < 10 {
-		width = 10
-	}
-	r := m.getOrCreateRenderer(width)
-	if r == nil {
-		return wordWrap(markdown, width)
-	}
-	out, err := r.Render(markdown)
-	if err != nil {
-		return wordWrap(markdown, width)
-	}
-	return strings.TrimSpace(out)
+	return m.md.RenderMarkdown(markdown, width)
 }
 
 // ciTabLabel returns a dynamic label for the CI tab header showing at-a-glance status.
