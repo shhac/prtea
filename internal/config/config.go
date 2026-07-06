@@ -45,6 +45,11 @@ const (
 	DefaultCodexEffort           = "medium"
 )
 
+// FilePath returns the location of the config file.
+func FilePath() string {
+	return filepath.Join(DefaultConfigDir(), "config.json")
+}
+
 // DefaultConfigDir returns the platform-appropriate config directory.
 func DefaultConfigDir() string {
 	home, err := os.UserHomeDir()
@@ -70,8 +75,7 @@ func DefaultConfigDir() string {
 
 // Load reads the config file, returning defaults for missing fields.
 func Load() (*Config, error) {
-	configPath := filepath.Join(DefaultConfigDir(), "config.json")
-	data, err := os.ReadFile(configPath)
+	data, err := os.ReadFile(FilePath())
 	if err != nil {
 		if os.IsNotExist(err) {
 			return Defaults(), nil
@@ -100,7 +104,7 @@ func Save(cfg *Config) error {
 		return fmt.Errorf("failed to marshal config: %w", err)
 	}
 
-	configPath := filepath.Join(dir, "config.json")
+	configPath := FilePath()
 	tmpPath := configPath + ".tmp"
 
 	if err := os.WriteFile(tmpPath, data, 0o644); err != nil {

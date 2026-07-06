@@ -114,13 +114,6 @@ func panelStyle(focused bool, insertMode bool, width, height int) lipgloss.Style
 		Height(height)
 }
 
-func panelHeaderStyle(focused bool) lipgloss.Style {
-	if focused {
-		return lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("252"))
-	}
-	return lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
-}
-
 // Tab styles
 func activeTabStyle() lipgloss.Style {
 	return lipgloss.NewStyle().

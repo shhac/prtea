@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -9,7 +10,13 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-// -- PR list handlers --
+// -- Client & PR list handlers --
+
+func (m App) handleGHClientReady(msg GHClientReadyMsg) (tea.Model, tea.Cmd) {
+	m.ghClient = msg.Client
+	m.ghClient.SetFetchLimit(m.appConfig.PRFetchLimit)
+	return m, fetchPRsCmd(m.ghClient)
+}
 
 func (m App) handlePRsLoaded(msg PRsLoadedMsg) (tea.Model, tea.Cmd) {
 	m.prList.SetItems(convertPRItems(msg.ToReview), convertPRItems(msg.MyPRs))
@@ -29,16 +36,16 @@ func (m App) handlePRsLoaded(msg PRsLoadedMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m App) handlePollTick() (tea.Model, tea.Cmd) {
-	if m.pollEnabled && m.ghClient != nil && m.prList.state == stateLoaded {
+	if !m.pollEnabled || m.pollInterval <= 0 {
+		return m, nil
+	}
+	if m.ghClient != nil && m.prList.state == stateLoaded {
 		return m, tea.Batch(
 			pollFetchPRsCmd(m.ghClient),
 			pollTickCmd(m.pollInterval),
 		)
 	}
-	if m.pollEnabled && m.pollInterval > 0 {
-		return m, pollTickCmd(m.pollInterval)
-	}
-	return m, nil
+	return m, pollTickCmd(m.pollInterval)
 }
 
 func (m App) handlePollPRsLoaded(msg pollPRsLoadedMsg) (tea.Model, tea.Cmd) {
@@ -61,7 +68,7 @@ func (m App) handlePollPRsLoaded(msg pollPRsLoadedMsg) (tea.Model, tea.Cmd) {
 // -- PR data load handlers --
 
 func (m App) handleDiffLoaded(msg DiffLoadedMsg) (tea.Model, tea.Cmd) {
-	if msg.PRNumber != m.diffViewer.prNumber {
+	if !m.session.MatchesPR(msg.PRNumber) {
 		return m, nil
 	}
 	if msg.Err != nil {
@@ -162,6 +169,56 @@ func (m App) handleCIRerunDone(msg CIRerunDoneMsg) (tea.Model, tea.Cmd) {
 
 // -- Chat & comment handlers --
 
+// handleCommentPost validates state and posts a comment on the selected PR.
+func (m App) handleCommentPost(body string) (tea.Model, tea.Cmd) {
+	if m.session == nil {
+		m.chatPanel.SetCommentPosted(fmt.Errorf("no PR selected"))
+		return m, nil
+	}
+	if m.ghClient == nil {
+		m.chatPanel.SetCommentPosted(fmt.Errorf("GitHub client not ready"))
+		return m, nil
+	}
+
+	s := m.session
+	client := m.ghClient
+	return m, func() tea.Msg {
+		err := client.PostComment(context.Background(), s.Owner, s.Repo, s.Number, body)
+		return CommentPostedMsg{Err: err}
+	}
+}
+
+// handleInlineCommentAdd manages the pending inline comment pool.
+func (m App) handleInlineCommentAdd(msg InlineCommentAddMsg) (tea.Model, tea.Cmd) {
+	if m.session == nil {
+		return m, nil
+	}
+
+	if msg.Body == "" {
+		comments, removed := removePendingComment(m.session.PendingInlineComments, msg.Path, msg.Line, msg.StartLine)
+		m.session.PendingInlineComments = comments
+		m.syncPendingComments()
+		if !removed {
+			return m, nil
+		}
+		clearCmd := m.statusBar.SetTemporaryMessage(
+			fmt.Sprintf("Comment removed on %s:%d", msg.Path, msg.Line), 2*time.Second)
+		return m, clearCmd
+	}
+
+	comments, updated := upsertPendingComment(m.session.PendingInlineComments, msg)
+	m.session.PendingInlineComments = comments
+	m.syncPendingComments()
+
+	action := "added"
+	if updated {
+		action = "updated"
+	}
+	clearCmd := m.statusBar.SetTemporaryMessage(
+		fmt.Sprintf("Comment %s on %s", action, formatCommentTarget(msg.Path, msg.StartLine, msg.Line)), 2*time.Second)
+	return m, clearCmd
+}
+
 func (m App) handleChatClear() (tea.Model, tea.Cmd) {
 	m.chatPanel.ClearChat()
 	if m.session != nil {
@@ -203,6 +260,27 @@ func (m App) handleInlineCommentReplyDone(msg InlineCommentReplyDoneMsg) (tea.Mo
 
 // -- Review submission handlers --
 
+// handleReviewSubmit validates state and dispatches the review action.
+func (m App) handleReviewSubmit(msg ReviewSubmitMsg) (tea.Model, tea.Cmd) {
+	if m.session == nil {
+		m.chatPanel.SetReviewSubmitted(fmt.Errorf("no PR selected"))
+		return m, nil
+	}
+	if m.ghClient == nil {
+		m.chatPanel.SetReviewSubmitted(fmt.Errorf("GitHub client not ready"))
+		return m, nil
+	}
+
+	s := m.session
+	client := m.ghClient
+	action := msg.Action
+	body := msg.Body
+
+	clearCmd := m.statusBar.SetTemporaryMessage(fmt.Sprintf("%s PR #%d...", action.ProgressLabel(), s.Number), 3*time.Second)
+
+	return m, tea.Batch(clearCmd, submitReviewCmd(client, s.Owner, s.Repo, s.Number, action, body, s.PendingInlineComments))
+}
+
 func (m App) handleReviewSubmitDone(msg ReviewSubmitDoneMsg) (tea.Model, tea.Cmd) {
 	if !m.session.MatchesPR(msg.PRNumber) {
 		return m, nil
@@ -220,6 +298,24 @@ func (m App) handleReviewSubmitErr(msg ReviewSubmitErrMsg) (tea.Model, tea.Cmd) 
 		m.chatPanel.SetReviewSubmitted(msg.Err)
 	}
 	return m, m.statusBar.SetTemporaryMessage(fmt.Sprintf("✗ Review failed: %s", msg.Err), 5*time.Second)
+}
+
+// -- Overlay & mode handlers --
+
+func (m App) handleShowCommentOverlay(msg ShowCommentOverlayMsg) (tea.Model, tea.Cmd) {
+	m.commentOverlay.SetSize(m.width, m.height)
+	cmd := m.commentOverlay.Show(msg)
+	m.setMode(ModeOverlay)
+	return m, cmd
+}
+
+func (m App) handleChatModeChanged(msg ModeChangedMsg) (tea.Model, tea.Cmd) {
+	if msg.Mode == ChatModeInsert {
+		m.setMode(ModeInsert)
+	} else {
+		m.setMode(ModeNavigation)
+	}
+	return m, nil
 }
 
 // -- Key handling --
@@ -259,10 +355,8 @@ func (m App) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.updateFocusedPanel(msg)
 	}
 
-	// Global key handling in navigation mode
+	// Global keys without a palette equivalent
 	switch {
-	case key.Matches(msg, GlobalKeys.Help):
-		return m.executeCommand("help")
 	case key.Matches(msg, GlobalKeys.Quit):
 		return m, tea.Quit
 	case key.Matches(msg, GlobalKeys.Tab):
@@ -271,34 +365,40 @@ func (m App) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, GlobalKeys.ShiftTab):
 		m.focusAdjacentPanel(prevVisiblePanel)
 		return m, nil
-	case key.Matches(msg, GlobalKeys.Panel1):
-		return m.executeCommand("prs")
-	case key.Matches(msg, GlobalKeys.Panel2):
-		return m.executeCommand("diff")
-	case key.Matches(msg, GlobalKeys.Panel3):
-		return m.executeCommand("chat")
-	case key.Matches(msg, GlobalKeys.ToggleLeft):
-		return m.executeCommand("toggle left")
-	case key.Matches(msg, GlobalKeys.ToggleCenter):
-		return m.executeCommand("toggle center")
-	case key.Matches(msg, GlobalKeys.ToggleRight):
-		return m.executeCommand("toggle right")
-	case key.Matches(msg, GlobalKeys.Zoom):
-		return m.executeCommand("zoom")
-	case key.Matches(msg, GlobalKeys.OpenBrowser):
-		return m.executeCommand("open")
-	case key.Matches(msg, GlobalKeys.Analyze):
-		return m.executeCommand("analyze")
-	case key.Matches(msg, GlobalKeys.Refresh):
-		return m.executeCommand("refresh")
 	case key.Matches(msg, GlobalKeys.CommandMode):
 		return m.openCommandPalette(true)
 	case key.Matches(msg, GlobalKeys.ExCommand):
 		return m.openCommandPalette(false)
 	}
 
+	// Global keys that share a registry command implementation
+	for _, kc := range globalKeyCommands {
+		if key.Matches(msg, kc.binding) {
+			return m.executeCommand(kc.command)
+		}
+	}
+
 	// Delegate to focused panel
 	return m.updateFocusedPanel(msg)
+}
+
+// globalKeyCommands maps global keybindings onto registry commands so the
+// key and the :command share one implementation.
+var globalKeyCommands = []struct {
+	binding key.Binding
+	command string
+}{
+	{GlobalKeys.Help, "help"},
+	{GlobalKeys.Panel1, "prs"},
+	{GlobalKeys.Panel2, "diff"},
+	{GlobalKeys.Panel3, "chat"},
+	{GlobalKeys.ToggleLeft, "toggle left"},
+	{GlobalKeys.ToggleCenter, "toggle center"},
+	{GlobalKeys.ToggleRight, "toggle right"},
+	{GlobalKeys.Zoom, "zoom"},
+	{GlobalKeys.OpenBrowser, "open"},
+	{GlobalKeys.Analyze, "analyze"},
+	{GlobalKeys.Refresh, "refresh"},
 }
 
 // focusAdjacentPanel exits zoom and moves focus using the given selector.

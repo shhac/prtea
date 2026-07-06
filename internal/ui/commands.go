@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"runtime"
 	"time"
 
@@ -223,25 +222,26 @@ func rerunFailedCICmd(client GitHubService, owner, repo string, number int, runI
 // first use) and opens it with the system opener. Changes apply on restart.
 func openConfigCmd(cfg *config.Config) tea.Cmd {
 	return func() tea.Msg {
-		path := filepath.Join(config.DefaultConfigDir(), "config.json")
+		path := config.FilePath()
 		if _, err := os.Stat(path); os.IsNotExist(err) {
-			_ = config.Save(cfg)
+			if err := config.Save(cfg); err != nil {
+				return ConfigOpenedMsg{Path: path, Err: err}
+			}
 		}
-		openWithSystemHandler(path)
-		return nil
+		return ConfigOpenedMsg{Path: path, Err: openWithSystemHandler(path)}
 	}
 }
 
 // openBrowserCmd returns a command that opens a URL in the default browser.
 func openBrowserCmd(url string) tea.Cmd {
 	return func() tea.Msg {
-		openWithSystemHandler(url)
+		_ = openWithSystemHandler(url)
 		return nil
 	}
 }
 
 // openWithSystemHandler opens a file or URL with the platform's default app.
-func openWithSystemHandler(target string) {
+func openWithSystemHandler(target string) error {
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
 	case "darwin":
@@ -251,9 +251,11 @@ func openWithSystemHandler(target string) {
 	default: // linux, freebsd, etc.
 		cmd = exec.Command("xdg-open", target)
 	}
-	if err := cmd.Start(); err == nil {
-		go cmd.Wait() // reap the child process to avoid zombies
+	if err := cmd.Start(); err != nil {
+		return err
 	}
+	go cmd.Wait() // reap the child process to avoid zombies
+	return nil
 }
 
 // submitSimpleReview dispatches a body-only review (no inline comments) to

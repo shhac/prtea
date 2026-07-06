@@ -263,6 +263,12 @@ type CommandNotFoundMsg struct {
 	Input string
 }
 
+// ConfigOpenedMsg reports the outcome of opening the config file.
+type ConfigOpenedMsg struct {
+	Path string
+	Err  error
+}
+
 // -- Background polling --
 
 // pollTickMsg is sent by the periodic timer to trigger a background PR list fetch.

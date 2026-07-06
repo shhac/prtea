@@ -8,38 +8,76 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// Command represents a registered command in the palette.
+// Command represents a registered command in the palette. Run is the single
+// implementation shared by the palette and any keybinding that delegates to
+// executeCommand — the registry entry IS the command.
 type Command struct {
-	Name        string   // primary name (e.g., "review")
-	Aliases     []string // short aliases (e.g., ["rev"])
-	QuickKey    string   // single key for quick mode, empty if not in quick palette
-	Description string   // human-readable description
+	Name        string                         // primary name (e.g., "refresh")
+	Aliases     []string                       // short aliases (e.g., ["ref"])
+	QuickKey    string                         // single key for quick mode, empty if not in quick palette
+	Description string                         // human-readable description
+	Run         func(App) (tea.Model, tea.Cmd) // behavior; required
 }
 
 // commandRegistry is the canonical list of all commands.
 // Quick-key commands are listed first, full-mode-only commands follow.
-var commandRegistry = []Command{
-	// Actions with quick keys
-	{Name: "analyze", Aliases: []string{"an", "orient"}, QuickKey: "a", Description: "Ask AI to orient you on this PR"},
-	{Name: "open", Aliases: []string{"op"}, QuickKey: "o", Description: "Open PR in browser"},
-	{Name: "new", Aliases: nil, QuickKey: "n", Description: "New chat (clear)"},
-	{Name: "quit", Aliases: []string{"q"}, QuickKey: "q", Description: "Quit prtea"},
-	{Name: "help", Aliases: []string{"h", "?"}, QuickKey: "?", Description: "Show help"},
-	{Name: "zoom", Aliases: []string{"z"}, QuickKey: "z", Description: "Zoom focused panel"},
-	{Name: "comment", Aliases: []string{"cm"}, QuickKey: "c", Description: "Add inline comment"},
-	// Panel toggles with quick keys
-	{Name: "toggle left", Aliases: []string{"tl"}, QuickKey: "1", Description: "Toggle left panel"},
-	{Name: "toggle center", Aliases: []string{"tc"}, QuickKey: "2", Description: "Toggle center panel"},
-	{Name: "toggle right", Aliases: []string{"tr"}, QuickKey: "3", Description: "Toggle right panel"},
-	// Full mode only
-	{Name: "config", Aliases: []string{"settings", "cfg"}, QuickKey: "s", Description: "Open config file"},
-	{Name: "clear selection", Aliases: []string{"cs"}, Description: "Clear hunk selection"},
-	{Name: "approve", Aliases: []string{"ap"}, Description: "Quick-approve PR"},
-	{Name: "rerun ci", Aliases: []string{"rerun"}, Description: "Re-run failed CI checks"},
-	{Name: "refresh", Aliases: []string{"ref"}, Description: "Refresh current view"},
-	{Name: "diff", Aliases: []string{"d"}, Description: "Focus diff panel"},
-	{Name: "chat", Aliases: []string{"ch"}, Description: "Focus chat panel"},
-	{Name: "prs", Aliases: nil, Description: "Focus PR list"},
+// Populated in init: the Run closures reference App methods that themselves
+// read the registry (help rendering), which Go's initialization-cycle check
+// rejects for a plain var initializer.
+var commandRegistry []Command
+
+func init() {
+	commandRegistry = []Command{
+		// Actions with quick keys
+		{Name: "analyze", Aliases: []string{"an", "orient"}, QuickKey: "a", Description: "Ask AI to orient you on this PR",
+			Run: App.startOrient},
+		{Name: "open", Aliases: []string{"op"}, QuickKey: "o", Description: "Open PR in browser",
+			Run: App.openSelectedPRInBrowser},
+		{Name: "new", Aliases: nil, QuickKey: "n", Description: "New chat (clear)",
+			Run: App.handleChatClear},
+		{Name: "quit", Aliases: []string{"q"}, QuickKey: "q", Description: "Quit prtea",
+			Run: func(m App) (tea.Model, tea.Cmd) { return m, tea.Quit }},
+		{Name: "help", Aliases: []string{"h", "?"}, QuickKey: "?", Description: "Show help",
+			Run: App.openHelp},
+		{Name: "zoom", Aliases: []string{"z"}, QuickKey: "z", Description: "Zoom focused panel",
+			Run: func(m App) (tea.Model, tea.Cmd) { m.toggleZoom(); return m, nil }},
+		{Name: "comment", Aliases: []string{"cm"}, QuickKey: "c", Description: "Add inline comment",
+			Run: App.enterDiffCommentMode},
+		// Panel toggles with quick keys
+		{Name: "toggle left", Aliases: []string{"tl"}, QuickKey: "1", Description: "Toggle left panel",
+			Run: func(m App) (tea.Model, tea.Cmd) { m.togglePanel(PanelLeft); return m, nil }},
+		{Name: "toggle center", Aliases: []string{"tc"}, QuickKey: "2", Description: "Toggle center panel",
+			Run: func(m App) (tea.Model, tea.Cmd) { m.togglePanel(PanelCenter); return m, nil }},
+		{Name: "toggle right", Aliases: []string{"tr"}, QuickKey: "3", Description: "Toggle right panel",
+			Run: func(m App) (tea.Model, tea.Cmd) { m.togglePanel(PanelRight); return m, nil }},
+		// Full mode only
+		{Name: "config", Aliases: []string{"settings", "cfg"}, QuickKey: "s", Description: "Open config file",
+			Run: func(m App) (tea.Model, tea.Cmd) { return m, openConfigCmd(m.appConfig) }},
+		{Name: "clear selection", Aliases: []string{"cs"}, Description: "Clear hunk selection",
+			Run: App.clearHunkSelection},
+		{Name: "approve", Aliases: []string{"ap"}, Description: "Quick-approve PR",
+			Run: App.focusReviewTab},
+		{Name: "rerun ci", Aliases: []string{"rerun"}, Description: "Re-run failed CI checks",
+			Run: App.handleCIRerunRequest},
+		{Name: "refresh", Aliases: []string{"ref"}, Description: "Refresh current view",
+			Run: App.refreshFocused},
+		{Name: "diff", Aliases: []string{"d"}, Description: "Focus diff panel",
+			Run: func(m App) (tea.Model, tea.Cmd) { m.showAndFocusPanel(PanelCenter); return m, nil }},
+		{Name: "chat", Aliases: []string{"ch"}, Description: "Focus chat panel",
+			Run: func(m App) (tea.Model, tea.Cmd) { m.showAndFocusPanel(PanelRight); return m, nil }},
+		{Name: "prs", Aliases: nil, Description: "Focus PR list",
+			Run: func(m App) (tea.Model, tea.Cmd) { m.showAndFocusPanel(PanelLeft); return m, nil }},
+	}
+}
+
+// findCommand resolves a command by primary name.
+func findCommand(name string) *Command {
+	for i := range commandRegistry {
+		if commandRegistry[i].Name == name {
+			return &commandRegistry[i]
+		}
+	}
+	return nil
 }
 
 // CommandModeModel manages the command palette overlay.

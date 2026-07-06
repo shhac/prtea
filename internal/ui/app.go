@@ -1,12 +1,10 @@
 package ui
 
 import (
-	"context"
 	"fmt"
 	"log"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/list"
@@ -185,9 +183,7 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// GitHub client & PR list
 	case GHClientReadyMsg:
-		m.ghClient = msg.Client
-		m.ghClient.SetFetchLimit(m.appConfig.PRFetchLimit)
-		return m, fetchPRsCmd(m.ghClient)
+		return m.handleGHClientReady(msg)
 	case GHClientErrorMsg:
 		m.prList.SetError(msg.Err.Error())
 		return m, nil
@@ -274,22 +270,19 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.setMode(ModeNavigation)
 		return m, nil
 	case ShowCommentOverlayMsg:
-		m.commentOverlay.SetSize(m.width, m.height)
-		cmd := m.commentOverlay.Show(msg)
-		m.setMode(ModeOverlay)
-		return m, cmd
+		return m.handleShowCommentOverlay(msg)
 	case CommandExecuteMsg:
 		m.setMode(ModeNavigation)
 		return m.executeCommand(msg.Name)
 	case CommandNotFoundMsg:
 		return m, m.statusBar.SetTemporaryMessage(fmt.Sprintf("Unknown command: %s", msg.Input), 2*time.Second)
-	case ModeChangedMsg:
-		if msg.Mode == ChatModeInsert {
-			m.setMode(ModeInsert)
-		} else {
-			m.setMode(ModeNavigation)
+	case ConfigOpenedMsg:
+		if msg.Err != nil {
+			return m, m.statusBar.SetTemporaryMessage(fmt.Sprintf("Could not open config: %s", formatUserError(msg.Err.Error())), 5*time.Second)
 		}
-		return m, nil
+		return m, m.statusBar.SetTemporaryMessage("Opened "+msg.Path+" — restart to apply changes", 5*time.Second)
+	case ModeChangedMsg:
+		return m.handleChatModeChanged(msg)
 	}
 
 	return m, nil
@@ -565,27 +558,6 @@ func (m App) refreshSelectedPR() (tea.Model, tea.Cmd) {
 	return m, tea.Batch(append(fetchCmds, clearCmd)...)
 }
 
-// handleReviewSubmit validates state and dispatches the review action.
-func (m App) handleReviewSubmit(msg ReviewSubmitMsg) (tea.Model, tea.Cmd) {
-	if m.session == nil {
-		m.chatPanel.SetReviewSubmitted(fmt.Errorf("no PR selected"))
-		return m, nil
-	}
-	if m.ghClient == nil {
-		m.chatPanel.SetReviewSubmitted(fmt.Errorf("GitHub client not ready"))
-		return m, nil
-	}
-
-	s := m.session
-	client := m.ghClient
-	action := msg.Action
-	body := msg.Body
-
-	clearCmd := m.statusBar.SetTemporaryMessage(fmt.Sprintf("%s PR #%d...", action.ProgressLabel(), s.Number), 3*time.Second)
-
-	return m, tea.Batch(clearCmd, submitReviewCmd(client, s.Owner, s.Repo, s.Number, action, body, s.PendingInlineComments))
-}
-
 // refreshFetchDone decrements the pending refresh counter and, when all
 // fetches have completed, shows a brief success message in the status bar.
 func (m *App) refreshFetchDone(prNumber int) tea.Cmd {
@@ -597,115 +569,6 @@ func (m *App) refreshFetchDone(prNumber int) tea.Cmd {
 		return m.statusBar.SetTemporaryMessage(fmt.Sprintf("Refreshed PR #%d", prNumber), 3*time.Second)
 	}
 	return nil
-}
-
-// handleCommentPost validates state and posts a comment on the selected PR.
-func (m App) handleCommentPost(body string) (tea.Model, tea.Cmd) {
-	if m.session == nil {
-		m.chatPanel.SetCommentPosted(fmt.Errorf("no PR selected"))
-		return m, nil
-	}
-	if m.ghClient == nil {
-		m.chatPanel.SetCommentPosted(fmt.Errorf("GitHub client not ready"))
-		return m, nil
-	}
-
-	s := m.session
-	client := m.ghClient
-	return m, func() tea.Msg {
-		err := client.PostComment(context.Background(), s.Owner, s.Repo, s.Number, body)
-		return CommentPostedMsg{Err: err}
-	}
-}
-
-// handleInlineCommentAdd manages the pending inline comment pool.
-func (m App) handleInlineCommentAdd(msg InlineCommentAddMsg) (tea.Model, tea.Cmd) {
-	if m.session == nil {
-		return m, nil
-	}
-
-	if msg.Body == "" {
-		comments, removed := removePendingComment(m.session.PendingInlineComments, msg.Path, msg.Line, msg.StartLine)
-		m.session.PendingInlineComments = comments
-		m.syncPendingComments()
-		if !removed {
-			return m, nil
-		}
-		clearCmd := m.statusBar.SetTemporaryMessage(
-			fmt.Sprintf("Comment removed on %s:%d", msg.Path, msg.Line), 2*time.Second)
-		return m, clearCmd
-	}
-
-	comments, updated := upsertPendingComment(m.session.PendingInlineComments, msg)
-	m.session.PendingInlineComments = comments
-	m.syncPendingComments()
-
-	action := "added"
-	if updated {
-		action = "updated"
-	}
-	clearCmd := m.statusBar.SetTemporaryMessage(
-		fmt.Sprintf("Comment %s on %s", action, formatCommentTarget(msg.Path, msg.StartLine, msg.Line)), 2*time.Second)
-	return m, clearCmd
-}
-
-// syncPendingComments propagates the session's pending comment pool to the
-// diff viewer and the review tab counter.
-func (m *App) syncPendingComments() {
-	m.diffViewer.SetPendingInlineComments(m.session.PendingInlineComments)
-	m.chatPanel.SetPendingCommentCount(len(m.session.PendingInlineComments))
-}
-
-// findPendingComment returns the index of the pending comment at
-// path:line:startLine, or -1.
-func findPendingComment(comments []github.ReviewCommentPayload, path string, line, startLine int) int {
-	for i, c := range comments {
-		if c.Path == path && c.Line == line && c.StartLine == startLine {
-			return i
-		}
-	}
-	return -1
-}
-
-// removePendingComment removes the pending comment at path:line:startLine,
-// reporting whether one was found.
-func removePendingComment(comments []github.ReviewCommentPayload, path string, line, startLine int) ([]github.ReviewCommentPayload, bool) {
-	i := findPendingComment(comments, path, line, startLine)
-	if i == -1 {
-		return comments, false
-	}
-	return append(comments[:i], comments[i+1:]...), true
-}
-
-// upsertPendingComment updates the body of an existing pending comment at the
-// message's target, or appends a new one. Reports whether an existing comment
-// was updated.
-func upsertPendingComment(comments []github.ReviewCommentPayload, msg InlineCommentAddMsg) ([]github.ReviewCommentPayload, bool) {
-	if i := findPendingComment(comments, msg.Path, msg.Line, msg.StartLine); i != -1 {
-		comments[i].Body = msg.Body
-		return comments, true
-	}
-
-	comment := github.ReviewCommentPayload{
-		Path: msg.Path,
-		Line: msg.Line,
-		Side: "RIGHT",
-		Body: msg.Body,
-	}
-	if msg.StartLine > 0 {
-		comment.StartLine = msg.StartLine
-		comment.StartSide = "RIGHT"
-	}
-	return append(comments, comment), false
-}
-
-// formatCommentTarget renders a comment location as path:line, or
-// path:start-end for multi-line ranges.
-func formatCommentTarget(path string, startLine, line int) string {
-	if startLine > 0 {
-		return fmt.Sprintf("%s:%d-%d", path, startLine, line)
-	}
-	return fmt.Sprintf("%s:%d", path, line)
 }
 
 // snapshotKnownPRs records all current PR keys in the known set.
@@ -728,108 +591,4 @@ func (m *App) detectNewPRs(toReview []github.PRItem) []github.PRItem {
 		}
 	}
 	return newPRs
-}
-
-// executeCommand dispatches a named command from the command palette.
-func (m App) executeCommand(name string) (tea.Model, tea.Cmd) {
-	switch name {
-	case "analyze":
-		return m.startOrient()
-	case "open":
-		if m.session != nil && m.session.HTMLURL != "" {
-			return m, openBrowserCmd(m.session.HTMLURL)
-		}
-		return m, nil
-	case "clear selection":
-		if m.diffViewer.activeTab == TabDiff && len(m.diffViewer.selectedHunks) > 0 {
-			for idx := range m.diffViewer.selectedHunks {
-				m.diffViewer.markHunkDirty(idx)
-			}
-			m.diffViewer.selectedHunks = nil
-			m.diffViewer.refreshContent()
-		}
-		return m, nil
-	case "comment":
-		if m.focused != PanelCenter || m.diffViewer.activeTab != TabDiff || len(m.diffViewer.hunks) == 0 {
-			clearCmd := m.statusBar.SetTemporaryMessage("Focus the diff viewer to add comments", 2*time.Second)
-			return m, clearCmd
-		}
-		cmd := m.diffViewer.EnterCommentMode()
-		return m, cmd
-	case "approve":
-		m.chatPanel.SetActiveTab(ChatTabReview)
-		m.showAndFocusPanel(PanelRight)
-		return m, nil
-	case "rerun ci":
-		return m, func() tea.Msg { return CIRerunRequestMsg{} }
-	case "refresh":
-		if m.focused == PanelLeft {
-			return m.refreshPRList()
-		}
-		return m.refreshSelectedPR()
-	case "new":
-		return m, func() tea.Msg { return ChatClearMsg{} }
-	case "quit":
-		return m, tea.Quit
-	case "help":
-		m.setMode(ModeOverlay)
-		m.helpOverlay.SetSize(m.width, m.height)
-		m.helpOverlay.Show(m.focused)
-		return m, nil
-	case "config":
-		return m, openConfigCmd(m.appConfig)
-	case "zoom":
-		m.toggleZoom()
-		return m, nil
-	case "prs":
-		m.showAndFocusPanel(PanelLeft)
-		return m, nil
-	case "diff":
-		m.showAndFocusPanel(PanelCenter)
-		return m, nil
-	case "chat":
-		m.showAndFocusPanel(PanelRight)
-		return m, nil
-	case "toggle left":
-		m.togglePanel(PanelLeft)
-		return m, nil
-	case "toggle center":
-		m.togglePanel(PanelCenter)
-		return m, nil
-	case "toggle right":
-		m.togglePanel(PanelRight)
-		return m, nil
-	default:
-		input := name
-		return m, func() tea.Msg { return CommandNotFoundMsg{Input: input} }
-	}
-}
-
-// renderCommandOverlay composites the command palette at the bottom of the base view.
-func (m App) renderCommandOverlay(base string) string {
-	overlay := m.commandMode.View()
-	if overlay == "" {
-		return base
-	}
-
-	overlayLines := strings.Split(overlay, "\n")
-	baseLines := strings.Split(base, "\n")
-
-	overlayH := len(overlayLines)
-	if overlayH > len(baseLines) {
-		overlayH = len(baseLines)
-	}
-
-	start := len(baseLines) - overlayH
-	for i := 0; i < len(overlayLines) && start+i < len(baseLines); i++ {
-		line := overlayLines[i]
-		// Pad to full width to cover base content underneath
-		lineWidth := lipgloss.Width(line)
-		if lineWidth < m.width {
-			line += strings.Repeat(" ", m.width-lineWidth)
-		}
-		baseLines[start+i] = line
-	}
-
-	return strings.Join(baseLines, "\n")
 }
