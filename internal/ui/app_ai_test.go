@@ -17,6 +17,10 @@ import (
 type fakeGitHubService struct {
 	calls []string // e.g. "PostComment(hello)"
 	err   error    // returned from every write
+
+	inlineComments []github.InlineComment // returned from GetInlineComments
+	resolution     map[int64]bool         // returned from GetReviewThreadResolution
+	resolutionErr  error
 }
 
 func (f *fakeGitHubService) record(format string, args ...any) error {
@@ -39,10 +43,10 @@ func (f *fakeGitHubService) GetComments(context.Context, string, string, int) ([
 	return nil, nil
 }
 func (f *fakeGitHubService) GetInlineComments(context.Context, string, string, int) ([]github.InlineComment, error) {
-	return nil, nil
+	return f.inlineComments, nil
 }
 func (f *fakeGitHubService) GetReviewThreadResolution(context.Context, string, string, int) (map[int64]bool, error) {
-	return nil, nil
+	return f.resolution, f.resolutionErr
 }
 func (f *fakeGitHubService) GetCIStatus(context.Context, string, string, string, int) (*github.CIStatus, error) {
 	return nil, nil

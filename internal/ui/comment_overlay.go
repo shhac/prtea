@@ -162,18 +162,21 @@ func (m CommentOverlayModel) updateComposing(msg tea.KeyMsg) (CommentOverlayMode
 			return m, nil
 		}
 		m.Hide()
+		// Every path that hides the overlay must announce it, or the app
+		// stays in overlay mode routing keys to an invisible overlay.
+		closed := func() tea.Msg { return CommentOverlayClosedMsg{} }
 		if m.postImmediately && m.replyTargetID > 0 {
 			commentID := m.replyTargetID
-			return m, func() tea.Msg {
+			return m, tea.Batch(closed, func() tea.Msg {
 				return InlineCommentReplyMsg{CommentID: commentID, Body: body}
-			}
+			})
 		}
 		path := m.targetPath
 		line := m.targetLine
 		startLine := m.targetStartLine
-		return m, func() tea.Msg {
+		return m, tea.Batch(closed, func() tea.Msg {
 			return InlineCommentAddMsg{Path: path, Line: line, Body: body, StartLine: startLine}
-		}
+		})
 	}
 	var cmd tea.Cmd
 	m.textarea, cmd = m.textarea.Update(msg)
@@ -318,12 +321,7 @@ func (m CommentOverlayModel) renderThreadContent() string {
 		if hasContent {
 			b.WriteString("\n\n")
 		}
-		// Root
-		header := commentBoxHeaderStyle.Render("💬 @"+t.Root.Author.Login) +
-			commentBoxMetaStyle.Render(" · "+t.Root.CreatedAt.Format("Jan 2 15:04"))
-		if t.Root.Resolved {
-			header += resolvedMarkerStyle.Render(" · ✓ resolved")
-		}
+		header := ghThreadRootHeader(t.Root)
 		b.WriteString(header)
 		b.WriteString("\n")
 		b.WriteString(wordWrap(t.Root.Body, innerW))

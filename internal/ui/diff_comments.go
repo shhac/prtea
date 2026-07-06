@@ -407,6 +407,18 @@ func (m *DiffViewerModel) renderCommentBox(header, body string, borderColor lipg
 	return result
 }
 
+// ghThreadRootHeader renders a thread's root line: 💬 @author · date, plus a
+// resolved marker when the thread is settled. Shared by the diff renderer and
+// the comment overlay.
+func ghThreadRootHeader(root github.InlineComment) string {
+	header := commentBoxHeaderStyle.Render("💬 @"+root.Author.Login) +
+		commentBoxMetaStyle.Render(" · "+root.CreatedAt.Format("Jan 2 15:04"))
+	if root.Resolved {
+		header += resolvedMarkerStyle.Render(" · ✓ resolved")
+	}
+	return header
+}
+
 // renderGHCommentThread renders a single GitHub comment thread inside a bordered box.
 func (m *DiffViewerModel) renderGHCommentThread(t ghCommentThread, highlighted bool, gutter string) []string {
 	boxInnerWidth := m.viewport.Width - 2 - 2 - 2 // gutter, border, padding
@@ -414,12 +426,7 @@ func (m *DiffViewerModel) renderGHCommentThread(t ghCommentThread, highlighted b
 		boxInnerWidth = 10
 	}
 
-	// Header: 💬 @author · Jan 2 15:04 (· ✓ resolved)
-	header := commentBoxHeaderStyle.Render("💬 @"+t.Root.Author.Login) +
-		commentBoxMetaStyle.Render(" · "+t.Root.CreatedAt.Format("Jan 2 15:04"))
-	if t.Root.Resolved {
-		header += resolvedMarkerStyle.Render(" · ✓ resolved")
-	}
+	header := ghThreadRootHeader(t.Root)
 
 	// Build body: root body + replies
 	var body strings.Builder

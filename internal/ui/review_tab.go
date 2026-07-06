@@ -198,30 +198,29 @@ func (t ReviewTabModel) Update(msg tea.KeyMsg) (ReviewTabModel, tea.Cmd) {
 func (t ReviewTabModel) Render(width int, spinnerView string) string {
 	var b strings.Builder
 
-	// Pending inline comment basket
+	// Pending inline comment basket. The Review tab renders into a fixed
+	// panel without a viewport, so the listing is capped to keep the form
+	// (textarea, action, submit) on screen for large reviews.
 	if n := len(t.pendingComments); n > 0 {
 		countText := fmt.Sprintf("📝 %d pending inline comment", n)
 		if n != 1 {
 			countText += "s"
 		}
 		countText += " will be submitted"
-		b.WriteString(lipgloss.NewStyle().
-			Foreground(lipgloss.Color("214")).
-			Render(countText))
+		b.WriteString(basketCountStyle.Render(countText))
 		b.WriteString("\n")
-		for _, c := range t.pendingComments {
-			target := formatCommentTarget(c.Path, c.StartLine, c.Line)
-			body := firstLine(c.Body)
-			entry := fmt.Sprintf("  • %s — %s", target, body)
-			b.WriteString(lipgloss.NewStyle().
-				Foreground(lipgloss.Color("244")).
-				Render(truncateLine(entry, width)))
+		const maxBasketEntries = 5
+		for i, c := range t.pendingComments {
+			if i == maxBasketEntries {
+				b.WriteString(dimStyle.Render(fmt.Sprintf("  … and %d more", n-maxBasketEntries)))
+				b.WriteString("\n")
+				break
+			}
+			entry := fmt.Sprintf("  • %s — %s", formatCommentTarget(c.Path, c.StartLine, c.Line), firstLine(c.Body))
+			b.WriteString(dimStyle.Render(truncateLine(entry, width)))
 			b.WriteString("\n")
 		}
-		b.WriteString(lipgloss.NewStyle().
-			Foreground(lipgloss.Color("240")).
-			Italic(true).
-			Render("  edit or delete with 'c' on the diff line"))
+		b.WriteString(dimItalicStyle.Render("  edit or delete with 'c' on the diff line"))
 		b.WriteString("\n\n")
 	}
 

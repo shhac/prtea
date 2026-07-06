@@ -100,3 +100,47 @@ func TestRenderInputSingleUserPrompt(t *testing.T) {
 		t.Errorf("insert-mode input renders %d '> ' prompts, want exactly 1: %q", got, rendered)
 	}
 }
+
+func TestFetchCommentsCmdJoinsResolution(t *testing.T) {
+	client := &fakeGitHubService{
+		inlineComments: []github.InlineComment{
+			{ID: 1, Path: "a.go", Line: 3},
+			{ID: 2, Path: "a.go", Line: 9},
+		},
+		resolution: map[int64]bool{1: true},
+	}
+
+	msg := fetchCommentsCmd(client, "o", "r", 7)()
+	loaded, ok := msg.(CommentsLoadedMsg)
+	if !ok {
+		t.Fatalf("msg = %T, want CommentsLoadedMsg", msg)
+	}
+	if loaded.Err != nil {
+		t.Fatalf("unexpected error: %v", loaded.Err)
+	}
+	if !loaded.InlineComments[0].Resolved {
+		t.Error("comment 1 should be marked resolved")
+	}
+	if loaded.InlineComments[1].Resolved {
+		t.Error("comment 2 should stay unresolved")
+	}
+}
+
+func TestFetchCommentsCmdResolutionErrorIsBestEffort(t *testing.T) {
+	client := &fakeGitHubService{
+		inlineComments: []github.InlineComment{{ID: 1, Path: "a.go", Line: 3}},
+		resolutionErr:  errForTest("graphql down"),
+	}
+
+	msg := fetchCommentsCmd(client, "o", "r", 7)()
+	loaded, ok := msg.(CommentsLoadedMsg)
+	if !ok {
+		t.Fatalf("msg = %T, want CommentsLoadedMsg", msg)
+	}
+	if loaded.Err != nil {
+		t.Fatalf("resolution failure must not fail the comments load: %v", loaded.Err)
+	}
+	if len(loaded.InlineComments) != 1 || loaded.InlineComments[0].Resolved {
+		t.Errorf("comments must load unresolved when resolution fails: %+v", loaded.InlineComments)
+	}
+}

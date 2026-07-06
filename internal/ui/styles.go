@@ -301,10 +301,10 @@ var (
 	errTextStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
 )
 
-// Pre-computed severity styles for analysis file review comments (avoids
-// allocating a new lipgloss.Style on every call inside the review loop).
-// resolvedMarkerStyle marks resolved review threads.
 var resolvedMarkerStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("42"))
+
+// basketCountStyle highlights the pending-comment count in the Review tab.
+var basketCountStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
 
 // Dim italic style for metadata, "no newline" markers, unavailable content, etc.
 var dimItalicStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Italic(true)

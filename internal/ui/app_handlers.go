@@ -190,12 +190,6 @@ func (m App) handleCommentPost(body string) (tea.Model, tea.Cmd) {
 
 // handleInlineCommentAdd manages the pending inline comment pool.
 func (m App) handleInlineCommentAdd(msg InlineCommentAddMsg) (tea.Model, tea.Cmd) {
-	// The comment overlay hides itself when saving a draft; leave overlay
-	// mode so keys stop routing to the now-invisible overlay. (The comment
-	// bar path is already in navigation mode — this is a no-op there.)
-	if m.mode == ModeOverlay {
-		m.setMode(ModeNavigation)
-	}
 	if m.session == nil {
 		return m, nil
 	}
@@ -244,11 +238,6 @@ func (m App) handleCommentPosted(msg CommentPostedMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m App) handleInlineCommentReply(msg InlineCommentReplyMsg) (tea.Model, tea.Cmd) {
-	// The comment overlay hides itself when posting a reply; leave overlay
-	// mode so keys stop routing to the now-invisible overlay.
-	if m.mode == ModeOverlay {
-		m.setMode(ModeNavigation)
-	}
 	if m.session == nil || m.ghClient == nil {
 		return m, nil
 	}
