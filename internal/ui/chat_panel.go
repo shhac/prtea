@@ -65,6 +65,7 @@ type ChatPanelModel struct {
 
 func NewChatPanelModel() ChatPanelModel {
 	ti := textinput.New()
+	ti.Prompt = "" // renderInput draws its own mode-colored prompt
 	ti.Placeholder = "Ask about this PR..."
 	ti.CharLimit = 500
 
@@ -96,11 +97,6 @@ func (m *ChatPanelModel) SetActiveTab(tab ChatTab) {
 // SetDefaultReviewAction sets the default review action from config.
 func (m *ChatPanelModel) SetDefaultReviewAction(action string) {
 	m.review.SetDefaultAction(action)
-}
-
-// UpdateDefaultReviewAction updates the stored default without touching current state.
-func (m *ChatPanelModel) UpdateDefaultReviewAction(action string) {
-	m.review.UpdateDefaultAction(action)
 }
 
 // -- Chat delegation --

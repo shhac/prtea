@@ -43,24 +43,6 @@ func TestReviewTab_SetDefaultAction(t *testing.T) {
 	}
 }
 
-func TestReviewTab_UpdateDefaultAction(t *testing.T) {
-	tab := NewReviewTabModel()
-	tab.SetDefaultAction("comment")
-
-	// Change the current action manually
-	tab.action = ReviewRequestChanges
-
-	// UpdateDefaultAction should NOT change current state
-	tab.UpdateDefaultAction("approve")
-
-	if tab.defaultAction != ReviewApprove {
-		t.Errorf("defaultAction = %d, want %d", tab.defaultAction, ReviewApprove)
-	}
-	if tab.action != ReviewRequestChanges {
-		t.Errorf("action = %d, want %d (should be unchanged)", tab.action, ReviewRequestChanges)
-	}
-}
-
 func TestReviewTab_Clear(t *testing.T) {
 	tab := NewReviewTabModel()
 	tab.SetDefaultAction("approve")

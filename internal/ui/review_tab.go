@@ -51,12 +51,6 @@ func (t *ReviewTabModel) SetDefaultAction(action string) {
 	t.radioFocus = int(t.defaultAction)
 }
 
-// UpdateDefaultAction updates the stored default without touching the
-// current review state. Use when config changes mid-session.
-func (t *ReviewTabModel) UpdateDefaultAction(action string) {
-	t.parseDefault(action)
-}
-
 func (t *ReviewTabModel) parseDefault(action string) {
 	t.defaultAction = ParseReviewAction(action)
 }

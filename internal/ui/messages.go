@@ -263,14 +263,6 @@ type CommandNotFoundMsg struct {
 	Input string
 }
 
-// -- Settings --
-
-// ConfigChangedMsg is sent when the user changes settings in the settings panel.
-type ConfigChangedMsg struct{}
-
-// SettingsClosedMsg is sent when the settings overlay is dismissed.
-type SettingsClosedMsg struct{}
-
 // -- Background polling --
 
 // pollTickMsg is sent by the periodic timer to trigger a background PR list fetch.

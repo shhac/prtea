@@ -161,7 +161,7 @@ Press `?` at any time to see the full keybinding reference.
 
 ## Configuration
 
-Config file location: `~/.config/prtea/config.json`
+Config file location: `~/.config/prtea/config.json` — open it from inside prtea with the `:config` command (changes apply on restart).
 
 ```json
 {

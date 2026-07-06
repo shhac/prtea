@@ -3,12 +3,15 @@ package ui
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"time"
 
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/shhac/prtea/internal/config"
 	"github.com/shhac/prtea/internal/github"
 	"github.com/shhac/prtea/internal/notify"
 )
@@ -216,22 +219,40 @@ func rerunFailedCICmd(client GitHubService, owner, repo string, number int, runI
 	}
 }
 
+// openConfigCmd ensures the config file exists (writing current values on
+// first use) and opens it with the system opener. Changes apply on restart.
+func openConfigCmd(cfg *config.Config) tea.Cmd {
+	return func() tea.Msg {
+		path := filepath.Join(config.DefaultConfigDir(), "config.json")
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			_ = config.Save(cfg)
+		}
+		openWithSystemHandler(path)
+		return nil
+	}
+}
+
 // openBrowserCmd returns a command that opens a URL in the default browser.
 func openBrowserCmd(url string) tea.Cmd {
 	return func() tea.Msg {
-		var cmd *exec.Cmd
-		switch runtime.GOOS {
-		case "darwin":
-			cmd = exec.Command("open", url)
-		case "windows":
-			cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
-		default: // linux, freebsd, etc.
-			cmd = exec.Command("xdg-open", url)
-		}
-		if err := cmd.Start(); err == nil {
-			go cmd.Wait() // reap the child process to avoid zombies
-		}
+		openWithSystemHandler(url)
 		return nil
+	}
+}
+
+// openWithSystemHandler opens a file or URL with the platform's default app.
+func openWithSystemHandler(target string) {
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = exec.Command("open", target)
+	case "windows":
+		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", target)
+	default: // linux, freebsd, etc.
+		cmd = exec.Command("xdg-open", target)
+	}
+	if err := cmd.Start(); err == nil {
+		go cmd.Wait() // reap the child process to avoid zombies
 	}
 }
 

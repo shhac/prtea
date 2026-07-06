@@ -32,7 +32,7 @@ var commandRegistry = []Command{
 	{Name: "toggle center", Aliases: []string{"tc"}, QuickKey: "2", Description: "Toggle center panel"},
 	{Name: "toggle right", Aliases: []string{"tr"}, QuickKey: "3", Description: "Toggle right panel"},
 	// Full mode only
-	{Name: "config", Aliases: []string{"settings", "cfg"}, QuickKey: "s", Description: "Open settings"},
+	{Name: "config", Aliases: []string{"settings", "cfg"}, QuickKey: "s", Description: "Open config file"},
 	{Name: "clear selection", Aliases: []string{"cs"}, Description: "Clear hunk selection"},
 	{Name: "approve", Aliases: []string{"ap"}, Description: "Quick-approve PR"},
 	{Name: "rerun ci", Aliases: []string{"rerun"}, Description: "Re-run failed CI checks"},

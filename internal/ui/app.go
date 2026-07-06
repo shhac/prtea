@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -29,7 +30,6 @@ type App struct {
 	// Overlays
 	helpOverlay    HelpOverlayModel
 	commandMode    CommandModeModel
-	settingsPanel  SettingsModel
 	commentOverlay CommentOverlayModel
 
 	// GitHub client (nil until GHClientReadyMsg)
@@ -125,7 +125,6 @@ func NewApp(opts ...AppOption) App {
 		statusBar:         NewStatusBarModel(),
 		helpOverlay:       NewHelpOverlayModel(),
 		commandMode:       NewCommandModeModel(),
-		settingsPanel:     NewSettingsModel(),
 		commentOverlay:    NewCommentOverlayModel(),
 		focused:           PanelLeft,
 		panelVisible:      panelVisible,
@@ -169,59 +168,128 @@ func initDemoClientCmd() tea.Msg {
 	return GHClientReadyMsg{Client: demo.NewService()}
 }
 
-// Update dispatches messages to domain-specific sub-handlers.
+// Update is the single message dispatch: every message type routes directly
+// to its handler, so an unhandled message is structurally impossible to hide.
 func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg.(type) {
-	// Window resize (handled inline — unique)
+	switch msg := msg.(type) {
+	// Window & input
 	case tea.WindowSizeMsg:
-		return m.handleWindowSize(msg.(tea.WindowSizeMsg))
-
-	// PR list domain: client init, fetching, polling, selection
-	case GHClientReadyMsg, GHClientErrorMsg,
-		PRsLoadedMsg, PRsErrorMsg, PRReviewDecisionsMsg,
-		pollTickMsg, pollPRsLoadedMsg, pollErrorMsg,
-		PRSelectedMsg:
-		return m.handlePRListMsg(msg)
-
-	// Diff domain: diff loading, PR detail, comments, CI, reviews
-	case HunkSelectedAndAdvanceMsg,
-		DiffLoadedMsg, PRDetailLoadedMsg,
-		CommentsLoadedMsg, CIStatusLoadedMsg,
-		CIRerunRequestMsg, CIRerunDoneMsg, CIRerunErrMsg,
-		ReviewsLoadedMsg:
-		return m.handleDiffMsg(msg)
-
-	// Chat domain: AI turns, comments, inline comments
-	case ChatClearMsg, ChatSendMsg,
-		AIEventMsg, AIActionRespondMsg, AIActionResultMsg,
-		CommentPostMsg, CommentPostedMsg,
-		InlineCommentAddMsg,
-		InlineCommentReplyMsg, InlineCommentReplyDoneMsg:
-		return m.handleChatMsg(msg)
-
-	// Review domain: review submission, approval, PR close
-	case ReviewValidationMsg, ReviewSubmitMsg,
-		ReviewSubmitDoneMsg, ReviewSubmitErrMsg:
-		return m.handleReviewMsg(msg)
-
-	// Config domain: settings, overlays, mode changes, commands
-	case ConfigChangedMsg, HelpClosedMsg, SettingsClosedMsg,
-		ShowCommentOverlayMsg, CommentOverlayClosedMsg,
-		CommandExecuteMsg, CommandModeExitMsg, CommandNotFoundMsg,
-		ModeChangedMsg:
-		return m.handleConfigMsg(msg)
-
-	// Infrastructure: spinner ticks, status bar, filter matches
+		return m.handleWindowSize(msg)
+	case tea.KeyMsg:
+		return m.handleKeyMsg(msg)
 	case spinner.TickMsg:
-		return m.handleSpinnerTick(msg.(spinner.TickMsg))
-
+		return m.handleSpinnerTick(msg)
 	case StatusBarClearMsg:
-		m.statusBar.ClearIfSeqMatch(msg.(StatusBarClearMsg).Seq)
+		m.statusBar.ClearIfSeqMatch(msg.Seq)
 		return m, nil
 
-	// Key input
-	case tea.KeyMsg:
-		return m.handleKeyMsg(msg.(tea.KeyMsg))
+	// GitHub client & PR list
+	case GHClientReadyMsg:
+		m.ghClient = msg.Client
+		m.ghClient.SetFetchLimit(m.appConfig.PRFetchLimit)
+		return m, fetchPRsCmd(m.ghClient)
+	case GHClientErrorMsg:
+		m.prList.SetError(msg.Err.Error())
+		return m, nil
+	case PRsLoadedMsg:
+		return m.handlePRsLoaded(msg)
+	case PRsErrorMsg:
+		m.prList.SetError(msg.Err.Error())
+		return m, nil
+	case PRReviewDecisionsMsg:
+		m.prList.UpdateReviewDecisions(msg.Decisions)
+		return m, nil
+	case pollTickMsg:
+		return m.handlePollTick()
+	case pollPRsLoadedMsg:
+		return m.handlePollPRsLoaded(msg)
+	case pollErrorMsg:
+		return m, m.statusBar.SetTemporaryMessage("Poll error: "+formatUserError(msg.Err.Error()), 5*time.Second)
+	case PRSelectedMsg:
+		return m.selectPR(msg.Owner, msg.Repo, msg.Number, msg.HTMLURL, msg.Advance)
+	case list.FilterMatchesMsg:
+		var cmd tea.Cmd
+		m.prList, cmd = m.prList.Update(msg)
+		return m, cmd
+
+	// PR data loads
+	case DiffLoadedMsg:
+		return m.handleDiffLoaded(msg)
+	case PRDetailLoadedMsg:
+		return m.handlePRDetailLoaded(msg)
+	case CommentsLoadedMsg:
+		return m.handleCommentsLoaded(msg)
+	case CIStatusLoadedMsg:
+		return m.handleCIStatusLoaded(msg)
+	case ReviewsLoadedMsg:
+		return m.handleReviewsLoaded(msg)
+
+	// CI re-runs
+	case CIRerunRequestMsg:
+		return m.handleCIRerunRequest()
+	case CIRerunDoneMsg:
+		return m.handleCIRerunDone(msg)
+	case CIRerunErrMsg:
+		return m, m.statusBar.SetTemporaryMessage(fmt.Sprintf("CI re-run failed: %s", formatUserError(msg.Err.Error())), 5*time.Second)
+
+	// AI turns & chat
+	case ChatClearMsg:
+		return m.handleChatClear()
+	case ChatSendMsg:
+		return m.handleChatSend(msg.Message)
+	case AIEventMsg:
+		return m.handleAIEvent(msg)
+	case AIActionRespondMsg:
+		return m.handleActionRespond(msg)
+	case AIActionResultMsg:
+		return m.handleActionResult(msg)
+
+	// Comments
+	case CommentPostMsg:
+		return m.handleCommentPost(msg.Body)
+	case CommentPostedMsg:
+		return m.handleCommentPosted(msg)
+	case InlineCommentAddMsg:
+		return m.handleInlineCommentAdd(msg)
+	case InlineCommentReplyMsg:
+		return m.handleInlineCommentReply(msg)
+	case InlineCommentReplyDoneMsg:
+		return m.handleInlineCommentReplyDone(msg)
+
+	// Review submission
+	case ReviewValidationMsg:
+		return m, m.statusBar.SetTemporaryMessage(msg.Message, 3*time.Second)
+	case ReviewSubmitMsg:
+		return m.handleReviewSubmit(msg)
+	case ReviewSubmitDoneMsg:
+		return m.handleReviewSubmitDone(msg)
+	case ReviewSubmitErrMsg:
+		return m.handleReviewSubmitErr(msg)
+
+	// Overlays, palette, modes
+	case HunkSelectedAndAdvanceMsg:
+		m.showAndFocusPanel(PanelRight)
+		return m, nil
+	case HelpClosedMsg, CommentOverlayClosedMsg, CommandModeExitMsg:
+		m.setMode(ModeNavigation)
+		return m, nil
+	case ShowCommentOverlayMsg:
+		m.commentOverlay.SetSize(m.width, m.height)
+		cmd := m.commentOverlay.Show(msg)
+		m.setMode(ModeOverlay)
+		return m, cmd
+	case CommandExecuteMsg:
+		m.setMode(ModeNavigation)
+		return m.executeCommand(msg.Name)
+	case CommandNotFoundMsg:
+		return m, m.statusBar.SetTemporaryMessage(fmt.Sprintf("Unknown command: %s", msg.Input), 2*time.Second)
+	case ModeChangedMsg:
+		if msg.Mode == ChatModeInsert {
+			m.setMode(ModeInsert)
+		} else {
+			m.setMode(ModeNavigation)
+		}
+		return m, nil
 	}
 
 	return m, nil
@@ -233,7 +301,6 @@ func (m App) handleWindowSize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 	m.height = msg.Height
 	m.helpOverlay.SetSize(m.width, m.height)
 	m.commandMode.SetSize(m.width, m.height)
-	m.settingsPanel.SetSize(m.width, m.height)
 	m.commentOverlay.SetSize(m.width, m.height)
 	if !m.initialized {
 		m.initialized = true
@@ -286,11 +353,6 @@ func (m App) View() string {
 	// Render help overlay on top if active
 	if m.helpOverlay.IsVisible() {
 		return m.helpOverlay.View()
-	}
-
-	// Render settings overlay on top if active
-	if m.settingsPanel.IsVisible() {
-		return m.settingsPanel.View()
 	}
 
 	// Render command palette at the bottom if active
@@ -715,10 +777,7 @@ func (m App) executeCommand(name string) (tea.Model, tea.Cmd) {
 		m.helpOverlay.Show(m.focused)
 		return m, nil
 	case "config":
-		m.setMode(ModeOverlay)
-		m.settingsPanel.SetSize(m.width, m.height)
-		m.settingsPanel.Show(m.appConfig)
-		return m, nil
+		return m, openConfigCmd(m.appConfig)
 	case "zoom":
 		m.toggleZoom()
 		return m, nil
