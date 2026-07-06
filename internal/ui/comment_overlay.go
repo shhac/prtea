@@ -1,13 +1,13 @@
 package ui
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/shhac/prtea/internal/github"
 )
 
 // CommentOverlayModel renders a centered overlay showing diff context,
@@ -34,7 +34,7 @@ type CommentOverlayModel struct {
 
 	// Comment data
 	ghThreads       []ghCommentThread
-	pendingComments []PendingInlineComment
+	pendingComments []github.ReviewCommentPayload
 
 	// Reply target: root comment ID for the first GitHub thread (0 if none)
 	replyTargetID int64
@@ -189,13 +189,7 @@ func (m CommentOverlayModel) View() string {
 	innerW := m.innerWidth()
 
 	// Title
-	var titleText string
-	if m.targetStartLine > 0 {
-		titleText = fmt.Sprintf(" 💬 %s:%d-%d ", m.targetPath, m.targetStartLine, m.targetLine)
-	} else {
-		titleText = fmt.Sprintf(" 💬 %s:%d ", m.targetPath, m.targetLine)
-	}
-	title := commentOverlayTitleStyle.Render(titleText)
+	title := commentOverlayTitleStyle.Render(" 💬 " + formatCommentTarget(m.targetPath, m.targetStartLine, m.targetLine) + " ")
 	titleLine := lipgloss.PlaceHorizontal(innerW, lipgloss.Left, title)
 
 	// Diff context
@@ -329,7 +323,7 @@ func (m CommentOverlayModel) renderThreadContent() string {
 			commentBoxMetaStyle.Render(" · "+t.Root.CreatedAt.Format("Jan 2 15:04"))
 		b.WriteString(header)
 		b.WriteString("\n")
-		b.WriteString(wordWrapPlain(t.Root.Body, innerW))
+		b.WriteString(wordWrap(t.Root.Body, innerW))
 
 		// All replies (no trimming in overlay — show full thread)
 		for _, r := range t.Replies {
@@ -339,7 +333,7 @@ func (m CommentOverlayModel) renderThreadContent() string {
 				commentBoxMetaStyle.Render(" · "+r.CreatedAt.Format("Jan 2 15:04"))
 			b.WriteString(replyHeader)
 			b.WriteString("\n")
-			b.WriteString(wordWrapPlain(r.Body, innerW))
+			b.WriteString(wordWrap(r.Body, innerW))
 		}
 		hasContent = true
 	}
@@ -352,7 +346,7 @@ func (m CommentOverlayModel) renderThreadContent() string {
 		header := commentBoxHeaderStyle.Render("📝 Draft")
 		b.WriteString(header)
 		b.WriteString("\n")
-		b.WriteString(wordWrapPlain(c.Body, innerW))
+		b.WriteString(wordWrap(c.Body, innerW))
 		hasContent = true
 	}
 
@@ -396,29 +390,4 @@ func (m CommentOverlayModel) renderFooter(innerW int) string {
 		gap = 1
 	}
 	return left + strings.Repeat(" ", gap) + right
-}
-
-// wordWrapPlain wraps text at the given width without any styling.
-func wordWrapPlain(text string, width int) string {
-	if width <= 0 {
-		return text
-	}
-	var result strings.Builder
-	for i, line := range strings.Split(text, "\n") {
-		if i > 0 {
-			result.WriteString("\n")
-		}
-		for len(line) > width {
-			// Find last space within width
-			cut := strings.LastIndex(line[:width], " ")
-			if cut <= 0 {
-				cut = width
-			}
-			result.WriteString(line[:cut])
-			result.WriteString("\n")
-			line = strings.TrimLeft(line[cut:], " ")
-		}
-		result.WriteString(line)
-	}
-	return result.String()
 }

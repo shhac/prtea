@@ -40,8 +40,8 @@ func (m *DiffViewerModel) handleCommentModeKey(msg tea.KeyMsg) (DiffViewerModel,
 }
 
 // SetPendingInlineComments stores pending comments and rebuilds the diff cache.
-func (m *DiffViewerModel) SetPendingInlineComments(comments []PendingInlineComment) {
-	m.pendingCommentsByFileLine = make(map[string][]PendingInlineComment)
+func (m *DiffViewerModel) SetPendingInlineComments(comments []github.ReviewCommentPayload) {
+	m.pendingCommentsByFileLine = make(map[string][]github.ReviewCommentPayload)
 	for _, c := range comments {
 		key := commentKey(c.Path, c.Line)
 		m.pendingCommentsByFileLine[key] = append(m.pendingCommentsByFileLine[key], c)
@@ -124,17 +124,9 @@ func (m *DiffViewerModel) EnterCommentMode() tea.Cmd {
 	m.commentTargetLine = targetLine
 	m.commentTargetStartLine = 0
 
-	// If a multi-line selection is active, resolve the range
-	if m.selectionAnchor >= 0 {
-		startLine, endLine := m.resolveSelectionRange()
-		if startLine > 0 && endLine > 0 && startLine != endLine {
-			// GitHub API requires start_line < line
-			if startLine > endLine {
-				startLine, endLine = endLine, startLine
-			}
-			m.commentTargetStartLine = startLine
-			m.commentTargetLine = endLine
-		}
+	if startLine, endLine := m.normalizedSelectionRange(); startLine > 0 {
+		m.commentTargetStartLine = startLine
+		m.commentTargetLine = endLine
 	}
 
 	m.commentMode = true
@@ -150,6 +142,23 @@ func (m *DiffViewerModel) EnterCommentMode() tea.Cmd {
 
 	m.refreshContent()
 	return m.commentInput.Focus()
+}
+
+// normalizedSelectionRange resolves the active multi-line selection into a
+// (start, end) pair honoring the GitHub API's start_line < line requirement.
+// Returns (0, 0) when no valid multi-line selection is active.
+func (m *DiffViewerModel) normalizedSelectionRange() (int, int) {
+	if m.selectionAnchor < 0 {
+		return 0, 0
+	}
+	startLine, endLine := m.resolveSelectionRange()
+	if startLine == 0 || endLine == 0 || startLine == endLine {
+		return 0, 0
+	}
+	if startLine > endLine {
+		startLine, endLine = endLine, startLine
+	}
+	return startLine, endLine
 }
 
 // resolveSelectionRange finds the commentable new-side line numbers at the
@@ -240,18 +249,10 @@ func (m *DiffViewerModel) buildCommentOverlayMsg() *ShowCommentOverlayMsg {
 	}
 
 	// Resolve multi-line selection range (0, 0 if no selection)
-	var startLine, endLine int
-	if m.selectionAnchor >= 0 {
-		startLine, endLine = m.resolveSelectionRange()
-		if startLine > 0 && endLine > 0 && startLine != endLine {
-			if startLine > endLine {
-				startLine, endLine = endLine, startLine
-			}
-			// Override target to match the selection range endpoints
-			targetLine = endLine
-		} else {
-			startLine = 0
-		}
+	startLine, endLine := m.normalizedSelectionRange()
+	if startLine > 0 {
+		// Override target to match the selection range endpoints
+		targetLine = endLine
 	}
 
 	// Extract diff context lines from the hunk
@@ -262,28 +263,7 @@ func (m *DiffViewerModel) buildCommentOverlayMsg() *ShowCommentOverlayMsg {
 	hunk := m.hunks[hunkIdx]
 
 	// Find target line index within hunk and extract a window around it
-	targetIdx := -1
-	newLine := 0
-	for i, line := range hunk.Lines {
-		if strings.HasPrefix(line, "@@") {
-			// Parse start line from @@ header
-			var n int
-			if _, err := fmt.Sscanf(line, "@@ -%*d,%*d +%d", &n); err == nil {
-				newLine = n - 1
-			}
-			continue
-		}
-		if !strings.HasPrefix(line, "-") && !strings.HasPrefix(line, `\`) {
-			newLine++
-		}
-		if newLine == targetLine {
-			targetIdx = i
-			break
-		}
-	}
-	if targetIdx < 0 {
-		targetIdx = 0
-	}
+	targetIdx := hunkLineIndex(hunk.Lines, targetLine)
 
 	ctxStart := max(0, targetIdx-2)
 	ctxEnd := min(len(hunk.Lines), targetIdx+3)
@@ -294,7 +274,7 @@ func (m *DiffViewerModel) buildCommentOverlayMsg() *ShowCommentOverlayMsg {
 	// Gather threads. For multi-line selections, only include threads
 	// whose line range exactly matches the selection.
 	var ghThreads []ghCommentThread
-	var pendingComments []PendingInlineComment
+	var pendingComments []github.ReviewCommentPayload
 
 	if startLine > 0 {
 		// Multi-line selection: exact range match only
@@ -325,6 +305,33 @@ func (m *DiffViewerModel) buildCommentOverlayMsg() *ShowCommentOverlayMsg {
 	}
 }
 
+// hunkLineIndex maps a new-side file line number to its index within a hunk's
+// raw diff lines, parsing @@ headers to track new-side numbering. Returns 0
+// when the line is not found.
+func hunkLineIndex(hunkLines []string, targetLine int) int {
+	newLine := 0
+	for i, line := range hunkLines {
+		if strings.HasPrefix(line, "@@") {
+			// Parse the new-side start from "@@ -a,b +c,d @@". Note Go's
+			// Sscanf has no %* suppression, so target the "+c" field directly.
+			if plus := strings.Index(line, "+"); plus != -1 {
+				var n int
+				if _, err := fmt.Sscanf(line[plus:], "+%d", &n); err == nil {
+					newLine = n - 1
+				}
+			}
+			continue
+		}
+		if !strings.HasPrefix(line, "-") && !strings.HasPrefix(line, `\`) {
+			newLine++
+		}
+		if newLine == targetLine {
+			return i
+		}
+	}
+	return 0
+}
+
 // IsCommenting returns true when the comment input is actively being typed into.
 func (m DiffViewerModel) IsCommenting() bool {
 	return m.commentMode
@@ -332,12 +339,7 @@ func (m DiffViewerModel) IsCommenting() bool {
 
 // renderCommentBar renders the comment input bar shown during comment mode.
 func (m DiffViewerModel) renderCommentBar() string {
-	var target string
-	if m.commentTargetStartLine > 0 {
-		target = fmt.Sprintf("%s:%d-%d", m.commentTargetFile, m.commentTargetStartLine, m.commentTargetLine)
-	} else {
-		target = fmt.Sprintf("%s:%d", m.commentTargetFile, m.commentTargetLine)
-	}
+	target := formatCommentTarget(m.commentTargetFile, m.commentTargetStartLine, m.commentTargetLine)
 	promptStyle := lipgloss.NewStyle().Foreground(commentBoxPendingBorder).Bold(true)
 	prompt := promptStyle.Render("📝 " + target + " > ")
 	return prompt + m.commentInput.View()

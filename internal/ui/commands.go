@@ -5,12 +5,10 @@ import (
 	"fmt"
 	"os/exec"
 	"runtime"
-	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/shhac/prtea/internal/ai"
 	"github.com/shhac/prtea/internal/github"
 	"github.com/shhac/prtea/internal/notify"
 )
@@ -126,6 +124,19 @@ func notifyNewPRsCmd(newPRs []github.PRItem, threshold int) tea.Cmd {
 	}
 }
 
+// fetchAllPRDataCmds returns the full batch of fetches that load a PR:
+// diff, detail, comments, CI status, and reviews. refreshSelectedPR counts
+// this batch to know when a refresh has completed.
+func fetchAllPRDataCmds(client GitHubService, owner, repo string, number int) []tea.Cmd {
+	return []tea.Cmd{
+		fetchDiffCmd(client, owner, repo, number),
+		fetchPRDetailCmd(client, owner, repo, number),
+		fetchCommentsCmd(client, owner, repo, number),
+		fetchCIStatusCmd(client, owner, repo, number),
+		fetchReviewsCmd(client, owner, repo, number),
+	}
+}
+
 // fetchDiffCmd returns a command that fetches PR file diffs.
 func fetchDiffCmd(client GitHubService, owner, repo string, number int) tea.Cmd {
 	return func() tea.Msg {
@@ -224,25 +235,19 @@ func openBrowserCmd(url string) tea.Cmd {
 	}
 }
 
-// approvePRCmd returns a command that approves a PR.
-func approvePRCmd(client GitHubService, owner, repo string, number int) tea.Cmd {
-	return func() tea.Msg {
-		err := client.ApprovePR(context.Background(), owner, repo, number, "")
-		if err != nil {
-			return PRApproveErrMsg{PRNumber: number, Err: err}
-		}
-		return PRApproveDoneMsg{PRNumber: number}
-	}
-}
-
-// closePRCmd returns a command that closes a PR without merging.
-func closePRCmd(client GitHubService, owner, repo string, number int) tea.Cmd {
-	return func() tea.Msg {
-		err := client.ClosePR(context.Background(), owner, repo, number)
-		if err != nil {
-			return PRCloseErrMsg{PRNumber: number, Err: err}
-		}
-		return PRCloseDoneMsg{PRNumber: number}
+// submitSimpleReview dispatches a body-only review (no inline comments) to
+// the matching gh pr review operation. Shared by user-submitted reviews and
+// AI-proposed submit_review actions so the two paths cannot drift.
+func submitSimpleReview(ctx context.Context, client GitHubService, owner, repo string, number int, action ReviewAction, body string) error {
+	switch action {
+	case ReviewApprove:
+		return client.ApprovePR(ctx, owner, repo, number, body)
+	case ReviewComment:
+		return client.CommentReviewPR(ctx, owner, repo, number, body)
+	case ReviewRequestChanges:
+		return client.RequestChangesPR(ctx, owner, repo, number, body)
+	default:
+		return fmt.Errorf("unknown review action %d", action)
 	}
 }
 
@@ -252,34 +257,11 @@ func submitReviewCmd(client GitHubService, owner, repo string, number int, actio
 		ctx := context.Background()
 		var err error
 
-		// If there are inline comments, use the REST API for the full review
+		// Inline comments require the REST API for the full review
 		if len(inlineComments) > 0 {
-			eventMap := map[ReviewAction]string{
-				ReviewApprove:        "APPROVE",
-				ReviewComment:        "COMMENT",
-				ReviewRequestChanges: "REQUEST_CHANGES",
-			}
-			comments := make([]github.ReviewCommentPayload, len(inlineComments))
-			for i, c := range inlineComments {
-				if c.Side == "" {
-					c.Side = "RIGHT"
-				}
-				if c.StartLine > 0 && c.StartSide == "" {
-					c.StartSide = c.Side
-				}
-				comments[i] = c
-			}
-			err = client.SubmitReviewWithComments(ctx, owner, repo, number, eventMap[action], body, comments)
+			err = client.SubmitReviewWithComments(ctx, owner, repo, number, action.APIEvent(), body, inlineComments)
 		} else {
-			// No inline comments — use simple gh pr review
-			switch action {
-			case ReviewApprove:
-				err = client.ApprovePR(ctx, owner, repo, number, body)
-			case ReviewComment:
-				err = client.CommentReviewPR(ctx, owner, repo, number, body)
-			case ReviewRequestChanges:
-				err = client.RequestChangesPR(ctx, owner, repo, number, body)
-			}
+			err = submitSimpleReview(ctx, client, owner, repo, number, action, body)
 		}
 
 		if err != nil {
@@ -296,132 +278,4 @@ func replyToCommentCmd(client GitHubService, owner, repo string, prNumber int, c
 		err := client.ReplyToComment(ctx, owner, repo, prNumber, commentID, body)
 		return InlineCommentReplyDoneMsg{Err: err}
 	}
-}
-
-// executeActionCmd executes a user-confirmed AI-proposed action via the
-// GitHub client and reports the outcome.
-func executeActionCmd(client GitHubService, owner, repo string, number int, action ai.Action) tea.Cmd {
-	return func() tea.Msg {
-		ctx := context.Background()
-		var err error
-		switch action.Type {
-		case ai.ActionPostComment:
-			err = client.PostComment(ctx, owner, repo, number, action.Body)
-		case ai.ActionReplyToComment:
-			err = client.ReplyToComment(ctx, owner, repo, number, action.CommentID, action.Body)
-		case ai.ActionSubmitReview:
-			switch action.Event {
-			case "approve":
-				err = client.ApprovePR(ctx, owner, repo, number, action.Body)
-			case "comment":
-				err = client.CommentReviewPR(ctx, owner, repo, number, action.Body)
-			case "request_changes":
-				err = client.RequestChangesPR(ctx, owner, repo, number, action.Body)
-			}
-		default:
-			err = fmt.Errorf("unknown action type %q", action.Type)
-		}
-		return AIActionResultMsg{Description: action.Describe(), Err: err}
-	}
-}
-
-// listenForStream returns a tea.Cmd that reads the next message from a streaming channel.
-func listenForStream(ch <-chan tea.Msg) tea.Cmd {
-	return func() tea.Msg {
-		msg, ok := <-ch
-		if !ok {
-			return nil
-		}
-		return msg
-	}
-}
-
-// -- Context builders --
-
-// maxContextDiffBytes caps the diff embedded in a thread's context so a huge
-// PR cannot blow the model's context window. When exceeded, the diff is
-// truncated with a notice; codex can still explore a local checkout.
-const maxContextDiffBytes = 256 * 1024
-
-// buildThreadContext assembles the PR context for a new AI thread:
-// title, diff, comments (with IDs so the agent can propose replies),
-// and any hunks the user has selected.
-func buildThreadContext(title string, files []github.PRFile, comments []github.Comment, inline []github.InlineComment, selectedHunks string) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "Title: %s\n", title)
-
-	if len(files) > 0 {
-		b.WriteString("\nDiff:\n\n")
-		diff := buildDiffContent(files)
-		if len(diff) > maxContextDiffBytes {
-			diff = diff[:maxContextDiffBytes] + "\n\n[... diff truncated — explore the local checkout for the rest ...]\n"
-		}
-		b.WriteString(diff)
-	} else {
-		b.WriteString("\n(Diff not yet loaded)\n")
-	}
-
-	if len(comments) > 0 {
-		b.WriteString("\nPR comments:\n")
-		for _, c := range comments {
-			fmt.Fprintf(&b, "- %s: %s\n", c.Author.Login, c.Body)
-		}
-	}
-
-	if len(inline) > 0 {
-		b.WriteString("\nInline review comments (id — file:line — author):\n")
-		for _, c := range inline {
-			fmt.Fprintf(&b, "- %d — %s:%d — %s: %s\n", c.ID, c.Path, c.Line, c.Author.Login, c.Body)
-		}
-	}
-
-	if selectedHunks != "" {
-		b.WriteString("\nThe user has selected these hunks to focus on:\n\n")
-		b.WriteString(selectedHunks)
-	}
-
-	return b.String()
-}
-
-// buildContextDelta assembles the refreshed-context block for a follow-up
-// message on an existing thread. Empty when there is nothing new to add.
-func buildContextDelta(selectedHunks string) string {
-	if selectedHunks == "" {
-		return ""
-	}
-	return "The user has selected these hunks to focus on:\n\n" + selectedHunks
-}
-
-// buildDiffContent constructs a unified diff string from PR files.
-func buildDiffContent(files []github.PRFile) string {
-	var b strings.Builder
-	for _, f := range files {
-		b.WriteString(fmt.Sprintf("--- a/%s\n", f.Filename))
-		b.WriteString(fmt.Sprintf("+++ b/%s\n", f.Filename))
-		if f.Patch != "" {
-			b.WriteString(f.Patch)
-			b.WriteString("\n")
-		} else {
-			b.WriteString("(binary or too large to display)\n")
-		}
-		b.WriteString("\n")
-	}
-	return b.String()
-}
-
-// displayCommand compacts an agent shell command for the activity feed,
-// stripping the `sh -lc "..."` wrapper codex uses.
-func displayCommand(cmd string) string {
-	if idx := strings.Index(cmd, " -lc "); idx != -1 {
-		cmd = strings.Trim(strings.TrimSpace(cmd[idx+5:]), `"'`)
-	}
-	return firstLine(cmd)
-}
-
-// firstLine returns the first line of a possibly multi-line string.
-func firstLine(s string) string {
-	if idx := strings.IndexByte(s, '\n'); idx != -1 {
-		return s[:idx] + " …"
-	}
-	return s
 }

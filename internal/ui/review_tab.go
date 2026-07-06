@@ -58,25 +58,23 @@ func (t *ReviewTabModel) UpdateDefaultAction(action string) {
 }
 
 func (t *ReviewTabModel) parseDefault(action string) {
-	switch action {
-	case "approve":
-		t.defaultAction = ReviewApprove
-	case "request_changes":
-		t.defaultAction = ReviewRequestChanges
-	default:
-		t.defaultAction = ReviewComment
-	}
+	t.defaultAction = ParseReviewAction(action)
 }
 
 // Clear resets review state for a new PR.
 func (t *ReviewTabModel) Clear() {
+	t.resetForm()
+	t.submitting = false
+	t.pendingCount = 0
+}
+
+// resetForm restores the form to its default state.
+func (t *ReviewTabModel) resetForm() {
 	t.textArea.Reset()
 	t.action = t.defaultAction
 	t.radioFocus = int(t.defaultAction)
 	t.focus = ReviewFocusTextArea
-	t.submitting = false
 	t.textArea.Blur()
-	t.pendingCount = 0
 }
 
 // SetPendingCommentCount sets the number of pending inline comments.
@@ -88,11 +86,7 @@ func (t *ReviewTabModel) SetPendingCommentCount(n int) {
 func (t *ReviewTabModel) SetSubmitted(err error) {
 	t.submitting = false
 	if err == nil {
-		t.textArea.Reset()
-		t.action = t.defaultAction
-		t.radioFocus = int(t.defaultAction)
-		t.focus = ReviewFocusTextArea
-		t.textArea.Blur()
+		t.resetForm()
 	}
 }
 
@@ -238,12 +232,11 @@ func (t ReviewTabModel) Render(width int, spinnerView string) string {
 
 	actions := []struct {
 		action ReviewAction
-		label  string
 		active lipgloss.Style
 	}{
-		{ReviewApprove, "Approve", reviewApproveStyle},
-		{ReviewComment, "Comment", reviewCommentStyle},
-		{ReviewRequestChanges, "Request Changes", reviewRequestChangesStyle},
+		{ReviewApprove, reviewApproveStyle},
+		{ReviewComment, reviewCommentStyle},
+		{ReviewRequestChanges, reviewRequestChangesStyle},
 	}
 
 	for i, a := range actions {
@@ -258,9 +251,9 @@ func (t ReviewTabModel) Render(width int, spinnerView string) string {
 
 		var line string
 		if t.action == a.action {
-			line = indicator + a.active.Render(a.label)
+			line = indicator + a.active.Render(a.action.Label())
 		} else {
-			line = indicator + reviewOptionDimStyle.Render(a.label)
+			line = indicator + reviewOptionDimStyle.Render(a.action.Label())
 		}
 		if isFocused {
 			line = lipgloss.NewStyle().Bold(true).Render(line)
@@ -272,13 +265,7 @@ func (t ReviewTabModel) Render(width int, spinnerView string) string {
 	b.WriteString("\n")
 
 	// 3. Submit button
-	actionLabels := map[ReviewAction]string{
-		ReviewApprove:        "Approve",
-		ReviewComment:        "Comment",
-		ReviewRequestChanges: "Request Changes",
-	}
-
-	buttonText := fmt.Sprintf("[ Submit: %s ]", actionLabels[t.action])
+	buttonText := fmt.Sprintf("[ Submit: %s ]", t.action.Label())
 	if t.submitting {
 		buttonText = "[ Submitting... ]"
 	}

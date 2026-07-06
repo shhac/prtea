@@ -419,25 +419,11 @@ func (m PRListModel) Update(msg tea.Msg) (PRListModel, tea.Cmd) {
 			return m, nil
 		case key.Matches(msg, PRListKeys.SelectAndAdvance):
 			if item, ok := m.list.SelectedItem().(PRItem); ok {
-				return m, func() tea.Msg {
-					return PRSelectedAndAdvanceMsg{
-						Owner:   item.owner,
-						Repo:    item.repo,
-						Number:  item.number,
-						HTMLURL: item.htmlURL,
-					}
-				}
+				return m, selectPRCmd(item, true)
 			}
 		case key.Matches(msg, PRListKeys.Select):
 			if item, ok := m.list.SelectedItem().(PRItem); ok {
-				return m, func() tea.Msg {
-					return PRSelectedMsg{
-						Owner:   item.owner,
-						Repo:    item.repo,
-						Number:  item.number,
-						HTMLURL: item.htmlURL,
-					}
-				}
+				return m, selectPRCmd(item, false)
 			}
 		}
 	}
@@ -563,4 +549,17 @@ func (m PRListModel) renderEmpty() string {
 		return renderEmptyState("You haven't opened any PRs", "")
 	}
 	return ""
+}
+
+// selectPRCmd emits a PRSelectedMsg for the given list item.
+func selectPRCmd(item PRItem, advance bool) tea.Cmd {
+	return func() tea.Msg {
+		return PRSelectedMsg{
+			Owner:   item.owner,
+			Repo:    item.repo,
+			Number:  item.number,
+			HTMLURL: item.htmlURL,
+			Advance: advance,
+		}
+	}
 }

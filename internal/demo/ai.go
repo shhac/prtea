@@ -28,21 +28,13 @@ func (e *AIEngine) Send(ctx context.Context, _ string, input ai.MessageInput) (<
 	return e.script(ctx, input.Message, false), nil
 }
 
-// SetTimeout is a no-op for the demo engine.
-func (e *AIEngine) SetTimeout(time.Duration) {}
-
 func (e *AIEngine) script(ctx context.Context, message string, newThread bool) <-chan ai.Event {
 	events := make(chan ai.Event, 16)
 
 	go func() {
 		defer close(events)
 		emit := func(ev ai.Event) bool {
-			select {
-			case events <- ev:
-				return true
-			case <-ctx.Done():
-				return false
-			}
+			return ai.Emit(ctx, events, ev)
 		}
 		pause := func(d time.Duration) bool {
 			select {

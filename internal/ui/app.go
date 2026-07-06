@@ -39,7 +39,6 @@ type App struct {
 	session *PRSession
 
 	// AI integration
-	codexPath   string
 	appConfig   *config.Config
 	aiEngine    AIEngine
 	threadStore *ai.ThreadStore
@@ -145,15 +144,13 @@ func NewApp(opts ...AppOption) App {
 	// Wire the AI engine and thread store after options so demo mode can
 	// inject its fake and keep demo transcripts out of the real cache.
 	if app.demoMode {
-		app.codexPath = "demo"
 		app.aiEngine = demo.NewAIEngine()
 		app.threadStore = ai.NewThreadStore(filepath.Join(os.TempDir(), "prtea-demo-threads"))
 	} else {
 		app.threadStore = ai.NewThreadStore(config.ThreadsCacheDir())
 		if codexPath, err := ai.FindCodex(); err == nil {
-			app.codexPath = codexPath
 			executor := ai.NewCLIExecutor(codexPath)
-			app.aiEngine = ai.NewCodexEngine(executor, cfg.CodexModel, cfg.CodexEffort, cfg.AITimeoutDuration())
+			app.aiEngine = ai.NewCodexEngine(executor, cfg.CodexModel, cfg.CodexEffort)
 		}
 	}
 	return app
@@ -183,7 +180,7 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case GHClientReadyMsg, GHClientErrorMsg,
 		PRsLoadedMsg, PRsErrorMsg, PRReviewDecisionsMsg,
 		pollTickMsg, pollPRsLoadedMsg, pollErrorMsg,
-		PRSelectedMsg, PRSelectedAndAdvanceMsg:
+		PRSelectedMsg:
 		return m.handlePRListMsg(msg)
 
 	// Diff domain: diff loading, PR detail, comments, CI, reviews
@@ -204,9 +201,7 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// Review domain: review submission, approval, PR close
 	case ReviewValidationMsg, ReviewSubmitMsg,
-		ReviewSubmitDoneMsg, ReviewSubmitErrMsg,
-		PRApproveDoneMsg, PRApproveErrMsg,
-		PRCloseDoneMsg, PRCloseErrMsg:
+		ReviewSubmitDoneMsg, ReviewSubmitErrMsg:
 		return m.handleReviewMsg(msg)
 
 	// Config domain: settings, overlays, mode changes, commands
@@ -349,15 +344,9 @@ func (m App) selectPR(owner, repo string, number int, htmlURL string, advance bo
 	}
 	if m.ghClient != nil {
 		m.chatPanel.SetCommentsLoading()
-		return m, tea.Batch(
-			fetchDiffCmd(m.ghClient, owner, repo, number),
-			fetchPRDetailCmd(m.ghClient, owner, repo, number),
-			fetchCommentsCmd(m.ghClient, owner, repo, number),
-			fetchCIStatusCmd(m.ghClient, owner, repo, number),
-			fetchReviewsCmd(m.ghClient, owner, repo, number),
-			m.diffViewer.spinner.Tick,
-			m.chatPanel.spinner.Tick,
-		)
+		cmds := fetchAllPRDataCmds(m.ghClient, owner, repo, number)
+		cmds = append(cmds, m.diffViewer.spinner.Tick, m.chatPanel.spinner.Tick)
+		return m, tea.Batch(cmds...)
 	}
 	return m, nil
 }
@@ -402,8 +391,12 @@ func (m *App) recalcLayout() {
 	m.statusBar.SetState(m.focused, m.mode)
 }
 
-// togglePanel shows or hides a panel. Prevents hiding the last visible panel.
+// togglePanel shows or hides a panel, exiting zoom first. Prevents hiding
+// the last visible panel.
 func (m *App) togglePanel(p Panel) {
+	if m.zoomed {
+		m.exitZoom()
+	}
 	if m.panelVisible[p] && visibleCount(m.panelVisible) <= 1 {
 		return // can't hide the last visible panel
 	}
@@ -480,129 +473,6 @@ func (m App) updateChatPanel(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-// startOrient sends the canned "orient me" prompt into the chat thread.
-func (m App) startOrient() (tea.Model, tea.Cmd) {
-	if m.session == nil {
-		m.chatPanel.SetChatError("No PR selected. Select a PR first.")
-		m.chatPanel.SetActiveTab(ChatTabChat)
-		m.showAndFocusPanel(PanelRight)
-		return m, nil
-	}
-	if m.aiEngine == nil {
-		m.chatPanel.SetChatError(codexMissingMsg)
-		m.chatPanel.SetActiveTab(ChatTabChat)
-		m.showAndFocusPanel(PanelRight)
-		return m, nil
-	}
-	if m.chatPanel.IsChatWaiting() {
-		return m, nil
-	}
-
-	m.chatPanel.SetActiveTab(ChatTabChat)
-	m.showAndFocusPanel(PanelRight)
-	m.chatPanel.StartChatWaiting("Orient me on this PR")
-	cmd := m.startAITurn(ai.OrientMessage)
-	return m, tea.Batch(cmd, m.chatPanel.spinner.Tick)
-}
-
-// codexMissingMsg is shown when AI features are used without the codex CLI.
-const codexMissingMsg = "codex CLI not found.\nInstall it from https://github.com/openai/codex and sign in."
-
-// persistThread saves the current session's thread ID and transcript to disk.
-func (m *App) persistThread() {
-	s := m.session
-	if s == nil {
-		return
-	}
-	msgs := m.chatPanel.ChatMessages()
-	if s.ThreadID == "" && len(msgs) == 0 {
-		return
-	}
-	_ = m.threadStore.Put(s.Owner, s.Repo, s.Number, s.ThreadID, msgs)
-}
-
-// recordThreadID persists a freshly created thread ID, even when the user has
-// already navigated away from the PR that started it — otherwise the next
-// message would silently start a new thread.
-func (m *App) recordThreadID(owner, repo string, number int, threadID string) {
-	if m.session.MatchesPR(number) {
-		m.session.ThreadID = threadID
-		m.persistThread()
-		return
-	}
-	var msgs []ai.Message
-	if cached, err := m.threadStore.Get(owner, repo, number); err == nil && cached != nil {
-		msgs = cached.Messages
-	}
-	_ = m.threadStore.Put(owner, repo, number, threadID, msgs)
-}
-
-// startAITurn kicks off an engine turn for the current session and returns the
-// command that pumps its events into the update loop. The caller is
-// responsible for having recorded the user message in the chat panel.
-func (m App) startAITurn(prompt string) tea.Cmd {
-	s := m.session
-	s.CancelAITurn()
-
-	ctx, cancel := context.WithCancel(context.Background())
-	ch := make(aiEventChan)
-
-	engine := m.aiEngine
-	owner, repo, number := s.Owner, s.Repo, s.Number
-	title := s.Title
-	threadID := s.ThreadID
-	files := s.DiffFiles
-	comments := s.Comments
-	inline := s.InlineComments
-	selectedHunks := m.diffViewer.GetSelectedHunkContent()
-
-	go func() {
-		defer close(ch)
-
-		forward := func(ev ai.Event) bool {
-			select {
-			case ch <- AIEventMsg{Owner: owner, Repo: repo, PRNumber: number, Event: ev}:
-				return true
-			case <-ctx.Done():
-				return false
-			}
-		}
-
-		var events <-chan ai.Event
-		var err error
-		if threadID == "" {
-			customPrompt, _ := config.GetRepoPrompt(owner, repo)
-			events, err = engine.StartThread(ctx, ai.ThreadInput{
-				Owner:        owner,
-				Repo:         repo,
-				PRNumber:     number,
-				PRContext:    buildThreadContext(title, files, comments, inline, selectedHunks),
-				CustomPrompt: customPrompt,
-				RepoPath:     ai.FindLocalCheckout(owner, repo),
-				Message:      prompt,
-			})
-		} else {
-			events, err = engine.Send(ctx, threadID, ai.MessageInput{
-				Message:      prompt,
-				ContextDelta: buildContextDelta(selectedHunks),
-			})
-		}
-		if err != nil {
-			forward(ai.Event{Kind: ai.EventError, Text: err.Error()})
-			return
-		}
-		for ev := range events {
-			if !forward(ev) {
-				return
-			}
-		}
-	}()
-
-	s.AIEventCh = ch
-	s.AICancel = cancel
-	return listenForStream(ch)
-}
-
 // refreshPRList re-fetches the PR lists (To Review + My PRs).
 func (m App) refreshPRList() (tea.Model, tea.Cmd) {
 	m.prList.SetLoading()
@@ -624,33 +494,13 @@ func (m App) refreshSelectedPR() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// Track 5 pending fetches so we can show a success message when all complete.
-	m.refreshPending = 5
+	// Track pending fetches so we can show a success message when all complete.
+	fetchCmds := fetchAllPRDataCmds(m.ghClient, s.Owner, s.Repo, s.Number)
+	m.refreshPending = len(fetchCmds)
 	m.refreshPRNum = s.Number
 	clearCmd := m.statusBar.SetTemporaryMessage(fmt.Sprintf("Refreshing PR #%d...", s.Number), 30*time.Second)
 
-	return m, tea.Batch(
-		clearCmd,
-		fetchDiffCmd(m.ghClient, s.Owner, s.Repo, s.Number),
-		fetchPRDetailCmd(m.ghClient, s.Owner, s.Repo, s.Number),
-		fetchCommentsCmd(m.ghClient, s.Owner, s.Repo, s.Number),
-		fetchCIStatusCmd(m.ghClient, s.Owner, s.Repo, s.Number),
-		fetchReviewsCmd(m.ghClient, s.Owner, s.Repo, s.Number),
-	)
-}
-
-// handleChatSend validates state and kicks off an AI turn for a typed message.
-// The chat panel has already recorded the user message and entered waiting.
-func (m App) handleChatSend(message string) (tea.Model, tea.Cmd) {
-	if m.session == nil {
-		m.chatPanel.SetChatError("No PR selected. Select a PR first.")
-		return m, nil
-	}
-	if m.aiEngine == nil {
-		m.chatPanel.SetChatError(codexMissingMsg)
-		return m, nil
-	}
-	return m, tea.Batch(m.startAITurn(message), m.chatPanel.spinner.Tick)
+	return m, tea.Batch(append(fetchCmds, clearCmd)...)
 }
 
 // handleReviewSubmit validates state and dispatches the review action.
@@ -669,19 +519,9 @@ func (m App) handleReviewSubmit(msg ReviewSubmitMsg) (tea.Model, tea.Cmd) {
 	action := msg.Action
 	body := msg.Body
 
-	actionLabels := map[ReviewAction]string{
-		ReviewApprove:        "Approving",
-		ReviewComment:        "Submitting comment on",
-		ReviewRequestChanges: "Requesting changes on",
-	}
-	clearCmd := m.statusBar.SetTemporaryMessage(fmt.Sprintf("%s PR #%d...", actionLabels[action], s.Number), 3*time.Second)
+	clearCmd := m.statusBar.SetTemporaryMessage(fmt.Sprintf("%s PR #%d...", action.ProgressLabel(), s.Number), 3*time.Second)
 
-	// Submit the session's pending inline comments with the review
-	var inlineComments []github.ReviewCommentPayload
-	for _, c := range s.PendingInlineComments {
-		inlineComments = append(inlineComments, c.ReviewCommentPayload)
-	}
-	return m, tea.Batch(clearCmd, submitReviewCmd(client, s.Owner, s.Repo, s.Number, action, body, inlineComments))
+	return m, tea.Batch(clearCmd, submitReviewCmd(client, s.Owner, s.Repo, s.Number, action, body, s.PendingInlineComments))
 }
 
 // refreshFetchDone decrements the pending refresh counter and, when all
@@ -723,64 +563,87 @@ func (m App) handleInlineCommentAdd(msg InlineCommentAddMsg) (tea.Model, tea.Cmd
 	}
 
 	if msg.Body == "" {
-		// Delete: remove the first pending comment at this path:line:startLine
-		removed := false
-		for i, c := range m.session.PendingInlineComments {
-			if c.Path == msg.Path && c.Line == msg.Line && c.StartLine == msg.StartLine {
-				m.session.PendingInlineComments = append(m.session.PendingInlineComments[:i], m.session.PendingInlineComments[i+1:]...)
-				removed = true
-				break
-			}
+		comments, removed := removePendingComment(m.session.PendingInlineComments, msg.Path, msg.Line, msg.StartLine)
+		m.session.PendingInlineComments = comments
+		m.syncPendingComments()
+		if !removed {
+			return m, nil
 		}
-		m.diffViewer.SetPendingInlineComments(m.session.PendingInlineComments)
-		m.chatPanel.SetPendingCommentCount(len(m.session.PendingInlineComments))
-		if removed {
-			clearCmd := m.statusBar.SetTemporaryMessage(
-				fmt.Sprintf("Comment removed on %s:%d", msg.Path, msg.Line), 2*time.Second)
-			return m, clearCmd
-		}
-		return m, nil
+		clearCmd := m.statusBar.SetTemporaryMessage(
+			fmt.Sprintf("Comment removed on %s:%d", msg.Path, msg.Line), 2*time.Second)
+		return m, clearCmd
 	}
 
-	// Check if editing existing comment at this path:line:startLine
-	found := false
-	for i, c := range m.session.PendingInlineComments {
-		if c.Path == msg.Path && c.Line == msg.Line && c.StartLine == msg.StartLine {
-			m.session.PendingInlineComments[i].Body = msg.Body
-			found = true
-			break
-		}
-	}
-	if !found {
-		comment := PendingInlineComment{
-			ReviewCommentPayload: github.ReviewCommentPayload{
-				Path: msg.Path,
-				Line: msg.Line,
-				Side: "RIGHT",
-				Body: msg.Body,
-			},
-		}
-		if msg.StartLine > 0 {
-			comment.StartLine = msg.StartLine
-			comment.StartSide = "RIGHT"
-		}
-		m.session.PendingInlineComments = append(m.session.PendingInlineComments, comment)
-	}
-	m.diffViewer.SetPendingInlineComments(m.session.PendingInlineComments)
-	m.chatPanel.SetPendingCommentCount(len(m.session.PendingInlineComments))
+	comments, updated := upsertPendingComment(m.session.PendingInlineComments, msg)
+	m.session.PendingInlineComments = comments
+	m.syncPendingComments()
+
 	action := "added"
-	if found {
+	if updated {
 		action = "updated"
 	}
-	var target string
-	if msg.StartLine > 0 {
-		target = fmt.Sprintf("%s:%d-%d", msg.Path, msg.StartLine, msg.Line)
-	} else {
-		target = fmt.Sprintf("%s:%d", msg.Path, msg.Line)
-	}
 	clearCmd := m.statusBar.SetTemporaryMessage(
-		fmt.Sprintf("Comment %s on %s", action, target), 2*time.Second)
+		fmt.Sprintf("Comment %s on %s", action, formatCommentTarget(msg.Path, msg.StartLine, msg.Line)), 2*time.Second)
 	return m, clearCmd
+}
+
+// syncPendingComments propagates the session's pending comment pool to the
+// diff viewer and the review tab counter.
+func (m *App) syncPendingComments() {
+	m.diffViewer.SetPendingInlineComments(m.session.PendingInlineComments)
+	m.chatPanel.SetPendingCommentCount(len(m.session.PendingInlineComments))
+}
+
+// findPendingComment returns the index of the pending comment at
+// path:line:startLine, or -1.
+func findPendingComment(comments []github.ReviewCommentPayload, path string, line, startLine int) int {
+	for i, c := range comments {
+		if c.Path == path && c.Line == line && c.StartLine == startLine {
+			return i
+		}
+	}
+	return -1
+}
+
+// removePendingComment removes the pending comment at path:line:startLine,
+// reporting whether one was found.
+func removePendingComment(comments []github.ReviewCommentPayload, path string, line, startLine int) ([]github.ReviewCommentPayload, bool) {
+	i := findPendingComment(comments, path, line, startLine)
+	if i == -1 {
+		return comments, false
+	}
+	return append(comments[:i], comments[i+1:]...), true
+}
+
+// upsertPendingComment updates the body of an existing pending comment at the
+// message's target, or appends a new one. Reports whether an existing comment
+// was updated.
+func upsertPendingComment(comments []github.ReviewCommentPayload, msg InlineCommentAddMsg) ([]github.ReviewCommentPayload, bool) {
+	if i := findPendingComment(comments, msg.Path, msg.Line, msg.StartLine); i != -1 {
+		comments[i].Body = msg.Body
+		return comments, true
+	}
+
+	comment := github.ReviewCommentPayload{
+		Path: msg.Path,
+		Line: msg.Line,
+		Side: "RIGHT",
+		Body: msg.Body,
+	}
+	if msg.StartLine > 0 {
+		comment.StartLine = msg.StartLine
+		comment.StartSide = "RIGHT"
+	}
+	return append(comments, comment), false
+}
+
+// formatCommentTarget renders a comment location as path:line, or
+// path:start-end for multi-line ranges.
+func formatCommentTarget(path string, startLine, line int) string {
+	if startLine > 0 {
+		return fmt.Sprintf("%s:%d-%d", path, startLine, line)
+	}
+	return fmt.Sprintf("%s:%d", path, line)
 }
 
 // snapshotKnownPRs records all current PR keys in the known set.
@@ -869,21 +732,12 @@ func (m App) executeCommand(name string) (tea.Model, tea.Cmd) {
 		m.showAndFocusPanel(PanelRight)
 		return m, nil
 	case "toggle left":
-		if m.zoomed {
-			m.exitZoom()
-		}
 		m.togglePanel(PanelLeft)
 		return m, nil
 	case "toggle center":
-		if m.zoomed {
-			m.exitZoom()
-		}
 		m.togglePanel(PanelCenter)
 		return m, nil
 	case "toggle right":
-		if m.zoomed {
-			m.exitZoom()
-		}
 		m.togglePanel(PanelRight)
 		return m, nil
 	default:

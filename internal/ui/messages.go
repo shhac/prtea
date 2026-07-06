@@ -1,7 +1,6 @@
 package ui
 
 import (
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/shhac/prtea/internal/ai"
 	"github.com/shhac/prtea/internal/github"
 )
@@ -38,20 +37,14 @@ type PRReviewDecisionsMsg struct {
 
 // -- PR selection --
 
-// PRSelectedMsg is sent when the user selects a PR.
+// PRSelectedMsg is sent when the user selects a PR. Advance requests moving
+// focus to the diff viewer (the Enter binding).
 type PRSelectedMsg struct {
 	Owner   string
 	Repo    string
 	Number  int
 	HTMLURL string
-}
-
-// PRSelectedAndAdvanceMsg is sent when ENTER selects a PR and should advance focus to the diff viewer.
-type PRSelectedAndAdvanceMsg struct {
-	Owner   string
-	Repo    string
-	Number  int
-	HTMLURL string
+	Advance bool
 }
 
 // -- Diff / PR detail --
@@ -113,30 +106,6 @@ type CIRerunErrMsg struct {
 	Err      error
 }
 
-// -- PR actions --
-
-// PRApproveDoneMsg is sent when PR approval succeeds.
-type PRApproveDoneMsg struct {
-	PRNumber int
-}
-
-// PRApproveErrMsg is sent when PR approval fails.
-type PRApproveErrMsg struct {
-	PRNumber int
-	Err      error
-}
-
-// PRCloseDoneMsg is sent when PR close succeeds.
-type PRCloseDoneMsg struct {
-	PRNumber int
-}
-
-// PRCloseErrMsg is sent when PR close fails.
-type PRCloseErrMsg struct {
-	PRNumber int
-	Err      error
-}
-
 // -- Review submission --
 
 // ReviewAction represents the type of PR review to submit.
@@ -147,6 +116,50 @@ const (
 	ReviewComment
 	ReviewRequestChanges
 )
+
+// reviewActionMeta is the single source of truth for the three-valued review
+// concept: config/AI event strings, GitHub API events, and user-facing labels.
+var reviewActionMeta = map[ReviewAction]struct {
+	value    string // config value and ai.Action event string
+	apiEvent string // GitHub REST review event
+	label    string
+	progress string
+	past     string
+}{
+	ReviewApprove:        {"approve", "APPROVE", "Approve", "Approving", "Approved"},
+	ReviewComment:        {"comment", "COMMENT", "Comment", "Submitting comment on", "Commented on"},
+	ReviewRequestChanges: {"request_changes", "REQUEST_CHANGES", "Request Changes", "Requesting changes on", "Requested changes on"},
+}
+
+// Label returns the short user-facing name ("Approve").
+func (a ReviewAction) Label() string { return reviewActionMeta[a].label }
+
+// ProgressLabel returns the in-flight status prefix ("Approving").
+func (a ReviewAction) ProgressLabel() string { return reviewActionMeta[a].progress }
+
+// PastLabel returns the completed status prefix ("Approved").
+func (a ReviewAction) PastLabel() string { return reviewActionMeta[a].past }
+
+// APIEvent returns the GitHub REST review event ("APPROVE").
+func (a ReviewAction) APIEvent() string { return reviewActionMeta[a].apiEvent }
+
+// reviewActionFromValue converts a config/AI event string ("approve") to a
+// ReviewAction, reporting whether the value was recognized.
+func reviewActionFromValue(value string) (ReviewAction, bool) {
+	for action, meta := range reviewActionMeta {
+		if meta.value == value {
+			return action, true
+		}
+	}
+	return ReviewComment, false
+}
+
+// ParseReviewAction converts a config string to a ReviewAction, defaulting to
+// ReviewComment for unrecognized values.
+func ParseReviewAction(value string) ReviewAction {
+	action, _ := reviewActionFromValue(value)
+	return action
+}
 
 // ReviewSubmitMsg is emitted by the chat panel when the user submits a review.
 type ReviewSubmitMsg struct {
@@ -198,9 +211,11 @@ type AIEventMsg struct {
 }
 
 // AIActionRespondMsg is emitted by the chat panel when the user confirms or
-// dismisses a proposed action.
+// dismisses its pending proposed actions. The panel is the single owner of
+// pending-action state, so the actions travel with the message.
 type AIActionRespondMsg struct {
 	Approve bool
+	Actions []ai.Action
 }
 
 // AIActionResultMsg reports the outcome of executing a confirmed action.
@@ -284,12 +299,6 @@ type InlineCommentAddMsg struct {
 	StartLine int // non-zero for multi-line range comments
 }
 
-// PendingInlineComment is a user-authored inline review comment queued for
-// the next review submission.
-type PendingInlineComment struct {
-	github.ReviewCommentPayload
-}
-
 // -- Comment overlay --
 
 // ShowCommentOverlayMsg requests opening the comment view overlay.
@@ -300,7 +309,7 @@ type ShowCommentOverlayMsg struct {
 	DiffLines       []string // raw hunk lines for context display
 	TargetLineInCtx int      // index of target line within DiffLines
 	GHThreads       []ghCommentThread
-	PendingComments []PendingInlineComment
+	PendingComments []github.ReviewCommentPayload
 }
 
 // CommentOverlayClosedMsg signals the comment overlay was dismissed.
@@ -320,4 +329,4 @@ type InlineCommentReplyDoneMsg struct {
 // -- Internal streaming --
 
 // aiEventChan carries AIEventMsg values from the engine goroutine to the UI.
-type aiEventChan chan tea.Msg
+type aiEventChan chan AIEventMsg

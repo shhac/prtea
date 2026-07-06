@@ -2,7 +2,6 @@ package ui
 
 import (
 	"context"
-	"time"
 
 	"github.com/shhac/prtea/internal/ai"
 	"github.com/shhac/prtea/internal/github"
@@ -11,7 +10,6 @@ import (
 // GitHubService defines the GitHub operations used by the UI layer.
 // *github.Client satisfies this interface.
 type GitHubService interface {
-	GetUsername() string
 	GetPRsForReview(ctx context.Context) ([]github.PRItem, error)
 	GetMyPRs(ctx context.Context) ([]github.PRItem, error)
 	GetPRDetail(ctx context.Context, owner, repo string, number int) (*github.PRDetail, error)
@@ -22,7 +20,6 @@ type GitHubService interface {
 	GetReviews(ctx context.Context, owner, repo string, number int) (*github.ReviewSummary, error)
 	ApprovePR(ctx context.Context, owner, repo string, number int, body string) error
 	PostComment(ctx context.Context, owner, repo string, number int, body string) error
-	ClosePR(ctx context.Context, owner, repo string, number int) error
 	RequestChangesPR(ctx context.Context, owner, repo string, number int, body string) error
 	CommentReviewPR(ctx context.Context, owner, repo string, number int, body string) error
 	SubmitReviewWithComments(ctx context.Context, owner, repo string, number int, event string, body string, comments []github.ReviewCommentPayload) error
@@ -34,8 +31,8 @@ type GitHubService interface {
 
 // AIEngine defines the conversation operations used by the UI layer.
 // *ai.CodexEngine satisfies this interface; demo mode injects a fake.
+// Per-turn deadlines are carried by the caller's context.
 type AIEngine interface {
 	StartThread(ctx context.Context, input ai.ThreadInput) (<-chan ai.Event, error)
 	Send(ctx context.Context, threadID string, input ai.MessageInput) (<-chan ai.Event, error)
-	SetTimeout(d time.Duration)
 }

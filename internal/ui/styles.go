@@ -95,10 +95,7 @@ var (
 )
 
 // PR list styles
-var (
-	prTitleStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
-	prMetaStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
-)
+var ()
 
 // Panel style builders
 func panelStyle(focused bool, insertMode bool, width, height int) lipgloss.Style {
@@ -313,16 +310,6 @@ var (
 
 // Pre-computed severity styles for analysis file review comments (avoids
 // allocating a new lipgloss.Style on every call inside the review loop).
-var severityStyles = map[string]lipgloss.Style{
-	"critical":   lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("196")),
-	"warning":    lipgloss.NewStyle().Foreground(lipgloss.Color("214")),
-	"suggestion": lipgloss.NewStyle().Foreground(lipgloss.Color("33")),
-	"praise":     lipgloss.NewStyle().Foreground(lipgloss.Color("42")),
-}
-
-// defaultSeverityStyle is the fallback for unknown severity levels.
-var defaultSeverityStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
-
 // Dim italic style for metadata, "no newline" markers, unavailable content, etc.
 var dimItalicStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Italic(true)
 

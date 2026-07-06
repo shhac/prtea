@@ -2,24 +2,17 @@ package ai
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
-	"strings"
 )
 
-// CommandExecutor abstracts codex CLI subprocess execution.
-// The default implementation runs the real CLI binary;
-// tests and demo mode inject alternatives.
+// CommandExecutor abstracts codex CLI subprocess execution so tests can
+// inject a scripted fake.
 type CommandExecutor interface {
-	Start(ctx context.Context, args []string, opts ExecOptions) (*Process, error)
-}
-
-// ExecOptions controls working directory, environment, and stdin for the subprocess.
-type ExecOptions struct {
-	Dir   string
-	Env   []string
-	Stdin io.Reader
+	Start(ctx context.Context, args []string, stdin io.Reader) (*Process, error)
 }
 
 // Process represents a running codex CLI subprocess.
@@ -39,12 +32,10 @@ func NewCLIExecutor(codexPath string) *CLIExecutor {
 	return &CLIExecutor{Path: codexPath}
 }
 
-// Start launches the codex CLI with the given arguments and options.
-func (e *CLIExecutor) Start(ctx context.Context, args []string, opts ExecOptions) (*Process, error) {
+// Start launches the codex CLI with the given arguments and stdin.
+func (e *CLIExecutor) Start(ctx context.Context, args []string, stdin io.Reader) (*Process, error) {
 	cmd := exec.CommandContext(ctx, e.Path, args...)
-	cmd.Dir = opts.Dir
-	cmd.Env = opts.Env
-	cmd.Stdin = opts.Stdin
+	cmd.Stdin = stdin
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -57,7 +48,7 @@ func (e *CLIExecutor) Start(ctx context.Context, args []string, opts ExecOptions
 	}
 
 	if err := cmd.Start(); err != nil {
-		if isNotFound(err) {
+		if errors.Is(err, exec.ErrNotFound) || errors.Is(err, os.ErrNotExist) {
 			return nil, fmt.Errorf("codex CLI not found at %s: ensure 'codex' is installed", e.Path)
 		}
 		return nil, fmt.Errorf("failed to start codex: %w", err)
@@ -68,8 +59,4 @@ func (e *CLIExecutor) Start(ctx context.Context, args []string, opts ExecOptions
 		Stderr: stderr,
 		Wait:   cmd.Wait,
 	}, nil
-}
-
-func isNotFound(err error) bool {
-	return strings.Contains(err.Error(), "executable file not found")
 }

@@ -45,6 +45,11 @@ func (t ChatTabModel) HasPendingActions() bool {
 	return len(t.pendingActions) > 0
 }
 
+// PendingActions returns the proposed actions awaiting confirmation.
+func (t ChatTabModel) PendingActions() []ai.Action {
+	return t.pendingActions
+}
+
 // SetWaiting adds a user message and enters the waiting state.
 func (t *ChatTabModel) SetWaiting(msg string) {
 	t.messages = append(t.messages, ai.Message{Role: ai.RoleUser, Content: msg})

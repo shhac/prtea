@@ -49,7 +49,6 @@ type CommandModeModel struct {
 	filtered  []Command
 	selected  int
 	width     int
-	height    int
 	active    bool
 }
 
@@ -70,7 +69,6 @@ func NewCommandModeModel() CommandModeModel {
 // SetSize updates the overlay dimensions.
 func (m *CommandModeModel) SetSize(width, height int) {
 	m.width = width
-	m.height = height
 }
 
 // Open activates command mode. quick=true for Ctrl+P, quick=false for :.

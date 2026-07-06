@@ -139,8 +139,7 @@ func (m SettingsModel) IsVisible() bool {
 func (m *SettingsModel) SetSize(termWidth, termHeight int) {
 	m.width = termWidth
 	m.height = termHeight
-	_, innerH := m.innerDimensions()
-	innerW, _ := m.innerDimensions()
+	innerW, innerH := m.innerDimensions()
 	if !m.vpReady {
 		m.viewport = viewport.New(innerW, innerH)
 		m.vpReady = true

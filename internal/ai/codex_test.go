@@ -15,17 +15,28 @@ type fakeExecutor struct {
 	stderr  string
 	waitErr error
 
-	gotArgs []string
-	gotOpts ExecOptions
+	// blockWaitUntilCancel makes Wait block until the context is cancelled,
+	// simulating a hung codex process.
+	blockWaitUntilCancel bool
+
+	gotArgs  []string
+	gotStdin io.Reader
 }
 
-func (f *fakeExecutor) Start(_ context.Context, args []string, opts ExecOptions) (*Process, error) {
+func (f *fakeExecutor) Start(ctx context.Context, args []string, stdin io.Reader) (*Process, error) {
 	f.gotArgs = args
-	f.gotOpts = opts
+	f.gotStdin = stdin
+	wait := func() error { return f.waitErr }
+	if f.blockWaitUntilCancel {
+		wait = func() error {
+			<-ctx.Done()
+			return ctx.Err()
+		}
+	}
 	return &Process{
 		Stdout: io.NopCloser(strings.NewReader(f.stdout)),
 		Stderr: io.NopCloser(strings.NewReader(f.stderr)),
-		Wait:   func() error { return f.waitErr },
+		Wait:   wait,
 	}, nil
 }
 
@@ -58,7 +69,7 @@ const goldenStream = `{"type":"thread.started","thread_id":"019f382c-19a5-7e52-b
 
 func TestStartThreadParsesGoldenStream(t *testing.T) {
 	exec := &fakeExecutor{stdout: goldenStream}
-	engine := NewCodexEngine(exec, "gpt-5.5", "medium", time.Minute)
+	engine := NewCodexEngine(exec, "gpt-5.5", "medium")
 
 	ch, err := engine.StartThread(context.Background(), ThreadInput{
 		Owner: "o", Repo: "r", PRNumber: 1,
@@ -96,7 +107,7 @@ func TestStartThreadParsesGoldenStream(t *testing.T) {
 
 func TestStartThreadArgsAndStdin(t *testing.T) {
 	exec := &fakeExecutor{stdout: goldenStream}
-	engine := NewCodexEngine(exec, "gpt-5.5", "low", time.Minute)
+	engine := NewCodexEngine(exec, "gpt-5.5", "low")
 
 	ch, err := engine.StartThread(context.Background(), ThreadInput{
 		Owner: "o", Repo: "r", PRNumber: 7,
@@ -121,7 +132,7 @@ func TestStartThreadArgsAndStdin(t *testing.T) {
 		t.Errorf("last arg should be stdin sentinel, got %q", exec.gotArgs[len(exec.gotArgs)-1])
 	}
 
-	prompt, _ := io.ReadAll(exec.gotOpts.Stdin)
+	prompt, _ := io.ReadAll(exec.gotStdin)
 	for _, want := range []string{"THE DIFF", "what is going on", "prtea-action", "o/r #7"} {
 		if !strings.Contains(string(prompt), want) {
 			t.Errorf("stdin prompt missing %q", want)
@@ -131,7 +142,7 @@ func TestStartThreadArgsAndStdin(t *testing.T) {
 
 func TestStartThreadWithoutRepoSkipsGitCheck(t *testing.T) {
 	exec := &fakeExecutor{stdout: goldenStream}
-	engine := NewCodexEngine(exec, "gpt-5.5", "medium", time.Minute)
+	engine := NewCodexEngine(exec, "gpt-5.5", "medium")
 
 	ch, _ := engine.StartThread(context.Background(), ThreadInput{Message: "hi"})
 	collectEvents(t, ch)
@@ -147,7 +158,7 @@ func TestStartThreadWithoutRepoSkipsGitCheck(t *testing.T) {
 
 func TestSendResumesThread(t *testing.T) {
 	exec := &fakeExecutor{stdout: goldenStream}
-	engine := NewCodexEngine(exec, "gpt-5.5", "medium", time.Minute)
+	engine := NewCodexEngine(exec, "gpt-5.5", "medium")
 
 	ch, err := engine.Send(context.Background(), "thread-123", MessageInput{Message: "follow up"})
 	if err != nil {
@@ -163,7 +174,7 @@ func TestSendResumesThread(t *testing.T) {
 		t.Errorf("resume must not pass --sandbox: %s", args)
 	}
 
-	prompt, _ := io.ReadAll(exec.gotOpts.Stdin)
+	prompt, _ := io.ReadAll(exec.gotStdin)
 	if string(prompt) != "follow up" {
 		t.Errorf("stdin = %q, want bare message", string(prompt))
 	}
@@ -176,7 +187,7 @@ func TestActionProposalEmittedFromFinalMessage(t *testing.T) {
 {"type":"turn.completed","usage":{"input_tokens":1,"cached_input_tokens":0,"output_tokens":2}}
 `
 	exec := &fakeExecutor{stdout: stream}
-	engine := NewCodexEngine(exec, "gpt-5.5", "medium", time.Minute)
+	engine := NewCodexEngine(exec, "gpt-5.5", "medium")
 
 	ch, _ := engine.StartThread(context.Background(), ThreadInput{Message: "post lgtm"})
 	events := collectEvents(t, ch)
@@ -203,7 +214,7 @@ func TestTurnFailedEmitsError(t *testing.T) {
 {"type":"turn.failed","error":{"message":"quota exceeded"}}
 `
 	exec := &fakeExecutor{stdout: stream, waitErr: errors.New("exit status 1")}
-	engine := NewCodexEngine(exec, "gpt-5.5", "medium", time.Minute)
+	engine := NewCodexEngine(exec, "gpt-5.5", "medium")
 
 	ch, _ := engine.StartThread(context.Background(), ThreadInput{Message: "hi"})
 	events := collectEvents(t, ch)
@@ -219,9 +230,27 @@ func TestTurnFailedEmitsError(t *testing.T) {
 	}
 }
 
+func TestTimeoutSurfacesAsTimedOut(t *testing.T) {
+	exec := &fakeExecutor{stdout: "", blockWaitUntilCancel: true}
+	engine := NewCodexEngine(exec, "gpt-5.5", "medium")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+
+	ch, err := engine.StartThread(ctx, ThreadInput{Message: "hi"})
+	if err != nil {
+		t.Fatalf("StartThread: %v", err)
+	}
+	events := collectEvents(t, ch)
+
+	if len(events) != 1 || events[0].Kind != EventError || events[0].Text != "codex timed out" {
+		t.Fatalf("events = %+v, want single 'codex timed out' error", events)
+	}
+}
+
 func TestProcessErrorSurfacesStderr(t *testing.T) {
 	exec := &fakeExecutor{stdout: "", stderr: "codex: something broke\n", waitErr: errors.New("exit status 2")}
-	engine := NewCodexEngine(exec, "gpt-5.5", "medium", time.Minute)
+	engine := NewCodexEngine(exec, "gpt-5.5", "medium")
 
 	ch, _ := engine.StartThread(context.Background(), ThreadInput{Message: "hi"})
 	events := collectEvents(t, ch)

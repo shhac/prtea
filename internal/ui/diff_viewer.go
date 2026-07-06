@@ -24,12 +24,11 @@ type DiffViewerModel struct {
 	ready     bool
 
 	// Diff data
-	files          []github.PRFile
-	fileOffsets    []int // viewport line index where each file header starts
-	currentFileIdx int
-	loading        bool
-	prNumber       int
-	err            error
+	files       []github.PRFile
+	fileOffsets []int // viewport line index where each file header starts
+	loading     bool
+	prNumber    int
+	err         error
 
 	// Hunk navigation and selection
 	hunks          []DiffHunk   // all parsed hunks across all files
@@ -54,7 +53,7 @@ type DiffViewerModel struct {
 	ghCommentThreads map[string][]ghCommentThread // "path:line" → threaded comments
 
 	// Pending inline comment state (user + AI drafts)
-	pendingCommentsByFileLine map[string][]PendingInlineComment // "path:line" → comments
+	pendingCommentsByFileLine map[string][]github.ReviewCommentPayload // "path:line" → comments
 
 	// Comment input mode
 	commentMode            bool
@@ -426,7 +425,6 @@ func (m *DiffViewerModel) SetLoading(prNumber int) {
 	m.commentInput.Blur()
 	m.ghCommentThreads = nil
 	m.pendingCommentsByFileLine = nil
-	m.currentFileIdx = 0
 	m.err = nil
 	m.prTitle = ""
 	m.prBody = ""
@@ -445,7 +443,6 @@ func (m *DiffViewerModel) SetDiff(files []github.PRFile) {
 	m.loading = false
 	m.files = files
 	m.err = nil
-	m.currentFileIdx = 0
 	m.focusedHunkIdx = 0
 	m.cursorLine = 0
 	m.selectionAnchor = -1

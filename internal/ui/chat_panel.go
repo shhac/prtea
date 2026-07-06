@@ -262,6 +262,16 @@ func (m *ChatPanelModel) SetSize(width, height int) {
 	m.refreshViewport()
 }
 
+// cycleTab moves the active tab by delta, clamped to the tab range.
+func (m *ChatPanelModel) cycleTab(delta int) {
+	next := m.activeTab + ChatTab(delta)
+	if next < ChatTabChat || next > ChatTabReview {
+		return
+	}
+	m.activeTab = next
+	m.refreshViewport()
+}
+
 // ExitInsertMode leaves insert mode, e.g. when an action proposal needs y/n.
 func (m *ChatPanelModel) ExitInsertMode() {
 	m.chatMode = ChatModeNormal
@@ -348,26 +358,23 @@ func (m ChatPanelModel) updateInsertMode(msg tea.KeyMsg) (ChatPanelModel, tea.Cm
 func (m ChatPanelModel) updateNormalMode(msg tea.KeyMsg) (ChatPanelModel, tea.Cmd) {
 	// Pending action confirmation takes precedence on the chat tab.
 	if m.activeTab == ChatTabChat && m.chat.HasPendingActions() {
+		actions := m.chat.PendingActions()
 		switch msg.String() {
 		case "y", "Y":
-			return m, func() tea.Msg { return AIActionRespondMsg{Approve: true} }
+			m.chat.ClearPendingActions()
+			return m, func() tea.Msg { return AIActionRespondMsg{Approve: true, Actions: actions} }
 		case "n", "N", "esc":
-			return m, func() tea.Msg { return AIActionRespondMsg{Approve: false} }
+			m.chat.ClearPendingActions()
+			return m, func() tea.Msg { return AIActionRespondMsg{Approve: false, Actions: actions} }
 		}
 	}
 
 	switch {
 	case key.Matches(msg, ChatKeys.PrevTab):
-		if m.activeTab > ChatTabChat {
-			m.activeTab--
-		}
-		m.refreshViewport()
+		m.cycleTab(-1)
 		return m, nil
 	case key.Matches(msg, ChatKeys.NextTab):
-		if m.activeTab < ChatTabReview {
-			m.activeTab++
-		}
-		m.refreshViewport()
+		m.cycleTab(1)
 		return m, nil
 	case key.Matches(msg, ChatKeys.NewChat):
 		if m.activeTab == ChatTabChat {
@@ -394,16 +401,10 @@ func (m ChatPanelModel) updateReviewTab(msg tea.KeyMsg) (ChatPanelModel, tea.Cmd
 	if !m.review.IsFocused() {
 		switch {
 		case key.Matches(msg, ChatKeys.PrevTab):
-			if m.activeTab > ChatTabChat {
-				m.activeTab--
-			}
-			m.refreshViewport()
+			m.cycleTab(-1)
 			return m, nil
 		case key.Matches(msg, ChatKeys.NextTab):
-			if m.activeTab < ChatTabReview {
-				m.activeTab++
-			}
-			m.refreshViewport()
+			m.cycleTab(1)
 			return m, nil
 		}
 	}

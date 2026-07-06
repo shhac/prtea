@@ -3,7 +3,6 @@ package ui
 import (
 	"context"
 
-	"github.com/shhac/prtea/internal/ai"
 	"github.com/shhac/prtea/internal/github"
 )
 
@@ -18,13 +17,13 @@ type PRSession struct {
 	HTMLURL string
 
 	// PR data
-	DiffFiles             []github.PRFile        // stored for AI context
-	PendingInlineComments []PendingInlineComment // unified pool of pending comments
+	DiffFiles             []github.PRFile               // stored for AI context
+	PendingInlineComments []github.ReviewCommentPayload // pending inline comments for the next review
 
-	// AI thread state. The display transcript lives in the chat panel and is
-	// persisted alongside the thread ID via the thread store.
-	ThreadID       string      // codex session ID ("" until the first turn starts one)
-	PendingActions []ai.Action // proposed actions awaiting user confirmation
+	// AI thread state. The display transcript and any pending action
+	// proposals live in the chat panel; the transcript is persisted alongside
+	// the thread ID via the thread store.
+	ThreadID string // codex session ID ("" until the first turn starts one)
 
 	// Data cached for AI context
 	Comments       []github.Comment

@@ -8,7 +8,6 @@ import (
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/shhac/prtea/internal/ai"
 	"github.com/shhac/prtea/internal/config"
 )
 
@@ -89,10 +88,7 @@ func (m App) handlePRListMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmds...)
 
 	case PRSelectedMsg:
-		return m.selectPR(msg.Owner, msg.Repo, msg.Number, msg.HTMLURL, false)
-
-	case PRSelectedAndAdvanceMsg:
-		return m.selectPR(msg.Owner, msg.Repo, msg.Number, msg.HTMLURL, true)
+		return m.selectPR(msg.Owner, msg.Repo, msg.Number, msg.HTMLURL, msg.Advance)
 
 	case list.FilterMatchesMsg:
 		var cmd tea.Cmd
@@ -212,107 +208,6 @@ func (m App) handleDiffMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// -- AI turn handlers --
-
-// handleAIEvent processes one engine event from the in-flight turn.
-func (m App) handleAIEvent(msg AIEventMsg) (tea.Model, tea.Cmd) {
-	// A freshly created thread ID is persisted even if the user has moved on
-	// to another PR — otherwise the next message would start a new thread.
-	if msg.Event.Kind == ai.EventThreadStarted {
-		m.recordThreadID(msg.Owner, msg.Repo, msg.PRNumber, msg.Event.ThreadID)
-	}
-	if m.session == nil || m.session.AIEventCh == nil || !m.session.MatchesPR(msg.PRNumber) {
-		return m, nil
-	}
-
-	switch msg.Event.Kind {
-	case ai.EventThinking:
-		m.chatPanel.AddActivity("· " + firstLine(msg.Event.Text))
-
-	case ai.EventCommandStarted:
-		m.chatPanel.AddActivity("▸ " + displayCommand(msg.Event.Command))
-
-	case ai.EventCommandCompleted:
-		if msg.Event.ExitCode != 0 {
-			m.chatPanel.AddActivity(fmt.Sprintf("▸ %s (exit %d)", displayCommand(msg.Event.Command), msg.Event.ExitCode))
-		}
-
-	case ai.EventMessage:
-		m.chatPanel.AddResponse(msg.Event.Text)
-
-	case ai.EventActionProposal:
-		m.session.PendingActions = msg.Event.Actions
-		m.chatPanel.SetPendingActions(msg.Event.Actions)
-		// Leave insert mode so y/n confirm keys work immediately.
-		m.chatPanel.ExitInsertMode()
-		m.setMode(ModeNavigation)
-
-	case ai.EventError:
-		m.chatPanel.SetChatError(msg.Event.Text)
-		m.session.CancelAITurn()
-		m.persistThread()
-		return m, nil
-
-	case ai.EventDone:
-		m.chatPanel.SetTurnDone()
-		m.session.CancelAITurn()
-		m.persistThread()
-		return m, nil
-	}
-
-	return m, listenForStream(m.session.AIEventCh)
-}
-
-// handleActionRespond executes or dismisses the pending proposed actions.
-func (m App) handleActionRespond(approve bool) (tea.Model, tea.Cmd) {
-	if m.session == nil || len(m.session.PendingActions) == 0 {
-		return m, nil
-	}
-	actions := m.session.PendingActions
-	m.session.PendingActions = nil
-	m.chatPanel.ClearPendingActions()
-
-	if !approve {
-		m.chatPanel.AddActivity("✗ Action dismissed")
-		m.persistThread()
-		return m, nil
-	}
-	if m.ghClient == nil {
-		m.chatPanel.SetChatError("GitHub client not ready")
-		return m, nil
-	}
-
-	cmds := make([]tea.Cmd, len(actions))
-	for i, action := range actions {
-		cmds[i] = executeActionCmd(m.ghClient, m.session.Owner, m.session.Repo, m.session.Number, action)
-	}
-	return m, tea.Batch(cmds...)
-}
-
-// handleActionResult records the outcome of an executed action.
-func (m App) handleActionResult(msg AIActionResultMsg) (tea.Model, tea.Cmd) {
-	if msg.Err != nil {
-		m.chatPanel.AddActivity("✗ " + msg.Description + " failed")
-		m.persistThread()
-		clearCmd := m.statusBar.SetTemporaryMessage(
-			fmt.Sprintf("✗ %s: %s", msg.Description, formatUserError(msg.Err.Error())), 5*time.Second)
-		return m, clearCmd
-	}
-
-	m.chatPanel.AddActivity("✓ " + msg.Description)
-	m.persistThread()
-	clearCmd := m.statusBar.SetTemporaryMessage("✓ "+msg.Description, 3*time.Second)
-	var refreshCmds []tea.Cmd
-	refreshCmds = append(refreshCmds, clearCmd)
-	if m.session != nil && m.ghClient != nil {
-		refreshCmds = append(refreshCmds,
-			fetchCommentsCmd(m.ghClient, m.session.Owner, m.session.Repo, m.session.Number),
-			fetchReviewsCmd(m.ghClient, m.session.Owner, m.session.Repo, m.session.Number),
-		)
-	}
-	return m, tea.Batch(refreshCmds...)
-}
-
 // -- Chat domain handlers --
 
 // handleChatMsg handles chat streaming, comments, and inline comment management.
@@ -323,7 +218,6 @@ func (m App) handleChatMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.session != nil {
 			m.session.CancelAITurn()
 			m.session.ThreadID = ""
-			m.session.PendingActions = nil
 			_ = m.threadStore.Delete(m.session.Owner, m.session.Repo, m.session.Number)
 		}
 		clearCmd := m.statusBar.SetTemporaryMessage("Chat cleared", 2*time.Second)
@@ -336,7 +230,7 @@ func (m App) handleChatMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleAIEvent(msg)
 
 	case AIActionRespondMsg:
-		return m.handleActionRespond(msg.Approve)
+		return m.handleActionRespond(msg)
 
 	case AIActionResultMsg:
 		return m.handleActionResult(msg)
@@ -393,13 +287,7 @@ func (m App) handleReviewMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !m.session.MatchesPR(msg.PRNumber) {
 			return m, nil
 		}
-		actionLabels := map[ReviewAction]string{
-			ReviewApprove:        "Approved",
-			ReviewComment:        "Commented on",
-			ReviewRequestChanges: "Requested changes on",
-		}
-		label := actionLabels[msg.Action]
-		clearCmd := m.statusBar.SetTemporaryMessage(fmt.Sprintf("✓ %s PR #%d", label, msg.PRNumber), 3*time.Second)
+		clearCmd := m.statusBar.SetTemporaryMessage(fmt.Sprintf("✓ %s PR #%d", msg.Action.PastLabel(), msg.PRNumber), 3*time.Second)
 		m.chatPanel.SetReviewSubmitted(nil)
 		// Clear pending comments — they've been submitted
 		m.session.PendingInlineComments = nil
@@ -414,30 +302,6 @@ func (m App) handleReviewMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 		clearCmd := m.statusBar.SetTemporaryMessage(fmt.Sprintf("✗ Review failed: %s", msg.Err), 5*time.Second)
 		return m, clearCmd
 
-	case PRApproveDoneMsg:
-		if !m.session.MatchesPR(msg.PRNumber) {
-			return m, nil
-		}
-		clearCmd := m.statusBar.SetTemporaryMessage(fmt.Sprintf("✓ Approved PR #%d", msg.PRNumber), 3*time.Second)
-		return m, tea.Batch(clearCmd, fetchReviewsCmd(m.ghClient, m.session.Owner, m.session.Repo, m.session.Number))
-
-	case PRApproveErrMsg:
-		clearCmd := m.statusBar.SetTemporaryMessage(fmt.Sprintf("✗ Approve failed: %s", msg.Err), 5*time.Second)
-		return m, clearCmd
-
-	case PRCloseDoneMsg:
-		if !m.session.MatchesPR(msg.PRNumber) {
-			return m, nil
-		}
-		clearCmd := m.statusBar.SetTemporaryMessage(fmt.Sprintf("✓ Closed PR #%d", msg.PRNumber), 3*time.Second)
-		if m.ghClient != nil {
-			return m, tea.Batch(clearCmd, fetchPRsCmd(m.ghClient))
-		}
-		return m, clearCmd
-
-	case PRCloseErrMsg:
-		clearCmd := m.statusBar.SetTemporaryMessage(fmt.Sprintf("✗ Close failed: %s", msg.Err), 5*time.Second)
-		return m, clearCmd
 	}
 	return m, nil
 }
@@ -448,29 +312,12 @@ func (m App) handleReviewMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m App) handleConfigMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case ConfigChangedMsg:
-		if m.settingsPanel.IsDirty() {
-			cfg := m.settingsPanel.Config()
-			m.appConfig = cfg
-			_ = config.Save(cfg)
-			var cmds []tea.Cmd
-			wasEnabled := m.pollEnabled
-			m.pollEnabled = cfg.PollEnabled
-			m.pollInterval = cfg.PollIntervalDuration()
-			m.notifyEnabled = cfg.NotificationsEnabled
-			if !wasEnabled && m.pollEnabled && m.pollInterval > 0 && m.prList.state == stateLoaded {
-				cmds = append(cmds, pollTickCmd(m.pollInterval))
-			}
-			m.chatPanel.UpdateDefaultReviewAction(cfg.DefaultReviewAction)
-			m.collapseThreshold = cfg.CollapseThreshold
-			if m.ghClient != nil {
-				m.ghClient.SetFetchLimit(cfg.PRFetchLimit)
-			}
-			if m.aiEngine != nil {
-				m.aiEngine.SetTimeout(cfg.AITimeoutDuration())
-			}
-			return m, tea.Batch(cmds...)
+		if !m.settingsPanel.IsDirty() {
+			return m, nil
 		}
-		return m, nil
+		cfg := m.settingsPanel.Config()
+		_ = config.Save(cfg)
+		return m, m.applyConfig(cfg)
 
 	case HelpClosedMsg:
 		m.setMode(ModeNavigation)
@@ -511,6 +358,26 @@ func (m App) handleConfigMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	return m, nil
+}
+
+// applyConfig propagates a changed config to the subsystems that consume it.
+func (m *App) applyConfig(cfg *config.Config) tea.Cmd {
+	m.appConfig = cfg
+
+	var cmds []tea.Cmd
+	wasEnabled := m.pollEnabled
+	m.pollEnabled = cfg.PollEnabled
+	m.pollInterval = cfg.PollIntervalDuration()
+	m.notifyEnabled = cfg.NotificationsEnabled
+	if !wasEnabled && m.pollEnabled && m.pollInterval > 0 && m.prList.state == stateLoaded {
+		cmds = append(cmds, pollTickCmd(m.pollInterval))
+	}
+	m.chatPanel.UpdateDefaultReviewAction(cfg.DefaultReviewAction)
+	m.collapseThreshold = cfg.CollapseThreshold
+	if m.ghClient != nil {
+		m.ghClient.SetFetchLimit(cfg.PRFetchLimit)
+	}
+	return tea.Batch(cmds...)
 }
 
 // -- Key handling --
@@ -601,23 +468,14 @@ func (m App) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case key.Matches(msg, GlobalKeys.ToggleLeft):
-		if m.zoomed {
-			m.exitZoom()
-		}
 		m.togglePanel(PanelLeft)
 		return m, nil
 
 	case key.Matches(msg, GlobalKeys.ToggleCenter):
-		if m.zoomed {
-			m.exitZoom()
-		}
 		m.togglePanel(PanelCenter)
 		return m, nil
 
 	case key.Matches(msg, GlobalKeys.ToggleRight):
-		if m.zoomed {
-			m.exitZoom()
-		}
 		m.togglePanel(PanelRight)
 		return m, nil
 
