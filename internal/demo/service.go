@@ -75,6 +75,19 @@ func (s *Service) GetInlineComments(_ context.Context, _, _ string, number int) 
 	return s.inline[number], nil
 }
 
+// GetReviewThreadResolution marks every demo thread that has a reply as
+// resolved, so the resolution UI is visible in demo mode.
+func (s *Service) GetReviewThreadResolution(_ context.Context, _, _ string, number int) (map[int64]bool, error) {
+	resolution := make(map[int64]bool)
+	for _, c := range s.inline[number] {
+		if c.InReplyToID != 0 {
+			resolution[c.InReplyToID] = true
+			resolution[c.ID] = true
+		}
+	}
+	return resolution, nil
+}
+
 func (s *Service) GetCIStatus(_ context.Context, _, _ string, _ string, number int) (*github.CIStatus, error) {
 	if ci, ok := s.ci[number]; ok {
 		return ci, nil

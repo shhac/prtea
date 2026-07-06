@@ -321,6 +321,9 @@ func (m CommentOverlayModel) renderThreadContent() string {
 		// Root
 		header := commentBoxHeaderStyle.Render("💬 @"+t.Root.Author.Login) +
 			commentBoxMetaStyle.Render(" · "+t.Root.CreatedAt.Format("Jan 2 15:04"))
+		if t.Root.Resolved {
+			header += resolvedMarkerStyle.Render(" · ✓ resolved")
+		}
 		b.WriteString(header)
 		b.WriteString("\n")
 		b.WriteString(wordWrap(t.Root.Body, innerW))

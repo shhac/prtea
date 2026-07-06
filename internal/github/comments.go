@@ -114,3 +114,63 @@ func (c *Client) GetInlineComments(ctx context.Context, owner, repo string, numb
 
 	return comments, nil
 }
+
+// reviewThreadsQuery fetches thread resolution state, which the REST comments
+// API does not expose. Covers the first 100 threads x 100 comments — beyond
+// that, resolution simply isn't marked.
+const reviewThreadsQuery = `query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      reviewThreads(first: 100) {
+        nodes {
+          isResolved
+          comments(first: 100) { nodes { databaseId } }
+        }
+      }
+    }
+  }
+}`
+
+// ghReviewThreads is the JSON shape of the reviewThreadsQuery response.
+type ghReviewThreads struct {
+	Data struct {
+		Repository struct {
+			PullRequest struct {
+				ReviewThreads struct {
+					Nodes []struct {
+						IsResolved bool `json:"isResolved"`
+						Comments   struct {
+							Nodes []struct {
+								DatabaseID int64 `json:"databaseId"`
+							} `json:"nodes"`
+						} `json:"comments"`
+					} `json:"nodes"`
+				} `json:"reviewThreads"`
+			} `json:"pullRequest"`
+		} `json:"repository"`
+	} `json:"data"`
+}
+
+// GetReviewThreadResolution returns a map of inline comment ID → whether its
+// review thread is resolved.
+func (c *Client) GetReviewThreadResolution(ctx context.Context, owner, repo string, number int) (map[int64]bool, error) {
+	var data ghReviewThreads
+	err := c.ghJSON(ctx, &data,
+		"api", "graphql",
+		"-f", "query="+reviewThreadsQuery,
+		"-F", "owner="+owner,
+		"-F", "name="+repo,
+		"-F", fmt.Sprintf("number=%d", number),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch review threads for PR #%d: %w", number, err)
+	}
+
+	resolution := make(map[int64]bool)
+	for _, thread := range data.Data.Repository.PullRequest.ReviewThreads.Nodes {
+		for _, comment := range thread.Comments.Nodes {
+			resolution[comment.DatabaseID] = thread.IsResolved
+		}
+	}
+	return resolution, nil
+}

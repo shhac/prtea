@@ -789,6 +789,13 @@ var inlineComments = map[int][]github.InlineComment{
 			Path:      "Services/OrderService.cs", Line: 16, Side: "RIGHT",
 		},
 		{
+			ID: 5014, Author: userDave,
+			Body:      "Good call — switched to `IOptions<OrderServiceOptions>` in the latest push.",
+			CreatedAt: baseTime.Add(-20 * time.Hour),
+			Path:      "Services/OrderService.cs", Line: 16, Side: "RIGHT",
+			InReplyToID: 5011,
+		},
+		{
 			ID: 5012, Author: userEve,
 			Body:      "Should we wrap `ReserveItems` and `Charge` in a transaction? If payment fails after reservation, we'd have orphaned reservations.",
 			CreatedAt: baseTime.Add(-24 * time.Hour),

@@ -220,9 +220,9 @@ func (m *ChatPanelModel) ClearReview() {
 	m.review.Clear()
 }
 
-// SetPendingCommentCount sets the number of pending inline comments.
-func (m *ChatPanelModel) SetPendingCommentCount(n int) {
-	m.review.SetPendingCommentCount(n)
+// SetPendingComments passes the draft inline comment basket to the review tab.
+func (m *ChatPanelModel) SetPendingComments(comments []github.ReviewCommentPayload) {
+	m.review.SetPendingComments(comments)
 }
 
 // SetReviewSubmitted clears the submitting state. On success, also resets the form.

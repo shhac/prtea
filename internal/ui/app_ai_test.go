@@ -41,6 +41,9 @@ func (f *fakeGitHubService) GetComments(context.Context, string, string, int) ([
 func (f *fakeGitHubService) GetInlineComments(context.Context, string, string, int) ([]github.InlineComment, error) {
 	return nil, nil
 }
+func (f *fakeGitHubService) GetReviewThreadResolution(context.Context, string, string, int) (map[int64]bool, error) {
+	return nil, nil
+}
 func (f *fakeGitHubService) GetCIStatus(context.Context, string, string, string, int) (*github.CIStatus, error) {
 	return nil, nil
 }
@@ -350,7 +353,10 @@ func collectBatchMsgs(t *testing.T, cmd tea.Cmd) {
 func TestBuildThreadContext(t *testing.T) {
 	files := []github.PRFile{{Filename: "a.go", Patch: "+hello"}}
 	comments := []github.Comment{{Body: "top-level note"}}
-	inline := []github.InlineComment{{ID: 4242, Path: "a.go", Line: 3, Body: "inline note"}}
+	inline := []github.InlineComment{
+		{ID: 4242, Path: "a.go", Line: 3, Body: "inline note"},
+		{ID: 4243, Path: "a.go", Line: 9, Body: "settled note", Resolved: true},
+	}
 
 	ctx := buildThreadContext("My PR", files, comments, inline, "selected hunk text")
 
@@ -358,6 +364,12 @@ func TestBuildThreadContext(t *testing.T) {
 		if !strings.Contains(ctx, want) {
 			t.Errorf("context missing %q", want)
 		}
+	}
+	if !strings.Contains(ctx, "4243 — a.go:9") || !strings.Contains(ctx, "[resolved]") {
+		t.Error("context missing resolved-thread tag")
+	}
+	if strings.Contains(ctx, "4242 — a.go:3 — "+""+" [resolved]") {
+		t.Error("unresolved comment wrongly tagged")
 	}
 }
 

@@ -414,9 +414,12 @@ func (m *DiffViewerModel) renderGHCommentThread(t ghCommentThread, highlighted b
 		boxInnerWidth = 10
 	}
 
-	// Header: 💬 @author · Jan 2 15:04
+	// Header: 💬 @author · Jan 2 15:04 (· ✓ resolved)
 	header := commentBoxHeaderStyle.Render("💬 @"+t.Root.Author.Login) +
 		commentBoxMetaStyle.Render(" · "+t.Root.CreatedAt.Format("Jan 2 15:04"))
+	if t.Root.Resolved {
+		header += resolvedMarkerStyle.Render(" · ✓ resolved")
+	}
 
 	// Build body: root body + replies
 	var body strings.Builder

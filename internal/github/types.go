@@ -122,4 +122,5 @@ type InlineComment struct {
 	Side        string // "LEFT", "RIGHT"
 	InReplyToID int64
 	Outdated    bool
+	Resolved    bool // thread resolution state (root comments only)
 }

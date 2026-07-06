@@ -15,10 +15,10 @@ Three-panel TUI built with [Bubbletea](https://github.com/charmbracelet/bubblete
 - **Live activity feed** — see the commands and reasoning the agent runs while it works, message by message
 - **Safe by design** — the agent runs in a read-only sandbox with no network; GitHub actions it proposes (post a comment, reply, submit a review) execute only after you confirm them in the TUI
 - **Hunk selection** — select specific diff hunks to focus the AI conversation on what matters
-- **Review submission** — approve, request changes, or leave review comments with an integrated Review tab
+- **Review basket** — draft inline comments on diff lines with `c`, see them queued in the Review tab, and submit them together with your verdict as one review
 - **CI status** — dedicated tab showing check results grouped by status
 - **Review status** — per-reviewer approval breakdown with visual badges
-- **Comments** — read and post PR comments with full markdown rendering
+- **Comments** — read and post PR comments with full markdown rendering; review threads show their resolved state
 - **Custom prompts** — per-repo review instructions for tailored AI context
 - **Search in diff** — `/` to search, `n`/`N` to navigate matches with highlighting
 - **Command palette** — `Ctrl+P` for quick commands, `:` for full mode with autocomplete

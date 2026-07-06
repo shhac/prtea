@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/shhac/prtea/internal/github"
 )
 
 func TestReviewTab_ParseDefault(t *testing.T) {
@@ -50,7 +51,7 @@ func TestReviewTab_Clear(t *testing.T) {
 	// Put the tab into a messy state
 	tab.action = ReviewRequestChanges
 	tab.submitting = true
-	tab.pendingCount = 5
+	tab.pendingComments = []github.ReviewCommentPayload{{Path: "a.go", Line: 1, Body: "x"}}
 	tab.textArea.SetValue("some text")
 
 	tab.Clear()
@@ -61,8 +62,8 @@ func TestReviewTab_Clear(t *testing.T) {
 	if tab.submitting {
 		t.Error("submitting should be false")
 	}
-	if tab.pendingCount != 0 {
-		t.Errorf("pendingCount = %d", tab.pendingCount)
+	if len(tab.pendingComments) != 0 {
+		t.Errorf("pendingComments = %v", tab.pendingComments)
 	}
 	if tab.textArea.Value() != "" {
 		t.Errorf("textArea value = %q", tab.textArea.Value())

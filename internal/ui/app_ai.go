@@ -316,9 +316,13 @@ func buildThreadContext(title string, files []github.PRFile, comments []github.C
 	}
 
 	if len(inline) > 0 {
-		b.WriteString("\nInline review comments (id — file:line — author):\n")
+		b.WriteString("\nInline review comments (id — file:line — author; [resolved] marks settled threads):\n")
 		for _, c := range inline {
-			fmt.Fprintf(&b, "- %d — %s:%d — %s: %s\n", c.ID, c.Path, c.Line, c.Author.Login, c.Body)
+			status := ""
+			if c.Resolved {
+				status = " [resolved]"
+			}
+			fmt.Fprintf(&b, "- %d — %s:%d — %s%s: %s\n", c.ID, c.Path, c.Line, c.Author.Login, status, c.Body)
 		}
 	}
 

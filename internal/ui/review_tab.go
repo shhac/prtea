@@ -7,6 +7,7 @@ import (
 	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/shhac/prtea/internal/github"
 )
 
 // ReviewTabModel manages the review submission tab state and rendering.
@@ -18,8 +19,8 @@ type ReviewTabModel struct {
 	submitting    bool
 	defaultAction ReviewAction
 
-	// Pending inline comment count (set by app)
-	pendingCount int
+	// Pending inline comments queued for submission (set by app)
+	pendingComments []github.ReviewCommentPayload
 }
 
 // NewReviewTabModel creates a ReviewTabModel with default state.
@@ -59,7 +60,7 @@ func (t *ReviewTabModel) parseDefault(action string) {
 func (t *ReviewTabModel) Clear() {
 	t.resetForm()
 	t.submitting = false
-	t.pendingCount = 0
+	t.pendingComments = nil
 }
 
 // resetForm restores the form to its default state.
@@ -71,9 +72,9 @@ func (t *ReviewTabModel) resetForm() {
 	t.textArea.Blur()
 }
 
-// SetPendingCommentCount sets the number of pending inline comments.
-func (t *ReviewTabModel) SetPendingCommentCount(n int) {
-	t.pendingCount = n
+// SetPendingComments stores the draft inline comments queued for submission.
+func (t *ReviewTabModel) SetPendingComments(comments []github.ReviewCommentPayload) {
+	t.pendingComments = comments
 }
 
 // SetSubmitted clears the submitting state. On success, also resets the form.
@@ -197,16 +198,30 @@ func (t ReviewTabModel) Update(msg tea.KeyMsg) (ReviewTabModel, tea.Cmd) {
 func (t ReviewTabModel) Render(width int, spinnerView string) string {
 	var b strings.Builder
 
-	// Pending inline comment count
-	if t.pendingCount > 0 {
-		countText := fmt.Sprintf("📝 %d pending inline comment", t.pendingCount)
-		if t.pendingCount != 1 {
+	// Pending inline comment basket
+	if n := len(t.pendingComments); n > 0 {
+		countText := fmt.Sprintf("📝 %d pending inline comment", n)
+		if n != 1 {
 			countText += "s"
 		}
 		countText += " will be submitted"
 		b.WriteString(lipgloss.NewStyle().
 			Foreground(lipgloss.Color("214")).
 			Render(countText))
+		b.WriteString("\n")
+		for _, c := range t.pendingComments {
+			target := formatCommentTarget(c.Path, c.StartLine, c.Line)
+			body := firstLine(c.Body)
+			entry := fmt.Sprintf("  • %s — %s", target, body)
+			b.WriteString(lipgloss.NewStyle().
+				Foreground(lipgloss.Color("244")).
+				Render(truncateLine(entry, width)))
+			b.WriteString("\n")
+		}
+		b.WriteString(lipgloss.NewStyle().
+			Foreground(lipgloss.Color("240")).
+			Italic(true).
+			Render("  edit or delete with 'c' on the diff line"))
 		b.WriteString("\n\n")
 	}
 

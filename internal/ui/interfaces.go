@@ -16,6 +16,7 @@ type GitHubService interface {
 	GetPRFiles(ctx context.Context, owner, repo string, number int) ([]github.PRFile, error)
 	GetComments(ctx context.Context, owner, repo string, number int) ([]github.Comment, error)
 	GetInlineComments(ctx context.Context, owner, repo string, number int) ([]github.InlineComment, error)
+	GetReviewThreadResolution(ctx context.Context, owner, repo string, number int) (map[int64]bool, error)
 	GetCIStatus(ctx context.Context, owner, repo string, ref string, number int) (*github.CIStatus, error)
 	GetReviews(ctx context.Context, owner, repo string, number int) (*github.ReviewSummary, error)
 	ApprovePR(ctx context.Context, owner, repo string, number int, body string) error

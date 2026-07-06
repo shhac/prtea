@@ -179,6 +179,14 @@ func fetchCommentsCmd(client GitHubService, owner, repo string, number int) tea.
 			return CommentsLoadedMsg{PRNumber: number, Err: inlineErr}
 		}
 
+		// Thread resolution is best-effort decoration: the GraphQL call can
+		// fail (rate limits, old gh) without blocking the comments themselves.
+		if resolution, err := client.GetReviewThreadResolution(ctx, owner, repo, number); err == nil {
+			for i := range inline {
+				inline[i].Resolved = resolution[inline[i].ID]
+			}
+		}
+
 		return CommentsLoadedMsg{
 			PRNumber:       number,
 			Comments:       comments,

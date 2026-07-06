@@ -13,7 +13,7 @@ import (
 // diff viewer and the review tab counter.
 func (m *App) syncPendingComments() {
 	m.diffViewer.SetPendingInlineComments(m.session.PendingInlineComments)
-	m.chatPanel.SetPendingCommentCount(len(m.session.PendingInlineComments))
+	m.chatPanel.SetPendingComments(m.session.PendingInlineComments)
 }
 
 // findPendingComment returns the index of the pending comment at
