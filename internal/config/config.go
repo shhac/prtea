@@ -11,39 +11,38 @@ import (
 
 // Config holds application configuration.
 type Config struct {
-	ClaudeTimeout        int      `json:"claudeTimeoutMs"`
+	AITimeout            int      `json:"aiTimeoutMs"`
 	PollInterval         int      `json:"pollIntervalMs"`
 	PollEnabled          bool     `json:"pollEnabled"`
 	NotificationsEnabled bool     `json:"notificationsEnabled"`
-	DefaultPRTab         string   `json:"defaultPRTab"`         // "review" (default) or "mine"
-	StartCollapsed       []string `json:"startCollapsed"`       // panels to collapse on boot, e.g. ["right"]
-	CollapseThreshold    int      `json:"collapseThreshold"`    // terminal width below which panels auto-collapse
+	DefaultPRTab         string   `json:"defaultPRTab"`      // "review" (default) or "mine"
+	StartCollapsed       []string `json:"startCollapsed"`    // panels to collapse on boot, e.g. ["right"]
+	CollapseThreshold    int      `json:"collapseThreshold"` // terminal width below which panels auto-collapse
 
-	// Tier 1: fetch & notification tuning
+	// Fetch & notification tuning
 	PRFetchLimit          int `json:"prFetchLimit"`          // max PRs to fetch per query
 	NotificationThreshold int `json:"notificationThreshold"` // above this, batch notifications into summary
 
-	// Tier 2: AI tuning
-	MaxChatHistory    int `json:"maxChatHistory"`    // max messages in chat history
-	MaxPromptTokens   int `json:"maxPromptTokens"`   // max tokens for prompts
-	ChatMaxTurns      int `json:"chatMaxTurns"`      // max agentic turns for chat
-	AnalysisMaxTurns  int `json:"analysisMaxTurns"`  // max turns for analysis
-	StreamCheckpointMs  int    `json:"streamCheckpointMs"`  // stream rendering checkpoint interval in ms
+	// AI engine tuning
+	CodexModel  string `json:"codexModel"`           // codex model, e.g. "gpt-5.5"
+	CodexEffort string `json:"codexReasoningEffort"` // "low", "medium", "high"
+
 	DefaultReviewAction string `json:"defaultReviewAction"` // "approve", "comment", or "request_changes"
+
+	// LegacyClaudeTimeout maps the pre-codex claudeTimeoutMs field onto
+	// AITimeout on load. Dropped from disk on next save.
+	LegacyClaudeTimeout int `json:"claudeTimeoutMs,omitempty"`
 }
 
 // Defaults
 const (
-	DefaultClaudeTimeoutMs       = 120000
+	DefaultAITimeoutMs           = 300000
 	DefaultPollIntervalMs        = 60000
 	DefaultCollapseThreshold     = 120
 	DefaultPRFetchLimit          = 100
 	DefaultNotificationThreshold = 3
-	DefaultMaxChatHistory        = 16
-	DefaultMaxPromptTokens       = 100000
-	DefaultChatMaxTurns          = 3
-	DefaultAnalysisMaxTurns      = 30
-	DefaultStreamCheckpointMs    = 300
+	DefaultCodexModel            = "gpt-5.5"
+	DefaultCodexEffort           = "medium"
 )
 
 // DefaultConfigDir returns the platform-appropriate config directory.
@@ -75,7 +74,7 @@ func Load() (*Config, error) {
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return defaults(), nil
+			return Defaults(), nil
 		}
 		return nil, fmt.Errorf("failed to read config: %w", err)
 	}
@@ -116,14 +115,9 @@ func Save(cfg *Config) error {
 	return nil
 }
 
-// AnalysesCacheDir returns the path to the analysis cache directory.
-func AnalysesCacheDir() string {
-	return filepath.Join(DefaultConfigDir(), "analyses")
-}
-
-// ChatCacheDir returns the path to the chat session cache directory.
-func ChatCacheDir() string {
-	return filepath.Join(DefaultConfigDir(), "chats")
+// ThreadsCacheDir returns the path to the AI thread cache directory.
+func ThreadsCacheDir() string {
+	return filepath.Join(DefaultConfigDir(), "threads")
 }
 
 // PromptsDir returns the path to the custom prompts directory.
@@ -144,9 +138,9 @@ func GetRepoPrompt(owner, repo string) (string, error) {
 	return string(data), nil
 }
 
-// ClaudeTimeoutDuration returns the configured claude timeout as a time.Duration.
-func (c *Config) ClaudeTimeoutDuration() time.Duration {
-	return time.Duration(c.ClaudeTimeout) * time.Millisecond
+// AITimeoutDuration returns the configured AI turn timeout as a time.Duration.
+func (c *Config) AITimeoutDuration() time.Duration {
+	return time.Duration(c.AITimeout) * time.Millisecond
 }
 
 // PollIntervalDuration returns the configured poll interval as a time.Duration.
@@ -154,24 +148,26 @@ func (c *Config) PollIntervalDuration() time.Duration {
 	return time.Duration(c.PollInterval) * time.Millisecond
 }
 
-func defaults() *Config {
+// Defaults returns a config populated with default values.
+func Defaults() *Config {
 	return &Config{
-		ClaudeTimeout:         DefaultClaudeTimeoutMs,
+		AITimeout:             DefaultAITimeoutMs,
 		PollInterval:          DefaultPollIntervalMs,
 		CollapseThreshold:     DefaultCollapseThreshold,
 		PRFetchLimit:          DefaultPRFetchLimit,
 		NotificationThreshold: DefaultNotificationThreshold,
-		MaxChatHistory:        DefaultMaxChatHistory,
-		MaxPromptTokens:       DefaultMaxPromptTokens,
-		ChatMaxTurns:          DefaultChatMaxTurns,
-		AnalysisMaxTurns:      DefaultAnalysisMaxTurns,
-		StreamCheckpointMs:    DefaultStreamCheckpointMs,
+		CodexModel:            DefaultCodexModel,
+		CodexEffort:           DefaultCodexEffort,
 	}
 }
 
 func applyDefaults(cfg *Config) {
-	if cfg.ClaudeTimeout == 0 {
-		cfg.ClaudeTimeout = DefaultClaudeTimeoutMs
+	if cfg.AITimeout == 0 && cfg.LegacyClaudeTimeout > 0 {
+		cfg.AITimeout = cfg.LegacyClaudeTimeout
+	}
+	cfg.LegacyClaudeTimeout = 0
+	if cfg.AITimeout == 0 {
+		cfg.AITimeout = DefaultAITimeoutMs
 	}
 	if cfg.PollInterval == 0 {
 		cfg.PollInterval = DefaultPollIntervalMs
@@ -185,19 +181,10 @@ func applyDefaults(cfg *Config) {
 	if cfg.NotificationThreshold == 0 {
 		cfg.NotificationThreshold = DefaultNotificationThreshold
 	}
-	if cfg.MaxChatHistory == 0 {
-		cfg.MaxChatHistory = DefaultMaxChatHistory
+	if cfg.CodexModel == "" {
+		cfg.CodexModel = DefaultCodexModel
 	}
-	if cfg.MaxPromptTokens == 0 {
-		cfg.MaxPromptTokens = DefaultMaxPromptTokens
-	}
-	if cfg.ChatMaxTurns == 0 {
-		cfg.ChatMaxTurns = DefaultChatMaxTurns
-	}
-	if cfg.AnalysisMaxTurns == 0 {
-		cfg.AnalysisMaxTurns = DefaultAnalysisMaxTurns
-	}
-	if cfg.StreamCheckpointMs == 0 {
-		cfg.StreamCheckpointMs = DefaultStreamCheckpointMs
+	if cfg.CodexEffort == "" {
+		cfg.CodexEffort = DefaultCodexEffort
 	}
 }

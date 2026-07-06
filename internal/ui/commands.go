@@ -2,7 +2,6 @@ package ui
 
 import (
 	"context"
-	"crypto/sha256"
 	"fmt"
 	"os/exec"
 	"runtime"
@@ -11,7 +10,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/shhac/prtea/internal/claude"
+	"github.com/shhac/prtea/internal/ai"
 	"github.com/shhac/prtea/internal/github"
 	"github.com/shhac/prtea/internal/notify"
 )
@@ -248,7 +247,7 @@ func closePRCmd(client GitHubService, owner, repo string, number int) tea.Cmd {
 }
 
 // submitReviewCmd returns a command that submits a PR review, optionally with inline comments.
-func submitReviewCmd(client GitHubService, owner, repo string, number int, action ReviewAction, body string, inlineComments []claude.InlineReviewComment) tea.Cmd {
+func submitReviewCmd(client GitHubService, owner, repo string, number int, action ReviewAction, body string, inlineComments []github.ReviewCommentPayload) tea.Cmd {
 	return func() tea.Msg {
 		ctx := context.Background()
 		var err error
@@ -262,25 +261,13 @@ func submitReviewCmd(client GitHubService, owner, repo string, number int, actio
 			}
 			comments := make([]github.ReviewCommentPayload, len(inlineComments))
 			for i, c := range inlineComments {
-				side := c.Side
-				if side == "" {
-					side = "RIGHT"
+				if c.Side == "" {
+					c.Side = "RIGHT"
 				}
-				payload := github.ReviewCommentPayload{
-					Path: c.Path,
-					Line: c.Line,
-					Side: side,
-					Body: c.Body,
+				if c.StartLine > 0 && c.StartSide == "" {
+					c.StartSide = c.Side
 				}
-				if c.StartLine > 0 {
-					payload.StartLine = c.StartLine
-					startSide := c.StartSide
-					if startSide == "" {
-						startSide = side
-					}
-					payload.StartSide = startSide
-				}
-				comments[i] = payload
+				comments[i] = c
 			}
 			err = client.SubmitReviewWithComments(ctx, owner, repo, number, eventMap[action], body, comments)
 		} else {
@@ -311,34 +298,34 @@ func replyToCommentCmd(client GitHubService, owner, repo string, prNumber int, c
 	}
 }
 
-// aiReviewCmd returns a command that runs Claude to generate an AI review with inline comments.
-func aiReviewCmd(ctx context.Context, analyzer AIAnalyzer, pr *PRSession, files []github.PRFile) tea.Cmd {
+// executeActionCmd executes a user-confirmed AI-proposed action via the
+// GitHub client and reports the outcome.
+func executeActionCmd(client GitHubService, owner, repo string, number int, action ai.Action) tea.Cmd {
 	return func() tea.Msg {
-		diffContent := buildDiffContent(files)
-
-		input := claude.ReviewInput{
-			Owner:       pr.Owner,
-			Repo:        pr.Repo,
-			PRNumber:    pr.Number,
-			PRTitle:     pr.Title,
-			PRBody:      "", // TODO: include PR body when available
-			DiffContent: diffContent,
+		ctx := context.Background()
+		var err error
+		switch action.Type {
+		case ai.ActionPostComment:
+			err = client.PostComment(ctx, owner, repo, number, action.Body)
+		case ai.ActionReplyToComment:
+			err = client.ReplyToComment(ctx, owner, repo, number, action.CommentID, action.Body)
+		case ai.ActionSubmitReview:
+			switch action.Event {
+			case "approve":
+				err = client.ApprovePR(ctx, owner, repo, number, action.Body)
+			case "comment":
+				err = client.CommentReviewPR(ctx, owner, repo, number, action.Body)
+			case "request_changes":
+				err = client.RequestChangesPR(ctx, owner, repo, number, action.Body)
+			}
+		default:
+			err = fmt.Errorf("unknown action type %q", action.Type)
 		}
-
-		result, err := analyzer.AnalyzeForReview(ctx, input, nil)
-		if err != nil {
-			return AIReviewErrorMsg{PRNumber: pr.Number, Err: err}
-		}
-
-		return AIReviewCompleteMsg{
-			PRNumber: pr.Number,
-			Result:   result,
-		}
+		return AIActionResultMsg{Description: action.Describe(), Err: err}
 	}
 }
 
 // listenForStream returns a tea.Cmd that reads the next message from a streaming channel.
-// Used for both chat and analysis streams.
 func listenForStream(ch <-chan tea.Msg) tea.Cmd {
 	return func() tea.Msg {
 		msg, ok := <-ch
@@ -351,40 +338,58 @@ func listenForStream(ch <-chan tea.Msg) tea.Cmd {
 
 // -- Context builders --
 
-// buildChatContext constructs the PR context string for chat from metadata + diff.
-func buildChatContext(pr *PRSession, files []github.PRFile) string {
+// maxContextDiffBytes caps the diff embedded in a thread's context so a huge
+// PR cannot blow the model's context window. When exceeded, the diff is
+// truncated with a notice; codex can still explore a local checkout.
+const maxContextDiffBytes = 256 * 1024
+
+// buildThreadContext assembles the PR context for a new AI thread:
+// title, diff, comments (with IDs so the agent can propose replies),
+// and any hunks the user has selected.
+func buildThreadContext(title string, files []github.PRFile, comments []github.Comment, inline []github.InlineComment, selectedHunks string) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "PR #%d: \"%s\" in %s/%s\n", pr.Number, pr.Title, pr.Owner, pr.Repo)
+	fmt.Fprintf(&b, "Title: %s\n", title)
+
 	if len(files) > 0 {
-		b.WriteString("\nChanges in this PR:\n\n")
-		b.WriteString(buildDiffContent(files))
+		b.WriteString("\nDiff:\n\n")
+		diff := buildDiffContent(files)
+		if len(diff) > maxContextDiffBytes {
+			diff = diff[:maxContextDiffBytes] + "\n\n[... diff truncated — explore the local checkout for the rest ...]\n"
+		}
+		b.WriteString(diff)
 	} else {
-		b.WriteString("\n(Diff not yet loaded)")
+		b.WriteString("\n(Diff not yet loaded)\n")
 	}
+
+	if len(comments) > 0 {
+		b.WriteString("\nPR comments:\n")
+		for _, c := range comments {
+			fmt.Fprintf(&b, "- %s: %s\n", c.Author.Login, c.Body)
+		}
+	}
+
+	if len(inline) > 0 {
+		b.WriteString("\nInline review comments (id — file:line — author):\n")
+		for _, c := range inline {
+			fmt.Fprintf(&b, "- %d — %s:%d — %s: %s\n", c.ID, c.Path, c.Line, c.Author.Login, c.Body)
+		}
+	}
+
+	if selectedHunks != "" {
+		b.WriteString("\nThe user has selected these hunks to focus on:\n\n")
+		b.WriteString(selectedHunks)
+	}
+
 	return b.String()
 }
 
-// buildSelectedHunkContext constructs PR context with selected hunks as the primary
-// focus, plus a brief file list for broader context.
-func buildSelectedHunkContext(pr *PRSession, files []github.PRFile, selectedDiff string) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "PR #%d: \"%s\" in %s/%s\n", pr.Number, pr.Title, pr.Owner, pr.Repo)
-
-	// Include file list for broader context
-	if len(files) > 0 {
-		b.WriteString("\nFiles changed in this PR: ")
-		for i, f := range files {
-			if i > 0 {
-				b.WriteString(", ")
-			}
-			b.WriteString(f.Filename)
-		}
-		b.WriteString("\n")
+// buildContextDelta assembles the refreshed-context block for a follow-up
+// message on an existing thread. Empty when there is nothing new to add.
+func buildContextDelta(selectedHunks string) string {
+	if selectedHunks == "" {
+		return ""
 	}
-
-	b.WriteString("\nThe user selected the following hunks to discuss:\n\n")
-	b.WriteString(selectedDiff)
-	return b.String()
+	return "The user has selected these hunks to focus on:\n\n" + selectedHunks
 }
 
 // buildDiffContent constructs a unified diff string from PR files.
@@ -404,12 +409,19 @@ func buildDiffContent(files []github.PRFile) string {
 	return b.String()
 }
 
-// diffContentHash computes a short hash of the diff content for cache staleness checks.
-func diffContentHash(files []github.PRFile) string {
-	h := sha256.New()
-	for _, f := range files {
-		h.Write([]byte(f.Filename))
-		h.Write([]byte(f.Patch))
+// displayCommand compacts an agent shell command for the activity feed,
+// stripping the `sh -lc "..."` wrapper codex uses.
+func displayCommand(cmd string) string {
+	if idx := strings.Index(cmd, " -lc "); idx != -1 {
+		cmd = strings.Trim(strings.TrimSpace(cmd[idx+5:]), `"'`)
 	}
-	return fmt.Sprintf("%x", h.Sum(nil))[:16]
+	return firstLine(cmd)
+}
+
+// firstLine returns the first line of a possibly multi-line string.
+func firstLine(s string) string {
+	if idx := strings.IndexByte(s, '\n'); idx != -1 {
+		return s[:idx] + " …"
+	}
+	return s
 }

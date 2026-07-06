@@ -81,7 +81,7 @@ func (m *DiffViewerModel) renderHunkLines(hunkIdx int) ([]string, []lineInfo) {
 	hunk := m.hunks[hunkIdx]
 	selected := m.selectedHunks[hunkIdx]
 	isFocused := hunkIdx == m.focusedHunkIdx
-	hasInlineComments := len(m.aiCommentsByFileLine) > 0 || len(m.ghCommentThreads) > 0 || len(m.pendingCommentsByFileLine) > 0
+	hasInlineComments := len(m.ghCommentThreads) > 0 || len(m.pendingCommentsByFileLine) > 0
 	lines := make([]string, 0, len(hunk.Lines))
 	infos := make([]lineInfo, 0, len(hunk.Lines))
 
@@ -241,7 +241,7 @@ func (m *DiffViewerModel) rerenderHunkInCache(hunkIdx int) {
 	if hunkIdx < 0 || hunkIdx >= len(m.hunkLineRanges) {
 		return
 	}
-	if len(m.aiCommentsByFileLine) > 0 || len(m.ghCommentThreads) > 0 || len(m.pendingCommentsByFileLine) > 0 {
+	if len(m.ghCommentThreads) > 0 || len(m.pendingCommentsByFileLine) > 0 {
 		m.cachedLines = nil
 		return
 	}

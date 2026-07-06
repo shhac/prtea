@@ -4,13 +4,15 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/shhac/prtea/internal/claude"
+	"github.com/shhac/prtea/internal/ai"
 	"github.com/shhac/prtea/internal/config"
 	"github.com/shhac/prtea/internal/demo"
 	"github.com/shhac/prtea/internal/github"
@@ -36,13 +38,11 @@ type App struct {
 	// Currently selected PR session (nil until a PR is selected)
 	session *PRSession
 
-	// Claude integration
-	claudePath    string
-	appConfig     *config.Config
-	analyzer      AIAnalyzer
-	chatService   AIChatService
-	analysisStore *claude.AnalysisStore
-	chatStore     *claude.ChatStore
+	// AI integration
+	codexPath   string
+	appConfig   *config.Config
+	aiEngine    AIEngine
+	threadStore *ai.ThreadStore
 
 	// Layout state
 	focused           Panel
@@ -87,25 +87,11 @@ func WithDemo() AppOption {
 func NewApp(opts ...AppOption) App {
 	cfg, cfgErr := config.Load()
 	if cfg == nil {
-		cfg = &config.Config{ClaudeTimeout: config.DefaultClaudeTimeoutMs}
+		cfg = config.Defaults()
 	}
 	if cfgErr != nil {
 		log.Printf("warning: config load failed, using defaults: %v", cfgErr)
 	}
-
-	claudePath, _ := claude.FindClaude()
-
-	chatStore := claude.NewChatStore(config.ChatCacheDir())
-
-	var analyzer AIAnalyzer
-	var chatSvc AIChatService
-	if claudePath != "" {
-		executor := claude.NewCLIExecutor(claudePath)
-		analyzer = claude.NewAnalyzer(executor, cfg.ClaudeTimeoutDuration(), config.PromptsDir(), cfg.AnalysisMaxTurns)
-		chatSvc = claude.NewChatService(executor, cfg.ClaudeTimeoutDuration(), chatStore, cfg.MaxPromptTokens, cfg.MaxChatHistory, cfg.ChatMaxTurns)
-	}
-
-	store := claude.NewAnalysisStore(config.AnalysesCacheDir())
 
 	// Map config default PR tab to constant
 	defaultTab := TabToReview
@@ -131,7 +117,6 @@ func NewApp(opts ...AppOption) App {
 	}
 
 	chatPanel := NewChatPanelModel()
-	chatPanel.SetStreamCheckpoint(time.Duration(cfg.StreamCheckpointMs) * time.Millisecond)
 	chatPanel.SetDefaultReviewAction(cfg.DefaultReviewAction)
 
 	app := App{
@@ -147,12 +132,7 @@ func NewApp(opts ...AppOption) App {
 		panelVisible:      panelVisible,
 		mode:              ModeNavigation,
 		collapseThreshold: cfg.CollapseThreshold,
-		claudePath:        claudePath,
 		appConfig:         cfg,
-		analyzer:          analyzer,
-		chatService:       chatSvc,
-		analysisStore:     store,
-		chatStore:         chatStore,
 		pollInterval:      cfg.PollIntervalDuration(),
 		pollEnabled:       cfg.PollEnabled,
 		notifyEnabled:     cfg.NotificationsEnabled,
@@ -160,6 +140,21 @@ func NewApp(opts ...AppOption) App {
 	}
 	for _, opt := range opts {
 		opt(&app)
+	}
+
+	// Wire the AI engine and thread store after options so demo mode can
+	// inject its fake and keep demo transcripts out of the real cache.
+	if app.demoMode {
+		app.codexPath = "demo"
+		app.aiEngine = demo.NewAIEngine()
+		app.threadStore = ai.NewThreadStore(filepath.Join(os.TempDir(), "prtea-demo-threads"))
+	} else {
+		app.threadStore = ai.NewThreadStore(config.ThreadsCacheDir())
+		if codexPath, err := ai.FindCodex(); err == nil {
+			app.codexPath = codexPath
+			executor := ai.NewCLIExecutor(codexPath)
+			app.aiEngine = ai.NewCodexEngine(executor, cfg.CodexModel, cfg.CodexEffort, cfg.AITimeoutDuration())
+		}
 	}
 	return app
 }
@@ -199,14 +194,9 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		ReviewsLoadedMsg:
 		return m.handleDiffMsg(msg)
 
-	// Analysis domain: AI analysis and AI review
-	case AnalysisStreamChunkMsg, AnalysisCompleteMsg, AnalysisErrorMsg,
-		AIReviewCompleteMsg, AIReviewErrorMsg:
-		return m.handleAnalysisMsg(msg)
-
-	// Chat domain: chat streaming, comments, inline comments
+	// Chat domain: AI turns, comments, inline comments
 	case ChatClearMsg, ChatSendMsg,
-		ChatStreamChunkMsg, ChatResponseMsg,
+		AIEventMsg, AIActionRespondMsg, AIActionResultMsg,
 		CommentPostMsg, CommentPostedMsg,
 		InlineCommentAddMsg,
 		InlineCommentReplyMsg, InlineCommentReplyDoneMsg:
@@ -323,14 +313,10 @@ func (m App) selectPR(owner, repo string, number int, htmlURL string, advance bo
 	if item, ok := m.prList.list.SelectedItem().(PRItem); ok {
 		title = item.title
 	}
-	// Save current chat session before switching PRs
-	if m.chatService != nil && m.session != nil {
-		m.chatService.SaveSession(m.session.Owner, m.session.Repo, m.session.Number)
-	}
-
-	// Cancel any active streams from the previous session
+	// Persist the outgoing PR's thread and cancel any in-flight turn
 	if m.session != nil {
-		m.session.CancelStreams()
+		m.persistThread()
+		m.session.CancelAITurn()
 	}
 
 	// Create a fresh session for the new PR
@@ -342,15 +328,15 @@ func (m App) selectPR(owner, repo string, number int, htmlURL string, advance bo
 		HTMLURL: htmlURL,
 	}
 
-	m.chatPanel.SetAnalysisResult(nil) // clear old analysis
-	m.chatPanel.ClearComments()        // clear old comments
-	m.chatPanel.ClearReview()          // clear old review
+	m.chatPanel.ClearComments() // clear old comments
+	m.chatPanel.ClearReview()   // clear old review
 
-	// Restore chat from previous session (memory or disk) instead of clearing
+	// Restore the PR's thread (transcript + thread ID) from disk
 	m.chatPanel.ClearChat()
-	if m.chatService != nil {
-		if msgs := m.chatService.GetSessionMessages(owner, repo, number); len(msgs) > 0 {
-			m.chatPanel.RestoreMessages(msgs)
+	if cached, err := m.threadStore.Get(owner, repo, number); err == nil && cached != nil {
+		m.session.ThreadID = cached.ThreadID
+		if len(cached.Messages) > 0 {
+			m.chatPanel.RestoreMessages(cached.Messages)
 		}
 	}
 	m.statusBar.SetSelectedPR(number)
@@ -494,129 +480,127 @@ func (m App) updateChatPanel(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-// startAnalysis validates state and kicks off Claude analysis.
-func (m App) startAnalysis() (tea.Model, tea.Cmd) {
+// startOrient sends the canned "orient me" prompt into the chat thread.
+func (m App) startOrient() (tea.Model, tea.Cmd) {
 	if m.session == nil {
-		m.chatPanel.SetAnalysisError("No PR selected. Select a PR first.")
-		m.chatPanel.SetActiveTab(ChatTabAnalysis)
+		m.chatPanel.SetChatError("No PR selected. Select a PR first.")
+		m.chatPanel.SetActiveTab(ChatTabChat)
 		m.showAndFocusPanel(PanelRight)
 		return m, nil
 	}
-	if m.claudePath == "" {
-		m.chatPanel.SetAnalysisError("Claude CLI not found.\nInstall from https://docs.anthropic.com/en/docs/claude-code")
-		m.chatPanel.SetActiveTab(ChatTabAnalysis)
+	if m.aiEngine == nil {
+		m.chatPanel.SetChatError(codexMissingMsg)
+		m.chatPanel.SetActiveTab(ChatTabChat)
 		m.showAndFocusPanel(PanelRight)
 		return m, nil
 	}
-	if m.session.Analyzing {
-		return m, nil
-	}
-	if len(m.session.DiffFiles) == 0 {
-		m.chatPanel.SetAnalysisError("No diff loaded. Select a PR to load its diff first.")
-		m.chatPanel.SetActiveTab(ChatTabAnalysis)
-		m.showAndFocusPanel(PanelRight)
+	if m.chatPanel.IsChatWaiting() {
 		return m, nil
 	}
 
-	// Check cache
-	hash := diffContentHash(m.session.DiffFiles)
-	cached, _ := m.analysisStore.Get(m.session.Owner, m.session.Repo, m.session.Number)
-	if cached != nil && !m.analysisStore.IsStale(cached, hash) {
-		m.chatPanel.SetAnalysisResult(cached.Result)
-		m.chatPanel.SetActiveTab(ChatTabAnalysis)
-		m.showAndFocusPanel(PanelRight)
-		return m, nil
-	}
-
-	// Cancel any previous analysis stream
-	if m.session.AnalysisStreamCancel != nil {
-		m.session.AnalysisStreamCancel()
-	}
-
-	// Start async streaming analysis
-	m.session.Analyzing = true
-	m.chatPanel.SetAnalysisLoading()
-	m.chatPanel.SetActiveTab(ChatTabAnalysis)
+	m.chatPanel.SetActiveTab(ChatTabChat)
 	m.showAndFocusPanel(PanelRight)
+	m.chatPanel.StartChatWaiting("Orient me on this PR")
+	cmd := m.startAITurn(ai.OrientMessage)
+	return m, tea.Batch(cmd, m.chatPanel.spinner.Tick)
+}
 
+// codexMissingMsg is shown when AI features are used without the codex CLI.
+const codexMissingMsg = "codex CLI not found.\nInstall it from https://github.com/openai/codex and sign in."
+
+// persistThread saves the current session's thread ID and transcript to disk.
+func (m *App) persistThread() {
 	s := m.session
-	files := s.DiffFiles
-	analyzer := m.analyzer
+	if s == nil {
+		return
+	}
+	msgs := m.chatPanel.ChatMessages()
+	if s.ThreadID == "" && len(msgs) == 0 {
+		return
+	}
+	_ = m.threadStore.Put(s.Owner, s.Repo, s.Number, s.ThreadID, msgs)
+}
+
+// recordThreadID persists a freshly created thread ID, even when the user has
+// already navigated away from the PR that started it — otherwise the next
+// message would silently start a new thread.
+func (m *App) recordThreadID(owner, repo string, number int, threadID string) {
+	if m.session.MatchesPR(number) {
+		m.session.ThreadID = threadID
+		m.persistThread()
+		return
+	}
+	var msgs []ai.Message
+	if cached, err := m.threadStore.Get(owner, repo, number); err == nil && cached != nil {
+		msgs = cached.Messages
+	}
+	_ = m.threadStore.Put(owner, repo, number, threadID, msgs)
+}
+
+// startAITurn kicks off an engine turn for the current session and returns the
+// command that pumps its events into the update loop. The caller is
+// responsible for having recorded the user message in the chat panel.
+func (m App) startAITurn(prompt string) tea.Cmd {
+	s := m.session
+	s.CancelAITurn()
+
 	ctx, cancel := context.WithCancel(context.Background())
-	ch := make(analysisStreamChan)
+	ch := make(aiEventChan)
+
+	engine := m.aiEngine
+	owner, repo, number := s.Owner, s.Repo, s.Number
+	title := s.Title
+	threadID := s.ThreadID
+	files := s.DiffFiles
+	comments := s.Comments
+	inline := s.InlineComments
+	selectedHunks := m.diffViewer.GetSelectedHunkContent()
 
 	go func() {
 		defer close(ch)
-		diffContent := buildDiffContent(files)
-		input := claude.AnalyzeDiffInput{
-			Owner:       s.Owner,
-			Repo:        s.Repo,
-			PRNumber:    s.Number,
-			PRTitle:     s.Title,
-			DiffContent: diffContent,
+
+		forward := func(ev ai.Event) bool {
+			select {
+			case ch <- AIEventMsg{Owner: owner, Repo: repo, PRNumber: number, Event: ev}:
+				return true
+			case <-ctx.Done():
+				return false
+			}
 		}
 
-		result, err := analyzer.AnalyzeDiffStream(ctx, input, func(text string) {
-			select {
-			case ch <- AnalysisStreamChunkMsg{Content: text}:
-			case <-ctx.Done():
-			}
-		})
-		if err != nil {
-			select {
-			case ch <- AnalysisErrorMsg{PRNumber: s.Number, Err: err}:
-			case <-ctx.Done():
-			}
+		var events <-chan ai.Event
+		var err error
+		if threadID == "" {
+			customPrompt, _ := config.GetRepoPrompt(owner, repo)
+			events, err = engine.StartThread(ctx, ai.ThreadInput{
+				Owner:        owner,
+				Repo:         repo,
+				PRNumber:     number,
+				PRContext:    buildThreadContext(title, files, comments, inline, selectedHunks),
+				CustomPrompt: customPrompt,
+				RepoPath:     ai.FindLocalCheckout(owner, repo),
+				Message:      prompt,
+			})
 		} else {
-			select {
-			case ch <- AnalysisCompleteMsg{PRNumber: s.Number, DiffHash: hash, Result: result}:
-			case <-ctx.Done():
+			events, err = engine.Send(ctx, threadID, ai.MessageInput{
+				Message:      prompt,
+				ContextDelta: buildContextDelta(selectedHunks),
+			})
+		}
+		if err != nil {
+			forward(ai.Event{Kind: ai.EventError, Text: err.Error()})
+			return
+		}
+		for ev := range events {
+			if !forward(ev) {
+				return
 			}
 		}
 	}()
 
-	m.session.AnalysisStreamCh = ch
-	m.session.AnalysisStreamCancel = cancel
-	return m, tea.Batch(listenForStream(ch), m.chatPanel.spinner.Tick)
-}
-
-// startAIReview kicks off AI review generation and navigates to the Review tab.
-func (m App) startAIReview() (tea.Model, tea.Cmd) {
-	if m.session == nil {
-		m.chatPanel.SetAIReviewError("No PR selected. Select a PR first.")
-		m.chatPanel.SetActiveTab(ChatTabReview)
-		m.showAndFocusPanel(PanelRight)
-		return m, nil
-	}
-	if m.claudePath == "" {
-		m.chatPanel.SetAIReviewError("Claude CLI not found.\nInstall from https://docs.anthropic.com/en/docs/claude-code")
-		m.chatPanel.SetActiveTab(ChatTabReview)
-		m.showAndFocusPanel(PanelRight)
-		return m, nil
-	}
-	if m.chatPanel.IsAIReviewLoading() {
-		return m, nil
-	}
-	if len(m.session.DiffFiles) == 0 {
-		m.chatPanel.SetAIReviewError("No diff loaded. Select a PR to load its diff first.")
-		m.chatPanel.SetActiveTab(ChatTabReview)
-		m.showAndFocusPanel(PanelRight)
-		return m, nil
-	}
-
-	// Cancel any previous AI review
-	if m.session.AIReviewCancel != nil {
-		m.session.AIReviewCancel()
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	m.session.AIReviewCancel = cancel
-
-	m.chatPanel.SetAIReviewLoading()
-	m.chatPanel.SetActiveTab(ChatTabReview)
-	m.showAndFocusPanel(PanelRight)
-
-	return m, tea.Batch(aiReviewCmd(ctx, m.analyzer, m.session, m.session.DiffFiles), m.chatPanel.spinner.Tick)
+	s.AIEventCh = ch
+	s.AICancel = cancel
+	return listenForStream(ch)
 }
 
 // refreshPRList re-fetches the PR lists (To Review + My PRs).
@@ -629,7 +613,7 @@ func (m App) refreshPRList() (tea.Model, tea.Cmd) {
 }
 
 // refreshSelectedPR re-fetches all data for the currently selected PR
-// without clearing chat history, Claude session, or analysis results.
+// without clearing the chat thread.
 func (m App) refreshSelectedPR() (tea.Model, tea.Cmd) {
 	if m.session == nil {
 		return m.refreshPRList()
@@ -655,67 +639,18 @@ func (m App) refreshSelectedPR() (tea.Model, tea.Cmd) {
 	)
 }
 
-// handleChatSend validates state and kicks off streaming Claude chat.
+// handleChatSend validates state and kicks off an AI turn for a typed message.
+// The chat panel has already recorded the user message and entered waiting.
 func (m App) handleChatSend(message string) (tea.Model, tea.Cmd) {
 	if m.session == nil {
 		m.chatPanel.SetChatError("No PR selected. Select a PR first.")
 		return m, nil
 	}
-	if m.chatService == nil {
-		m.chatPanel.SetChatError("Claude CLI not found.\nInstall from https://docs.anthropic.com/en/docs/claude-code")
+	if m.aiEngine == nil {
+		m.chatPanel.SetChatError(codexMissingMsg)
 		return m, nil
 	}
-
-	s := m.session
-	var prContext string
-	var hunksSelected bool
-	if selected := m.diffViewer.GetSelectedHunkContent(); selected != "" {
-		prContext = buildSelectedHunkContext(s, s.DiffFiles, selected)
-		hunksSelected = true
-	} else {
-		prContext = buildChatContext(s, s.DiffFiles)
-	}
-
-	input := claude.ChatInput{
-		Owner:         s.Owner,
-		Repo:          s.Repo,
-		PRNumber:      s.Number,
-		PRContext:     prContext,
-		HunksSelected: hunksSelected,
-		Message:       message,
-	}
-
-	// Cancel any previous stream before starting a new one
-	if s.StreamCancel != nil {
-		s.StreamCancel()
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-
-	ch := make(chatStreamChan)
-	go func() {
-		defer close(ch)
-		response, err := m.chatService.ChatStream(ctx, input, func(text string) {
-			select {
-			case ch <- ChatStreamChunkMsg{Content: text}:
-			case <-ctx.Done():
-			}
-		})
-		if err != nil {
-			select {
-			case ch <- ChatResponseMsg{Err: err}:
-			case <-ctx.Done():
-			}
-		} else {
-			select {
-			case ch <- ChatResponseMsg{Content: response}:
-			case <-ctx.Done():
-			}
-		}
-	}()
-
-	s.StreamChan = ch
-	s.StreamCancel = cancel
-	return m, listenForStream(ch)
+	return m, tea.Batch(m.startAITurn(message), m.chatPanel.spinner.Tick)
 }
 
 // handleReviewSubmit validates state and dispatches the review action.
@@ -741,10 +676,10 @@ func (m App) handleReviewSubmit(msg ReviewSubmitMsg) (tea.Model, tea.Cmd) {
 	}
 	clearCmd := m.statusBar.SetTemporaryMessage(fmt.Sprintf("%s PR #%d...", actionLabels[action], s.Number), 3*time.Second)
 
-	// Use session's pending pool instead of msg.InlineComments
-	var inlineComments []claude.InlineReviewComment
+	// Submit the session's pending inline comments with the review
+	var inlineComments []github.ReviewCommentPayload
 	for _, c := range s.PendingInlineComments {
-		inlineComments = append(inlineComments, c.InlineReviewComment)
+		inlineComments = append(inlineComments, c.ReviewCommentPayload)
 	}
 	return m, tea.Batch(clearCmd, submitReviewCmd(client, s.Owner, s.Repo, s.Number, action, body, inlineComments))
 }
@@ -812,20 +747,18 @@ func (m App) handleInlineCommentAdd(msg InlineCommentAddMsg) (tea.Model, tea.Cmd
 	for i, c := range m.session.PendingInlineComments {
 		if c.Path == msg.Path && c.Line == msg.Line && c.StartLine == msg.StartLine {
 			m.session.PendingInlineComments[i].Body = msg.Body
-			m.session.PendingInlineComments[i].Source = "user"
 			found = true
 			break
 		}
 	}
 	if !found {
 		comment := PendingInlineComment{
-			InlineReviewComment: claude.InlineReviewComment{
+			ReviewCommentPayload: github.ReviewCommentPayload{
 				Path: msg.Path,
 				Line: msg.Line,
 				Side: "RIGHT",
 				Body: msg.Body,
 			},
-			Source: "user",
 		}
 		if msg.StartLine > 0 {
 			comment.StartLine = msg.StartLine
@@ -848,39 +781,6 @@ func (m App) handleInlineCommentAdd(msg InlineCommentAddMsg) (tea.Model, tea.Cmd
 	clearCmd := m.statusBar.SetTemporaryMessage(
 		fmt.Sprintf("Comment %s on %s", action, target), 2*time.Second)
 	return m, clearCmd
-}
-
-// mergeAIComments integrates AI review comments into the pending pool.
-// Old AI-sourced comments are replaced; user-sourced comments are preserved.
-func (m *App) mergeAIComments(aiComments []claude.InlineReviewComment) {
-	if m.session == nil {
-		return
-	}
-
-	// Remove old AI-sourced comments
-	filtered := m.session.PendingInlineComments[:0]
-	for _, c := range m.session.PendingInlineComments {
-		if c.Source != "ai" {
-			filtered = append(filtered, c)
-		}
-	}
-	m.session.PendingInlineComments = filtered
-
-	// Build set of lines with user comments
-	userLines := make(map[string]bool)
-	for _, c := range m.session.PendingInlineComments {
-		userLines[commentKey(c.Path, c.Line)] = true
-	}
-
-	// Add new AI comments, skipping lines that already have user comments
-	for _, c := range aiComments {
-		if !userLines[commentKey(c.Path, c.Line)] {
-			m.session.PendingInlineComments = append(m.session.PendingInlineComments, PendingInlineComment{
-				InlineReviewComment: c,
-				Source:              "ai",
-			})
-		}
-	}
 }
 
 // snapshotKnownPRs records all current PR keys in the known set.
@@ -909,9 +809,7 @@ func (m *App) detectNewPRs(toReview []github.PRItem) []github.PRItem {
 func (m App) executeCommand(name string) (tea.Model, tea.Cmd) {
 	switch name {
 	case "analyze":
-		return m.startAnalysis()
-	case "review":
-		return m.startAIReview()
+		return m.startOrient()
 	case "open":
 		if m.session != nil && m.session.HTMLURL != "" {
 			return m, openBrowserCmd(m.session.HTMLURL)

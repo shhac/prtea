@@ -6,29 +6,29 @@ A terminal dashboard for reviewing GitHub PRs with AI-powered analysis.
 
 ![prtea demo screenshot](assets/demo-screenshot.png)
 
-Three-panel TUI built with [Bubbletea](https://github.com/charmbracelet/bubbletea): browse your PRs, read diffs, and chat with Claude about the changes — all without leaving the terminal.
+Three-panel TUI built with [Bubbletea](https://github.com/charmbracelet/bubbletea): browse your PRs, read diffs, and chat with an AI sidekick (powered by the [Codex CLI](https://github.com/openai/codex)) about the changes — all without leaving the terminal.
 
 ## Features
 
 - **Three-panel layout** — PR list, diff viewer, and AI chat side by side with toggleable panels and zoom
-- **AI-powered analysis** — one-key PR analysis with risk assessment, architecture impact, and line-level comments
-- **Interactive chat** — ask Claude questions about the PR with streaming markdown responses and hunk-specific context
-- **Hunk selection** — select specific diff hunks to focus AI chat and analysis on what matters
+- **AI sidekick** — press `a` for a "what is this PR, what's risky, where do I look" overview, then keep asking
+- **Live activity feed** — see the commands and reasoning the agent runs while it works, message by message
+- **Safe by design** — the agent runs in a read-only sandbox with no network; GitHub actions it proposes (post a comment, reply, submit a review) execute only after you confirm them in the TUI
+- **Hunk selection** — select specific diff hunks to focus the AI conversation on what matters
 - **Review submission** — approve, request changes, or leave review comments with an integrated Review tab
 - **CI status** — dedicated tab showing check results grouped by status
 - **Review status** — per-reviewer approval breakdown with visual badges
 - **Comments** — read and post PR comments with full markdown rendering
-- **Custom prompts** — per-repo review instructions for tailored analysis
+- **Custom prompts** — per-repo review instructions for tailored AI context
 - **Search in diff** — `/` to search, `n`/`N` to navigate matches with highlighting
 - **Command palette** — `Ctrl+P` for quick commands, `:` for full mode with autocomplete
-- **AI review generation** — AI-powered inline review comments rendered on diff lines
-- **Chat persistence** — chat sessions saved to disk and restored when revisiting PRs
+- **Thread persistence** — conversations resume where you left off when revisiting PRs (real codex session resume, not history replay)
 - **Vim-style navigation** — j/k, Ctrl+d/u, g/G, and modal editing in chat
 
 ## Prerequisites
 
 - [GitHub CLI](https://cli.github.com/) (`gh`) — authenticated with `gh auth login`
-- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (`claude`) — optional, required for AI analysis and chat
+- [Codex CLI](https://github.com/openai/codex) (`codex`) — optional, required for AI chat and PR orientation; sign in with your ChatGPT account
 
 For releasing: `gh` CLI and access to the `../homebrew-tap` sibling repo.
 
@@ -78,14 +78,14 @@ Try prtea without any prerequisites:
 prtea --demo
 ```
 
-Demo mode loads 6 fictional PRs with realistic diffs, comments, CI statuses, and reviews. No `gh` or `claude` CLI needed. Write operations (approve, comment, submit review) are disabled; AI features require the `claude` CLI.
+Demo mode loads 6 fictional PRs with realistic diffs, comments, CI statuses, and reviews, plus a scripted AI engine — no `gh` or `codex` CLI needed. Write operations (approve, comment, submit review) are disabled.
 
 **Typical workflow:**
 
 1. Browse PRs in the left panel — switch between "To Review" and "My PRs" tabs with `h`/`l`
 2. Press `Enter` to select a PR and jump to the diff viewer
 3. Navigate the diff with `j`/`k`, jump between hunks with `n`/`N`
-4. Press `a` to run AI analysis, or select specific hunks with `s` and press `Enter` to chat about them
+4. Press `a` for an AI overview of the PR, or select specific hunks with `s` and press `Enter` to chat about them
 5. Switch to the Review tab with `l` and submit your review (approve, comment, or request changes)
 
 ## Keybindings
@@ -101,7 +101,7 @@ Press `?` at any time to see the full keybinding reference.
 | `[` / `\` / `]` | Toggle left/center/right panel |
 | `z` | Zoom focused panel |
 | `r` | Refresh (PR list / selected PR) |
-| `a` | Analyze PR |
+| `a` | AI: orient me on this PR |
 | `o` | Open in browser |
 | `Ctrl+P` | Command palette (quick mode) |
 | `:` | Command palette (full mode) |
@@ -138,7 +138,7 @@ Press `?` at any time to see the full keybinding reference.
 
 | Key | Action |
 |-----|--------|
-| `h` / `l` | Prev/next tab (Chat, Analysis, Comments, Review) |
+| `h` / `l` | Prev/next tab (Chat, Comments, Review) |
 | `j` / `k` | Scroll history |
 | `C` | New chat (clear conversation) |
 | `Enter` | Enter insert mode |
@@ -165,14 +165,18 @@ Config file location: `~/.config/prtea/config.json`
 
 ```json
 {
-  "claudeTimeoutMs": 120000,
+  "aiTimeoutMs": 300000,
+  "codexModel": "gpt-5.5",
+  "codexReasoningEffort": "medium",
   "pollIntervalMs": 60000
 }
 ```
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `claudeTimeoutMs` | `120000` | AI analysis timeout in milliseconds |
+| `aiTimeoutMs` | `300000` | AI turn timeout in milliseconds |
+| `codexModel` | `"gpt-5.5"` | Codex model for AI features |
+| `codexReasoningEffort` | `"medium"` | Codex reasoning effort: `low`, `medium`, or `high` |
 | `pollIntervalMs` | `60000` | Auto-refresh interval in milliseconds |
 
 ### Custom Prompts
@@ -183,7 +187,7 @@ Add per-repository review instructions by creating markdown files in `~/.config/
 ~/.config/prtea/prompts/{owner}_{repo}.md
 ```
 
-These are automatically included when analyzing PRs for that repository.
+These are automatically included in the AI context for that repository's PRs.
 
 ## Development
 
@@ -215,7 +219,7 @@ Then update the Homebrew formula in `../homebrew-tap/Formula/prtea.rb`.
 cmd/prtea/main.go        Entry point (--version, --demo flags)
 internal/ui/              Bubbletea UI layer (panels, layout, styles, keys)
 internal/github/          GitHub API client (gh CLI based, with CommandRunner injection)
-internal/claude/          Claude CLI subprocess (analysis + chat + caching)
+internal/ai/              Codex CLI engine (threads, event stream, action protocol)
 internal/demo/            Demo mode mock service (in-memory fake data)
 internal/config/          Config file management
 internal/notify/          Desktop notifications

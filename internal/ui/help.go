@@ -117,7 +117,7 @@ func (m HelpOverlayModel) View() string {
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color("62")).
 		Padding(0, 1).
-		Width(overlayW - 2).   // account for border
+		Width(overlayW - 2). // account for border
 		Height(overlayH - 2)
 
 	rendered := overlayStyle.Render(box)
@@ -182,7 +182,7 @@ func (m HelpOverlayModel) renderHelpContent() string {
 				{"[ / \\ / ]", "Toggle left/center/right panel"},
 				{"z", "Zoom focused panel"},
 				{"r", "Refresh (PR list / selected PR)"},
-				{"a", "Analyze PR"},
+				{"a", "AI: orient me on this PR"},
 				{"o", "Open in browser"},
 				{"Ctrl+P", "Quick command palette"},
 				{":", "Command mode"},
@@ -218,8 +218,8 @@ func (m HelpOverlayModel) renderHelpContent() string {
 				{"Enter", "Select hunk + focus chat"},
 				{"S", "Select/deselect file hunks"},
 				{"c", "View/reply to comments"},
-			{"/", "Search in diff"},
-			{"Esc", "Clear search"},
+				{"/", "Search in diff"},
+				{"Esc", "Clear search"},
 			},
 		},
 		{
@@ -271,7 +271,7 @@ func (m HelpOverlayModel) renderHelpContent() string {
 			title: "Available Commands",
 			panel: -1,
 			match: false,
-			keys: availableCommandEntries(),
+			keys:  availableCommandEntries(),
 		},
 	}
 

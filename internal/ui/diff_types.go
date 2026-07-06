@@ -11,7 +11,7 @@ import (
 type DiffViewerTab int
 
 const (
-	TabDiff   DiffViewerTab = iota
+	TabDiff DiffViewerTab = iota
 	TabPRInfo
 	TabCI
 )
@@ -35,7 +35,6 @@ type commentKind byte
 
 const (
 	commentNone    commentKind = iota
-	commentAI                  // AI-generated inline comment
 	commentGitHub              // GitHub review comment
 	commentPending             // Pending user/AI draft
 )

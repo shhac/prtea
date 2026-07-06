@@ -8,15 +8,14 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/shhac/prtea/internal/claude"
 )
 
 // CommentOverlayModel renders a centered overlay showing diff context,
 // a scrollable comment thread, and a reply input.
 type CommentOverlayModel struct {
-	viewport viewport.Model
-	textarea textarea.Model
-	visible  bool
+	viewport  viewport.Model
+	textarea  textarea.Model
+	visible   bool
 	composing bool // true when textarea is focused
 	ready     bool
 
@@ -35,7 +34,6 @@ type CommentOverlayModel struct {
 
 	// Comment data
 	ghThreads       []ghCommentThread
-	aiComments      []claude.InlineReviewComment
 	pendingComments []PendingInlineComment
 
 	// Reply target: root comment ID for the first GitHub thread (0 if none)
@@ -60,7 +58,6 @@ func (m *CommentOverlayModel) Show(msg ShowCommentOverlayMsg) tea.Cmd {
 	m.targetLine = msg.Line
 	m.targetStartLine = msg.StartLine
 	m.ghThreads = msg.GHThreads
-	m.aiComments = msg.AIComments
 	m.pendingComments = msg.PendingComments
 	m.textarea.SetValue("")
 
@@ -322,18 +319,6 @@ func (m CommentOverlayModel) renderThreadContent() string {
 
 	hasContent := false
 
-	// AI comments
-	for _, c := range m.aiComments {
-		if hasContent {
-			b.WriteString("\n\n")
-		}
-		header := commentBoxHeaderStyle.Render("🤖 Claude AI")
-		b.WriteString(header)
-		b.WriteString("\n")
-		b.WriteString(wordWrapPlain(c.Body, innerW))
-		hasContent = true
-	}
-
 	// GitHub threads
 	for _, t := range m.ghThreads {
 		if hasContent {
@@ -364,11 +349,7 @@ func (m CommentOverlayModel) renderThreadContent() string {
 		if hasContent {
 			b.WriteString("\n\n")
 		}
-		source := "Draft"
-		if c.Source == "ai" {
-			source = "Draft (AI)"
-		}
-		header := commentBoxHeaderStyle.Render("📝 " + source)
+		header := commentBoxHeaderStyle.Render("📝 Draft")
 		b.WriteString(header)
 		b.WriteString("\n")
 		b.WriteString(wordWrapPlain(c.Body, innerW))

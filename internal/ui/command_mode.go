@@ -20,7 +20,7 @@ type Command struct {
 // Quick-key commands are listed first, full-mode-only commands follow.
 var commandRegistry = []Command{
 	// Actions with quick keys
-	{Name: "analyze", Aliases: []string{"an"}, QuickKey: "a", Description: "Analyze PR with Claude"},
+	{Name: "analyze", Aliases: []string{"an", "orient"}, QuickKey: "a", Description: "Ask AI to orient you on this PR"},
 	{Name: "open", Aliases: []string{"op"}, QuickKey: "o", Description: "Open PR in browser"},
 	{Name: "new", Aliases: nil, QuickKey: "n", Description: "New chat (clear)"},
 	{Name: "quit", Aliases: []string{"q"}, QuickKey: "q", Description: "Quit prtea"},
@@ -34,7 +34,6 @@ var commandRegistry = []Command{
 	// Full mode only
 	{Name: "config", Aliases: []string{"settings", "cfg"}, QuickKey: "s", Description: "Open settings"},
 	{Name: "clear selection", Aliases: []string{"cs"}, Description: "Clear hunk selection"},
-	{Name: "review", Aliases: []string{"rev"}, Description: "Generate AI review"},
 	{Name: "approve", Aliases: []string{"ap"}, Description: "Quick-approve PR"},
 	{Name: "rerun ci", Aliases: []string{"rerun"}, Description: "Re-run failed CI checks"},
 	{Name: "refresh", Aliases: []string{"ref"}, Description: "Refresh current view"},

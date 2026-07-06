@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 
+	"github.com/shhac/prtea/internal/ai"
 	"github.com/shhac/prtea/internal/github"
 )
 
@@ -17,37 +18,30 @@ type PRSession struct {
 	HTMLURL string
 
 	// PR data
-	DiffFiles            []github.PRFile        // stored for analysis context
+	DiffFiles             []github.PRFile        // stored for AI context
 	PendingInlineComments []PendingInlineComment // unified pool of pending comments
 
-	// Streaming state
-	StreamChan           chatStreamChan     // active chat streaming channel
-	StreamCancel         context.CancelFunc // cancels active stream goroutine
-	AnalysisStreamCh     analysisStreamChan // active analysis streaming channel
-	AnalysisStreamCancel context.CancelFunc // cancels active analysis stream
-	AIReviewCancel       context.CancelFunc // cancels active AI review
+	// AI thread state. The display transcript lives in the chat panel and is
+	// persisted alongside the thread ID via the thread store.
+	ThreadID       string      // codex session ID ("" until the first turn starts one)
+	PendingActions []ai.Action // proposed actions awaiting user confirmation
 
-	// Analysis state
-	Analyzing bool
+	// Data cached for AI context
+	Comments       []github.Comment
+	InlineComments []github.InlineComment
+
+	// Active AI turn
+	AIEventCh aiEventChan        // event channel for the in-flight turn
+	AICancel  context.CancelFunc // cancels the in-flight turn
 }
 
-// CancelStreams cancels any active chat, analysis, and AI review goroutines.
-func (s *PRSession) CancelStreams() {
-	if s.StreamCancel != nil {
-		s.StreamCancel()
-		s.StreamCancel = nil
+// CancelAITurn cancels any in-flight AI turn.
+func (s *PRSession) CancelAITurn() {
+	if s.AICancel != nil {
+		s.AICancel()
+		s.AICancel = nil
 	}
-	s.StreamChan = nil
-	if s.AnalysisStreamCancel != nil {
-		s.AnalysisStreamCancel()
-		s.AnalysisStreamCancel = nil
-	}
-	s.AnalysisStreamCh = nil
-	if s.AIReviewCancel != nil {
-		s.AIReviewCancel()
-		s.AIReviewCancel = nil
-	}
-	s.Analyzing = false
+	s.AIEventCh = nil
 }
 
 // MatchesPR returns true if this session is for the given PR number.

@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/shhac/prtea/internal/claude"
+	"github.com/shhac/prtea/internal/ai"
 	"github.com/shhac/prtea/internal/github"
 )
 
@@ -32,26 +32,10 @@ type GitHubService interface {
 	SetFetchLimit(limit int)
 }
 
-// AIAnalyzer defines the analysis operations used by the UI layer.
-// *claude.Analyzer satisfies this interface.
-type AIAnalyzer interface {
-	Analyze(ctx context.Context, input claude.AnalyzeInput, onProgress claude.ProgressFunc) (*claude.AnalysisResult, error)
-	AnalyzeDiff(ctx context.Context, input claude.AnalyzeDiffInput, onProgress claude.ProgressFunc) (*claude.AnalysisResult, error)
-	AnalyzeDiffStream(ctx context.Context, input claude.AnalyzeDiffInput, onChunk func(string)) (*claude.AnalysisResult, error)
-	AnalyzeForReview(ctx context.Context, input claude.ReviewInput, onProgress claude.ProgressFunc) (*claude.ReviewAnalysis, error)
+// AIEngine defines the conversation operations used by the UI layer.
+// *ai.CodexEngine satisfies this interface; demo mode injects a fake.
+type AIEngine interface {
+	StartThread(ctx context.Context, input ai.ThreadInput) (<-chan ai.Event, error)
+	Send(ctx context.Context, threadID string, input ai.MessageInput) (<-chan ai.Event, error)
 	SetTimeout(d time.Duration)
-	SetAnalysisMaxTurns(n int)
-}
-
-// AIChatService defines the chat operations used by the UI layer.
-// *claude.ChatService satisfies this interface.
-type AIChatService interface {
-	ChatStream(ctx context.Context, input claude.ChatInput, onChunk func(text string)) (string, error)
-	ClearSession(owner, repo string, prNumber int)
-	SaveSession(owner, repo string, prNumber int)
-	GetSessionMessages(owner, repo string, prNumber int) []claude.ChatMessage
-	SetTimeout(d time.Duration)
-	SetMaxPromptTokens(n int)
-	SetMaxHistoryMessages(n int)
-	SetMaxTurns(n int)
 }

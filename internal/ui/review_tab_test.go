@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/shhac/prtea/internal/claude"
 )
 
 func TestReviewTab_ParseDefault(t *testing.T) {
@@ -69,9 +68,6 @@ func TestReviewTab_Clear(t *testing.T) {
 	// Put the tab into a messy state
 	tab.action = ReviewRequestChanges
 	tab.submitting = true
-	tab.aiLoading = true
-	tab.aiError = "some error"
-	tab.aiResult = &claude.ReviewAnalysis{Body: "test"}
 	tab.pendingCount = 5
 	tab.textArea.SetValue("some text")
 
@@ -83,107 +79,11 @@ func TestReviewTab_Clear(t *testing.T) {
 	if tab.submitting {
 		t.Error("submitting should be false")
 	}
-	if tab.aiLoading {
-		t.Error("aiLoading should be false")
-	}
-	if tab.aiError != "" {
-		t.Errorf("aiError = %q", tab.aiError)
-	}
-	if tab.aiResult != nil {
-		t.Error("aiResult should be nil")
-	}
 	if tab.pendingCount != 0 {
 		t.Errorf("pendingCount = %d", tab.pendingCount)
 	}
 	if tab.textArea.Value() != "" {
 		t.Errorf("textArea value = %q", tab.textArea.Value())
-	}
-}
-
-func TestReviewTab_SetAIReviewResult(t *testing.T) {
-	tab := NewReviewTabModel()
-
-	// Start with loading state
-	tab.SetAIReviewLoading()
-	if !tab.aiLoading {
-		t.Error("expected aiLoading=true")
-	}
-
-	// Set result
-	result := &claude.ReviewAnalysis{
-		Action: "request_changes",
-		Body:   "Please fix the error handling",
-	}
-	tab.SetAIReviewResult(result)
-
-	if tab.aiLoading {
-		t.Error("aiLoading should be cleared")
-	}
-	if tab.aiResult != result {
-		t.Error("aiResult not set")
-	}
-	if tab.textArea.Value() != "Please fix the error handling" {
-		t.Errorf("textArea = %q", tab.textArea.Value())
-	}
-	if tab.action != ReviewRequestChanges {
-		t.Errorf("action = %d, want %d", tab.action, ReviewRequestChanges)
-	}
-}
-
-func TestReviewTab_SetAIReviewResult_Approve(t *testing.T) {
-	tab := NewReviewTabModel()
-	tab.SetAIReviewResult(&claude.ReviewAnalysis{
-		Action: "approve",
-		Body:   "LGTM",
-	})
-	if tab.action != ReviewApprove {
-		t.Errorf("action = %d, want %d", tab.action, ReviewApprove)
-	}
-}
-
-func TestReviewTab_SetAIReviewResult_DefaultComment(t *testing.T) {
-	tab := NewReviewTabModel()
-	tab.SetAIReviewResult(&claude.ReviewAnalysis{
-		Action: "comment",
-		Body:   "Some notes",
-	})
-	if tab.action != ReviewComment {
-		t.Errorf("action = %d, want %d", tab.action, ReviewComment)
-	}
-}
-
-func TestReviewTab_SetAIReviewError(t *testing.T) {
-	tab := NewReviewTabModel()
-	tab.SetAIReviewLoading()
-	tab.SetAIReviewError("timeout")
-
-	if tab.aiLoading {
-		t.Error("aiLoading should be cleared")
-	}
-	if tab.aiError != "timeout" {
-		t.Errorf("aiError = %q", tab.aiError)
-	}
-	if tab.aiResult != nil {
-		t.Error("aiResult should be nil")
-	}
-}
-
-func TestReviewTab_ClearAIReview(t *testing.T) {
-	tab := NewReviewTabModel()
-	tab.aiResult = &claude.ReviewAnalysis{Body: "test"}
-	tab.aiLoading = true
-	tab.aiError = "err"
-
-	tab.ClearAIReview()
-
-	if tab.aiResult != nil {
-		t.Error("aiResult should be nil")
-	}
-	if tab.aiLoading {
-		t.Error("aiLoading should be false")
-	}
-	if tab.aiError != "" {
-		t.Error("aiError should be empty")
 	}
 }
 

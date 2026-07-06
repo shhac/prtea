@@ -10,7 +10,6 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/shhac/prtea/internal/claude"
 	"github.com/shhac/prtea/internal/github"
 )
 
@@ -51,10 +50,6 @@ type DiffViewerModel struct {
 	// Multi-line selection (visual mode) for range comments.
 	selectionAnchor int // -1 means no active selection
 
-	// AI inline comment state
-	aiInlineComments      []claude.InlineReviewComment
-	aiCommentsByFileLine  map[string][]claude.InlineReviewComment // "path:line" → comments
-
 	// GitHub inline comment state
 	ghCommentThreads map[string][]ghCommentThread // "path:line" → threaded comments
 
@@ -62,10 +57,10 @@ type DiffViewerModel struct {
 	pendingCommentsByFileLine map[string][]PendingInlineComment // "path:line" → comments
 
 	// Comment input mode
-	commentMode           bool
-	commentInput          textinput.Model
-	commentTargetFile     string
-	commentTargetLine     int
+	commentMode            bool
+	commentInput           textinput.Model
+	commentTargetFile      string
+	commentTargetLine      int
 	commentTargetStartLine int // non-zero for multi-line range comments
 
 	// Search state
@@ -429,8 +424,6 @@ func (m *DiffViewerModel) SetLoading(prNumber int) {
 	m.commentMode = false
 	m.commentInput.SetValue("")
 	m.commentInput.Blur()
-	m.aiInlineComments = nil
-	m.aiCommentsByFileLine = nil
 	m.ghCommentThreads = nil
 	m.pendingCommentsByFileLine = nil
 	m.currentFileIdx = 0

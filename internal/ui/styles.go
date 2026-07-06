@@ -11,40 +11,40 @@ import (
 
 // Panel border colors
 var (
-	focusedBorderColor   = lipgloss.Color("62")  // bright purple/blue
-	unfocusedBorderColor = lipgloss.Color("240") // dim gray
-	insertModeBorderColor = lipgloss.Color("42") // green
+	focusedBorderColor    = lipgloss.Color("62")  // bright purple/blue
+	unfocusedBorderColor  = lipgloss.Color("240") // dim gray
+	insertModeBorderColor = lipgloss.Color("42")  // green
 )
 
 // Diff colors
 var (
-	diffAddedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("42"))
-	diffRemovedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
+	diffAddedStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("42"))
+	diffRemovedStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
 	diffHunkHeaderStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("33")).Bold(true)
 	diffFileHeaderStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("220")).
-		Bold(true)
+				Foreground(lipgloss.Color("220")).
+				Bold(true)
 )
 
 // Status bar
 var (
 	statusBarStyle = lipgloss.NewStyle().
-		Background(lipgloss.Color("236")).
-		Foreground(lipgloss.Color("252"))
+			Background(lipgloss.Color("236")).
+			Foreground(lipgloss.Color("252"))
 	statusBarAccentStyle = lipgloss.NewStyle().
-		Background(lipgloss.Color("236")).
-		Foreground(lipgloss.Color("62")).
-		Bold(true)
+				Background(lipgloss.Color("236")).
+				Foreground(lipgloss.Color("62")).
+				Bold(true)
 )
 
 // Chat styles
 var (
 	chatUserStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("33")).
-		Bold(true)
+			Foreground(lipgloss.Color("33")).
+			Bold(true)
 	chatAssistantStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("42")).
-		Bold(true)
+				Foreground(lipgloss.Color("42")).
+				Bold(true)
 )
 
 // Selected hunk highlight
@@ -77,11 +77,9 @@ var (
 
 // Inline comment box border colors (normal and highlighted)
 var (
-	commentBoxAIBorder      = lipgloss.Color("75")  // blue
 	commentBoxGitHubBorder  = lipgloss.Color("220") // yellow
 	commentBoxPendingBorder = lipgloss.Color("214") // orange
 
-	commentBoxAIBorderHi      = lipgloss.Color("117") // bright blue
 	commentBoxGitHubBorderHi  = lipgloss.Color("228") // bright yellow
 	commentBoxPendingBorderHi = lipgloss.Color("222") // bright orange
 )
@@ -225,65 +223,65 @@ func formatUserError(err string) string {
 // Review tab styles
 var (
 	reviewApproveStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("0")).
-		Background(lipgloss.Color("42")).
-		Bold(true).
-		Padding(0, 1)
+				Foreground(lipgloss.Color("0")).
+				Background(lipgloss.Color("42")).
+				Bold(true).
+				Padding(0, 1)
 	reviewCommentStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("252")).
-		Background(lipgloss.Color("62")).
-		Bold(true).
-		Padding(0, 1)
+				Foreground(lipgloss.Color("252")).
+				Background(lipgloss.Color("62")).
+				Bold(true).
+				Padding(0, 1)
 	reviewRequestChangesStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("255")).
-		Background(lipgloss.Color("196")).
-		Bold(true).
-		Padding(0, 1)
+					Foreground(lipgloss.Color("255")).
+					Background(lipgloss.Color("196")).
+					Bold(true).
+					Padding(0, 1)
 	reviewOptionDimStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("244")).
-		Padding(0, 1)
+				Foreground(lipgloss.Color("244")).
+				Padding(0, 1)
 	reviewSubmitFocusedStyle = lipgloss.NewStyle().
-		Bold(true).
-		Padding(0, 2)
+					Bold(true).
+					Padding(0, 2)
 	reviewSubmitDimStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("244")).
-		Padding(0, 2)
+				Foreground(lipgloss.Color("244")).
+				Padding(0, 2)
 	reviewLabelStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("244")).
-		Bold(true)
+				Foreground(lipgloss.Color("244")).
+				Bold(true)
 )
 
 // Command palette styles
 var (
 	cmdPaletteTitleStyle = lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color("252")).
-		Background(lipgloss.Color("62"))
+				Bold(true).
+				Foreground(lipgloss.Color("252")).
+				Background(lipgloss.Color("62"))
 	cmdPaletteDividerStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("240"))
+				Foreground(lipgloss.Color("240"))
 	cmdPaletteKeyStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("214")).
-		Bold(true)
+				Foreground(lipgloss.Color("214")).
+				Bold(true)
 	cmdPaletteDescStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("252"))
+				Foreground(lipgloss.Color("252"))
 	cmdPaletteSelectedStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("42")).
-		Bold(true)
+				Foreground(lipgloss.Color("42")).
+				Bold(true)
 	cmdPaletteMarkerStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("42"))
+				Foreground(lipgloss.Color("42"))
 	cmdPaletteAliasStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("244")).
-		Italic(true)
+				Foreground(lipgloss.Color("244")).
+				Italic(true)
 	cmdPaletteHintStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("244"))
+				Foreground(lipgloss.Color("244"))
 	cmdPaletteErrorStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("196")).
-		Italic(true)
+				Foreground(lipgloss.Color("196")).
+				Italic(true)
 	cmdPalettePromptStyle = lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color("62"))
+				Bold(true).
+				Foreground(lipgloss.Color("62"))
 	cmdPaletteInputTextStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("252"))
+					Foreground(lipgloss.Color("252"))
 )
 
 // Vertical scrollbar styles (1-char wide column in diff viewer)
@@ -295,8 +293,6 @@ var (
 // scrollbarCommentStyle returns the style for a comment marker at the given kind.
 func scrollbarCommentStyle(kind commentKind) lipgloss.Style {
 	switch kind {
-	case commentAI:
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("75")) // blue (matches AI prefix)
 	case commentGitHub:
 		return lipgloss.NewStyle().Foreground(lipgloss.Color("220")) // yellow (matches GH author)
 	case commentPending:

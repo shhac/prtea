@@ -2,7 +2,7 @@ package ui
 
 import (
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/shhac/prtea/internal/claude"
+	"github.com/shhac/prtea/internal/ai"
 	"github.com/shhac/prtea/internal/github"
 )
 
@@ -113,21 +113,6 @@ type CIRerunErrMsg struct {
 	Err      error
 }
 
-// -- Claude analysis --
-
-// AnalysisCompleteMsg is sent when Claude analysis finishes successfully.
-type AnalysisCompleteMsg struct {
-	PRNumber int
-	DiffHash string
-	Result   *claude.AnalysisResult
-}
-
-// AnalysisErrorMsg is sent when Claude analysis fails.
-type AnalysisErrorMsg struct {
-	PRNumber int
-	Err      error
-}
-
 // -- PR actions --
 
 // PRApproveDoneMsg is sent when PR approval succeeds.
@@ -158,16 +143,15 @@ type PRCloseErrMsg struct {
 type ReviewAction int
 
 const (
-	ReviewApprove        ReviewAction = iota
+	ReviewApprove ReviewAction = iota
 	ReviewComment
 	ReviewRequestChanges
 )
 
 // ReviewSubmitMsg is emitted by the chat panel when the user submits a review.
 type ReviewSubmitMsg struct {
-	Action         ReviewAction
-	Body           string
-	InlineComments []claude.InlineReviewComment // optional inline comments from AI review
+	Action ReviewAction
+	Body   string
 }
 
 // ReviewSubmitDoneMsg is sent when review submission succeeds.
@@ -188,20 +172,6 @@ type ReviewValidationMsg struct {
 	Message string
 }
 
-// -- AI Review --
-
-// AIReviewCompleteMsg is sent when AI review generation finishes successfully.
-type AIReviewCompleteMsg struct {
-	PRNumber int
-	Result   *claude.ReviewAnalysis
-}
-
-// AIReviewErrorMsg is sent when AI review generation fails.
-type AIReviewErrorMsg struct {
-	PRNumber int
-	Err      error
-}
-
 // -- Chat panel --
 
 // ModeChangedMsg is sent when the chat panel changes modes.
@@ -217,15 +187,26 @@ type ChatSendMsg struct {
 	Message string
 }
 
-// ChatResponseMsg is sent when Claude responds to a chat message.
-type ChatResponseMsg struct {
-	Content string
-	Err     error
+// AIEventMsg carries one normalized engine event for the active turn.
+// Owner/Repo identify the PR so late events can still be attributed after
+// the user navigates away.
+type AIEventMsg struct {
+	Owner    string
+	Repo     string
+	PRNumber int
+	Event    ai.Event
 }
 
-// ChatStreamChunkMsg carries a streaming text chunk from Claude.
-type ChatStreamChunkMsg struct {
-	Content string
+// AIActionRespondMsg is emitted by the chat panel when the user confirms or
+// dismisses a proposed action.
+type AIActionRespondMsg struct {
+	Approve bool
+}
+
+// AIActionResultMsg reports the outcome of executing a confirmed action.
+type AIActionResultMsg struct {
+	Description string
+	Err         error
 }
 
 // CommentPostMsg is emitted when the user wants to post a PR comment.
@@ -303,11 +284,10 @@ type InlineCommentAddMsg struct {
 	StartLine int // non-zero for multi-line range comments
 }
 
-// PendingInlineComment wraps an inline review comment with source tracking
-// to distinguish AI-generated comments from user-authored ones.
+// PendingInlineComment is a user-authored inline review comment queued for
+// the next review submission.
 type PendingInlineComment struct {
-	claude.InlineReviewComment
-	Source string // "ai" or "user"
+	github.ReviewCommentPayload
 }
 
 // -- Comment overlay --
@@ -320,7 +300,6 @@ type ShowCommentOverlayMsg struct {
 	DiffLines       []string // raw hunk lines for context display
 	TargetLineInCtx int      // index of target line within DiffLines
 	GHThreads       []ghCommentThread
-	AIComments      []claude.InlineReviewComment
 	PendingComments []PendingInlineComment
 }
 
@@ -340,13 +319,5 @@ type InlineCommentReplyDoneMsg struct {
 
 // -- Internal streaming --
 
-// chatStreamChan carries streaming chunks and the final response from Claude chat.
-type chatStreamChan chan tea.Msg
-
-// analysisStreamChan carries streaming chunks and the final result from Claude analysis.
-type analysisStreamChan chan tea.Msg
-
-// AnalysisStreamChunkMsg carries a streaming text chunk during analysis.
-type AnalysisStreamChunkMsg struct {
-	Content string
-}
+// aiEventChan carries AIEventMsg values from the engine goroutine to the UI.
+type aiEventChan chan tea.Msg

@@ -3,7 +3,6 @@ package ui
 import (
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/spinner"
@@ -11,7 +10,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/shhac/prtea/internal/claude"
+	"github.com/shhac/prtea/internal/ai"
 	"github.com/shhac/prtea/internal/github"
 )
 
@@ -28,7 +27,6 @@ type ChatTab int
 
 const (
 	ChatTabChat ChatTab = iota
-	ChatTabAnalysis
 	ChatTabComments
 	ChatTabReview
 )
@@ -42,7 +40,7 @@ const (
 	ReviewFocusSubmit
 )
 
-// ChatPanelModel manages the chat/analysis panel as a thin coordinator
+// ChatPanelModel manages the chat panel as a thin coordinator
 // that delegates state and rendering to per-tab models.
 type ChatPanelModel struct {
 	// Shared UI components
@@ -61,7 +59,6 @@ type ChatPanelModel struct {
 
 	// Per-tab models
 	chat     ChatTabModel
-	analysis AnalysisTabModel
 	comments CommentsTabModel
 	review   ReviewTabModel
 }
@@ -96,17 +93,6 @@ func (m *ChatPanelModel) SetActiveTab(tab ChatTab) {
 	m.activeTab = tab
 }
 
-// IsAIReviewLoading returns whether the AI review is in progress.
-func (m ChatPanelModel) IsAIReviewLoading() bool {
-	return m.review.IsAIReviewLoading()
-}
-
-// SetStreamCheckpoint sets the checkpoint interval for streaming renderers.
-func (m *ChatPanelModel) SetStreamCheckpoint(d time.Duration) {
-	m.chat.chatStream.CheckpointInterval = d
-	m.analysis.stream.CheckpointInterval = d
-}
-
 // SetDefaultReviewAction sets the default review action from config.
 func (m *ChatPanelModel) SetDefaultReviewAction(action string) {
 	m.review.SetDefaultAction(action)
@@ -117,72 +103,63 @@ func (m *ChatPanelModel) UpdateDefaultReviewAction(action string) {
 	m.review.UpdateDefaultAction(action)
 }
 
-// -- Analysis delegation --
-
-// SetAnalysisLoading puts the analysis tab into loading state.
-func (m *ChatPanelModel) SetAnalysisLoading() {
-	m.analysis.SetLoading()
-	m.refreshViewport()
-}
-
-// SetAnalysisResult sets the analysis result and clears loading state.
-func (m *ChatPanelModel) SetAnalysisResult(result *claude.AnalysisResult) {
-	m.analysis.SetResult(result)
-	m.refreshViewport()
-}
-
-// SetAnalysisError sets an error message on the analysis tab.
-func (m *ChatPanelModel) SetAnalysisError(err string) {
-	m.analysis.SetError(err)
-	m.refreshViewport()
-}
-
-// AppendAnalysisStreamChunk appends a text chunk during analysis streaming.
-func (m *ChatPanelModel) AppendAnalysisStreamChunk(chunk string) {
-	m.analysis.AppendStreamChunk(chunk)
-	wasAtBottom := m.viewport.AtBottom()
-	m.refreshViewport()
-	if wasAtBottom {
-		m.viewport.GotoBottom()
-	}
-}
-
 // -- Chat delegation --
 
-// AppendStreamChunk appends a text chunk during chat streaming.
-// Only auto-scrolls if the user was already at the bottom.
-func (m *ChatPanelModel) AppendStreamChunk(chunk string) {
-	w := m.contentWidth()
-	m.chat.chatStream.Append(chunk, func(s string) string {
-		return m.md.RenderMarkdown(s, w)
-	})
-	wasAtBottom := m.viewport.AtBottom()
-	m.refreshViewport()
-	if wasAtBottom {
-		m.viewport.GotoBottom()
-	}
+// IsChatWaiting returns whether an AI turn is in flight.
+func (m ChatPanelModel) IsChatWaiting() bool {
+	return m.chat.IsWaiting()
 }
 
-// AddResponse appends a Claude response and clears the waiting state.
+// ChatMessages returns the current transcript for persistence.
+func (m ChatPanelModel) ChatMessages() []ai.Message {
+	return m.chat.Messages()
+}
+
+// StartChatWaiting records the user message and enters the waiting state.
+func (m *ChatPanelModel) StartChatWaiting(userMsg string) {
+	m.chat.SetWaiting(userMsg)
+	m.refreshViewport()
+	m.viewport.GotoBottom()
+}
+
+// AddActivity appends a dim activity line to the transcript.
+// Only auto-scrolls if the user was already at the bottom.
+func (m *ChatPanelModel) AddActivity(line string) {
+	m.chat.AddActivity(line)
+	m.scrollPreservingPosition()
+}
+
+// AddResponse appends an assistant message.
 // Only auto-scrolls if the user was already at the bottom.
 func (m *ChatPanelModel) AddResponse(content string) {
 	m.chat.AddResponse(content)
-	wasAtBottom := m.viewport.AtBottom()
+	m.scrollPreservingPosition()
+}
+
+// SetTurnDone clears the waiting state at the end of a turn.
+func (m *ChatPanelModel) SetTurnDone() {
+	m.chat.SetTurnDone()
+	m.scrollPreservingPosition()
+}
+
+// SetPendingActions shows proposed actions awaiting confirmation.
+func (m *ChatPanelModel) SetPendingActions(actions []ai.Action) {
+	m.chat.SetPendingActions(actions)
 	m.refreshViewport()
-	if wasAtBottom {
-		m.viewport.GotoBottom()
-	}
+	m.viewport.GotoBottom()
+}
+
+// ClearPendingActions removes the pending action prompt.
+func (m *ChatPanelModel) ClearPendingActions() {
+	m.chat.ClearPendingActions()
+	m.refreshViewport()
 }
 
 // SetChatError sets a chat error and clears the waiting state.
 // Only auto-scrolls if the user was already at the bottom.
 func (m *ChatPanelModel) SetChatError(err string) {
 	m.chat.SetChatError(err)
-	wasAtBottom := m.viewport.AtBottom()
-	m.refreshViewport()
-	if wasAtBottom {
-		m.viewport.GotoBottom()
-	}
+	m.scrollPreservingPosition()
 }
 
 // ClearChat resets chat messages and state for a new PR.
@@ -191,10 +168,20 @@ func (m *ChatPanelModel) ClearChat() {
 	m.refreshViewport()
 }
 
-// RestoreMessages restores chat history from a previous session.
-func (m *ChatPanelModel) RestoreMessages(msgs []claude.ChatMessage) {
+// RestoreMessages restores a transcript from a previous session.
+func (m *ChatPanelModel) RestoreMessages(msgs []ai.Message) {
 	m.chat.RestoreMessages(msgs)
 	m.refreshViewport()
+}
+
+// scrollPreservingPosition refreshes the viewport, auto-scrolling only if the
+// user was already at the bottom.
+func (m *ChatPanelModel) scrollPreservingPosition() {
+	wasAtBottom := m.viewport.AtBottom()
+	m.refreshViewport()
+	if wasAtBottom {
+		m.viewport.GotoBottom()
+	}
 }
 
 // -- Comments delegation --
@@ -237,26 +224,6 @@ func (m *ChatPanelModel) ClearReview() {
 	m.review.Clear()
 }
 
-// SetAIReviewLoading puts the review tab into AI review loading state.
-func (m *ChatPanelModel) SetAIReviewLoading() {
-	m.review.SetAIReviewLoading()
-}
-
-// SetAIReviewResult pre-populates the review form with AI-generated content.
-func (m *ChatPanelModel) SetAIReviewResult(result *claude.ReviewAnalysis) {
-	m.review.SetAIReviewResult(result)
-}
-
-// SetAIReviewError sets an error message for AI review generation.
-func (m *ChatPanelModel) SetAIReviewError(err string) {
-	m.review.SetAIReviewError(err)
-}
-
-// ClearAIReview resets AI review state.
-func (m *ChatPanelModel) ClearAIReview() {
-	m.review.ClearAIReview()
-}
-
 // SetPendingCommentCount sets the number of pending inline comments.
 func (m *ChatPanelModel) SetPendingCommentCount(n int) {
 	m.review.SetPendingCommentCount(n)
@@ -295,6 +262,12 @@ func (m *ChatPanelModel) SetSize(width, height int) {
 	m.refreshViewport()
 }
 
+// ExitInsertMode leaves insert mode, e.g. when an action proposal needs y/n.
+func (m *ChatPanelModel) ExitInsertMode() {
+	m.chatMode = ChatModeNormal
+	m.textInput.Blur()
+}
+
 func (m *ChatPanelModel) SetFocused(focused bool) {
 	m.focused = focused
 	if !focused && m.chatMode == ChatModeInsert {
@@ -311,7 +284,7 @@ func (m *ChatPanelModel) SetFocused(focused bool) {
 func (m ChatPanelModel) Update(msg tea.Msg) (ChatPanelModel, tea.Cmd) {
 	switch msg := msg.(type) {
 	case spinner.TickMsg:
-		if m.analysis.loading || m.comments.loading || m.review.aiLoading {
+		if m.chat.IsWaiting() || m.comments.loading {
 			var cmd tea.Cmd
 			m.spinner, cmd = m.spinner.Update(msg)
 			return m, cmd
@@ -361,9 +334,7 @@ func (m ChatPanelModel) updateInsertMode(msg tea.KeyMsg) (ChatPanelModel, tea.Cm
 
 		// Chat tab send
 		if !m.chat.IsWaiting() {
-			m.chat.SetWaiting(userMsg)
-			m.refreshViewport()
-			m.viewport.GotoBottom()
+			m.StartChatWaiting(userMsg)
 			return m, func() tea.Msg { return ChatSendMsg{Message: userMsg} }
 		}
 		return m, nil
@@ -375,6 +346,16 @@ func (m ChatPanelModel) updateInsertMode(msg tea.KeyMsg) (ChatPanelModel, tea.Cm
 }
 
 func (m ChatPanelModel) updateNormalMode(msg tea.KeyMsg) (ChatPanelModel, tea.Cmd) {
+	// Pending action confirmation takes precedence on the chat tab.
+	if m.activeTab == ChatTabChat && m.chat.HasPendingActions() {
+		switch msg.String() {
+		case "y", "Y":
+			return m, func() tea.Msg { return AIActionRespondMsg{Approve: true} }
+		case "n", "N", "esc":
+			return m, func() tea.Msg { return AIActionRespondMsg{Approve: false} }
+		}
+	}
+
 	switch {
 	case key.Matches(msg, ChatKeys.PrevTab):
 		if m.activeTab > ChatTabChat {
@@ -394,9 +375,6 @@ func (m ChatPanelModel) updateNormalMode(msg tea.KeyMsg) (ChatPanelModel, tea.Cm
 		}
 		return m, nil
 	case msg.String() == "enter":
-		if m.activeTab == ChatTabAnalysis {
-			return m, nil
-		}
 		m.chatMode = ChatModeInsert
 		if m.activeTab == ChatTabComments {
 			m.textInput.Placeholder = "Write a comment..."
@@ -442,13 +420,10 @@ func (m *ChatPanelModel) refreshViewport() {
 		return
 	}
 	w := m.contentWidth()
-	sv := m.spinner.View()
 	var content string
 	switch m.activeTab {
-	case ChatTabAnalysis:
-		content = m.analysis.Render(w, sv)
 	case ChatTabComments:
-		content = m.comments.Render(w, sv, &m.md)
+		content = m.comments.Render(w, m.spinner.View(), &m.md)
 	default:
 		content = m.chat.Render(w, &m.md)
 	}
@@ -502,7 +477,6 @@ func (m ChatPanelModel) renderHeader() string {
 		name string
 	}{
 		{ChatTabChat, chatLabel},
-		{ChatTabAnalysis, "Analysis"},
 		{ChatTabComments, "Comments"},
 		{ChatTabReview, "Review"},
 	}
@@ -553,10 +527,6 @@ func (m ChatPanelModel) renderInputSeparator() string {
 func (m ChatPanelModel) renderInput() string {
 	if m.activeTab == ChatTabReview {
 		return ""
-	}
-	if m.activeTab == ChatTabAnalysis {
-		dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Italic(true)
-		return dimStyle.Render("> press 'a' to analyze")
 	}
 
 	if m.chatMode == ChatModeInsert {

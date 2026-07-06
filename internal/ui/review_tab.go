@@ -7,7 +7,6 @@ import (
 	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/shhac/prtea/internal/claude"
 )
 
 // ReviewTabModel manages the review submission tab state and rendering.
@@ -18,11 +17,6 @@ type ReviewTabModel struct {
 	focus         ReviewFocus
 	submitting    bool
 	defaultAction ReviewAction
-
-	// AI review state
-	aiResult  *claude.ReviewAnalysis
-	aiLoading bool
-	aiError   string
 
 	// Pending inline comment count (set by app)
 	pendingCount int
@@ -82,57 +76,7 @@ func (t *ReviewTabModel) Clear() {
 	t.focus = ReviewFocusTextArea
 	t.submitting = false
 	t.textArea.Blur()
-	t.aiResult = nil
-	t.aiLoading = false
-	t.aiError = ""
 	t.pendingCount = 0
-}
-
-// SetAIReviewLoading puts the review tab into AI review loading state.
-func (t *ReviewTabModel) SetAIReviewLoading() {
-	t.aiLoading = true
-	t.aiError = ""
-	t.aiResult = nil
-}
-
-// SetAIReviewResult pre-populates the review form with AI-generated content.
-func (t *ReviewTabModel) SetAIReviewResult(result *claude.ReviewAnalysis) {
-	t.aiLoading = false
-	t.aiError = ""
-	t.aiResult = result
-
-	t.textArea.SetValue(result.Body)
-	switch result.Action {
-	case "approve":
-		t.action = ReviewApprove
-		t.radioFocus = int(ReviewApprove)
-	case "request_changes":
-		t.action = ReviewRequestChanges
-		t.radioFocus = int(ReviewRequestChanges)
-	default:
-		t.action = ReviewComment
-		t.radioFocus = int(ReviewComment)
-	}
-	t.focus = ReviewFocusTextArea
-}
-
-// SetAIReviewError sets an error message for AI review generation.
-func (t *ReviewTabModel) SetAIReviewError(err string) {
-	t.aiLoading = false
-	t.aiError = err
-	t.aiResult = nil
-}
-
-// ClearAIReview resets AI review state.
-func (t *ReviewTabModel) ClearAIReview() {
-	t.aiResult = nil
-	t.aiLoading = false
-	t.aiError = ""
-}
-
-// IsAIReviewLoading returns whether the AI review is in progress.
-func (t ReviewTabModel) IsAIReviewLoading() bool {
-	return t.aiLoading
 }
 
 // SetPendingCommentCount sets the number of pending inline comments.
@@ -149,9 +93,6 @@ func (t *ReviewTabModel) SetSubmitted(err error) {
 		t.radioFocus = int(t.defaultAction)
 		t.focus = ReviewFocusTextArea
 		t.textArea.Blur()
-		t.aiResult = nil
-		t.aiLoading = false
-		t.aiError = ""
 	}
 }
 
@@ -267,34 +208,6 @@ func (t ReviewTabModel) Update(msg tea.KeyMsg) (ReviewTabModel, tea.Cmd) {
 // Render renders the Review tab content (textarea, radio options, submit button).
 func (t ReviewTabModel) Render(width int, spinnerView string) string {
 	var b strings.Builder
-
-	// AI review status banner
-	if t.aiLoading {
-		b.WriteString(lipgloss.NewStyle().
-			Foreground(lipgloss.Color("244")).
-			Render(spinnerView + " Generating AI review..."))
-		b.WriteString("\n\n")
-	} else if t.aiError != "" {
-		b.WriteString(lipgloss.NewStyle().
-			Foreground(lipgloss.Color("196")).
-			Bold(true).
-			Render("AI review failed: " + formatUserError(t.aiError)))
-		b.WriteString("\n")
-		b.WriteString(lipgloss.NewStyle().
-			Foreground(lipgloss.Color("244")).
-			Italic(true).
-			Render("Press R to retry"))
-		b.WriteString("\n\n")
-	} else if t.aiResult != nil {
-		badge := lipgloss.NewStyle().
-			Foreground(lipgloss.Color("0")).
-			Background(lipgloss.Color("75")).
-			Bold(true).
-			Padding(0, 1).
-			Render("AI REVIEW")
-		b.WriteString(badge)
-		b.WriteString("\n\n")
-	}
 
 	// Pending inline comment count
 	if t.pendingCount > 0 {

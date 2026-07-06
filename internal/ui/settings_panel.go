@@ -25,22 +25,17 @@ const (
 type settingID int
 
 const (
-	sidNone               settingID = iota // section headers
-	sidDefaultPRTab                        // Layout
-	sidCollapseRight                       // Layout
-	sidAutoCollapseWidth                   // Layout
-	sidPollEnabled                         // Polling
-	sidPollInterval                        // Polling
-	sidNotifyEnabled                       // Notifications
-	sidNotifyBatchThresh                   // Notifications
-	sidPRFetchLimit                        // Fetching
-	sidClaudeTimeout                       // AI
-	sidChatHistory                         // AI
-	sidPromptTokenLimit                    // AI
-	sidChatMaxTurns                        // AI
-	sidAnalysisMaxTurns                    // AI
-	sidRenderRefresh                       // Display
-	sidDefaultAction                       // Review
+	sidNone              settingID = iota // section headers
+	sidDefaultPRTab                       // Layout
+	sidCollapseRight                      // Layout
+	sidAutoCollapseWidth                  // Layout
+	sidPollEnabled                        // Polling
+	sidPollInterval                       // Polling
+	sidNotifyEnabled                      // Notifications
+	sidNotifyBatchThresh                  // Notifications
+	sidPRFetchLimit                       // Fetching
+	sidAITimeout                          // AI
+	sidDefaultAction                      // Review
 )
 
 // settingItem describes a single configurable setting.
@@ -83,15 +78,7 @@ var settingsSchema = []settingItem{
 
 	// AI
 	{id: sidNone, label: "AI", kind: settingSection},
-	{id: sidClaudeTimeout, label: "Claude Timeout", desc: "Seconds before analysis times out", kind: settingNumber, min: 30, max: 600, step: 30, unitSec: true},
-	{id: sidChatHistory, label: "Chat History", desc: "Max messages kept in chat context", kind: settingNumber, min: 4, max: 64, step: 4},
-	{id: sidPromptTokenLimit, label: "Prompt Token Limit", desc: "Max tokens for prompt context", kind: settingNumber, min: 10000, max: 500000, step: 10000},
-	{id: sidChatMaxTurns, label: "Chat Max Turns", desc: "Max agentic turns per chat message", kind: settingNumber, min: 1, max: 10, step: 1},
-	{id: sidAnalysisMaxTurns, label: "Analysis Max Turns", desc: "Max turns for full PR analysis", kind: settingNumber, min: 5, max: 100, step: 5},
-
-	// Display
-	{id: sidNone, label: "Display", kind: settingSection},
-	{id: sidRenderRefresh, label: "Render Refresh", desc: "Stream rendering interval", kind: settingNumber, min: 50, max: 1000, step: 50, unitMs: true},
+	{id: sidAITimeout, label: "AI Timeout", desc: "Seconds before an AI turn times out", kind: settingNumber, min: 30, max: 1800, step: 30, unitSec: true},
 
 	// Review
 	{id: sidNone, label: "Review", kind: settingSection},
@@ -112,14 +99,14 @@ func navigableItems() []int {
 
 // SettingsModel manages the settings overlay.
 type SettingsModel struct {
-	cfg       *config.Config
-	width     int
-	height    int
-	visible   bool
-	cursor    int  // index into navigableItems
-	dirty     bool // whether settings have been modified
-	viewport  viewport.Model
-	vpReady   bool
+	cfg      *config.Config
+	width    int
+	height   int
+	visible  bool
+	cursor   int  // index into navigableItems
+	dirty    bool // whether settings have been modified
+	viewport viewport.Model
+	vpReady  bool
 }
 
 // NewSettingsModel creates a settings model.
@@ -380,24 +367,14 @@ func (m SettingsModel) getNumber(idx int) int {
 	switch settingsSchema[idx].id {
 	case sidPollInterval:
 		return m.cfg.PollInterval
-	case sidClaudeTimeout:
-		return m.cfg.ClaudeTimeout
+	case sidAITimeout:
+		return m.cfg.AITimeout
 	case sidAutoCollapseWidth:
 		return m.cfg.CollapseThreshold
 	case sidPRFetchLimit:
 		return m.cfg.PRFetchLimit
 	case sidNotifyBatchThresh:
 		return m.cfg.NotificationThreshold
-	case sidChatHistory:
-		return m.cfg.MaxChatHistory
-	case sidPromptTokenLimit:
-		return m.cfg.MaxPromptTokens
-	case sidChatMaxTurns:
-		return m.cfg.ChatMaxTurns
-	case sidAnalysisMaxTurns:
-		return m.cfg.AnalysisMaxTurns
-	case sidRenderRefresh:
-		return m.cfg.StreamCheckpointMs
 	}
 	return 0
 }
@@ -407,24 +384,14 @@ func (m *SettingsModel) setNumber(idx int, val int) {
 	switch settingsSchema[idx].id {
 	case sidPollInterval:
 		m.cfg.PollInterval = val
-	case sidClaudeTimeout:
-		m.cfg.ClaudeTimeout = val
+	case sidAITimeout:
+		m.cfg.AITimeout = val
 	case sidAutoCollapseWidth:
 		m.cfg.CollapseThreshold = val
 	case sidPRFetchLimit:
 		m.cfg.PRFetchLimit = val
 	case sidNotifyBatchThresh:
 		m.cfg.NotificationThreshold = val
-	case sidChatHistory:
-		m.cfg.MaxChatHistory = val
-	case sidPromptTokenLimit:
-		m.cfg.MaxPromptTokens = val
-	case sidChatMaxTurns:
-		m.cfg.ChatMaxTurns = val
-	case sidAnalysisMaxTurns:
-		m.cfg.AnalysisMaxTurns = val
-	case sidRenderRefresh:
-		m.cfg.StreamCheckpointMs = val
 	}
 }
 
@@ -667,55 +634,55 @@ func (m SettingsModel) innerDimensions() (width, height int) {
 // Settings overlay styles
 var (
 	settingsTitleStyle = lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color("252")).
-		Background(lipgloss.Color("62")).
-		Padding(0, 1)
+				Bold(true).
+				Foreground(lipgloss.Color("252")).
+				Background(lipgloss.Color("62")).
+				Padding(0, 1)
 
 	settingsFooterStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("244")).
-		Italic(true)
+				Foreground(lipgloss.Color("244")).
+				Italic(true)
 
 	settingsSectionStyle = lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color("33"))
+				Bold(true).
+				Foreground(lipgloss.Color("33"))
 
 	settingsMarkerStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("42"))
+				Foreground(lipgloss.Color("42"))
 
 	settingsLabelStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("252"))
+				Foreground(lipgloss.Color("252"))
 
 	settingsLabelFocusedStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("42")).
-		Bold(true)
+					Foreground(lipgloss.Color("42")).
+					Bold(true)
 
 	settingsOnStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("42")).
-		Bold(true)
+			Foreground(lipgloss.Color("42")).
+			Bold(true)
 
 	settingsOffStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("244"))
+				Foreground(lipgloss.Color("244"))
 
 	settingsNumberStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("214"))
+				Foreground(lipgloss.Color("214"))
 
 	settingsNumberFocusedStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("214")).
-		Bold(true)
+					Foreground(lipgloss.Color("214")).
+					Bold(true)
 
 	settingsSelectStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("33"))
+				Foreground(lipgloss.Color("33"))
 
 	settingsSelectFocusedStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("33")).
-		Bold(true)
+					Foreground(lipgloss.Color("33")).
+					Bold(true)
 
 	settingsDescStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("244")).
-		Italic(true)
+				Foreground(lipgloss.Color("244")).
+				Italic(true)
 
 	settingsDirtyStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("214")).
-		Italic(true)
+				Foreground(lipgloss.Color("214")).
+				Italic(true)
 )

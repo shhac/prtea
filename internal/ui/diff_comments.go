@@ -7,7 +7,6 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/shhac/prtea/internal/claude"
 	"github.com/shhac/prtea/internal/github"
 )
 
@@ -38,29 +37,6 @@ func (m *DiffViewerModel) handleCommentModeKey(msg tea.KeyMsg) (DiffViewerModel,
 		m.commentInput, cmd = m.commentInput.Update(msg)
 		return *m, cmd
 	}
-}
-
-// SetAIInlineComments stores AI-generated inline comments and rebuilds the diff cache.
-func (m *DiffViewerModel) SetAIInlineComments(comments []claude.InlineReviewComment) {
-	m.aiInlineComments = comments
-	m.aiCommentsByFileLine = make(map[string][]claude.InlineReviewComment)
-	for _, c := range comments {
-		key := commentKey(c.Path, c.Line)
-		m.aiCommentsByFileLine[key] = append(m.aiCommentsByFileLine[key], c)
-	}
-	// Full cache invalidation since comment lines change hunk sizes
-	m.cachedLines = nil
-	m.cachedLineInfo = nil
-	m.refreshContent()
-}
-
-// ClearAIInlineComments removes all AI inline comments.
-func (m *DiffViewerModel) ClearAIInlineComments() {
-	m.aiInlineComments = nil
-	m.aiCommentsByFileLine = nil
-	m.cachedLines = nil
-	m.cachedLineInfo = nil
-	m.refreshContent()
 }
 
 // SetPendingInlineComments stores pending comments and rebuilds the diff cache.
@@ -318,7 +294,6 @@ func (m *DiffViewerModel) buildCommentOverlayMsg() *ShowCommentOverlayMsg {
 	// Gather threads. For multi-line selections, only include threads
 	// whose line range exactly matches the selection.
 	var ghThreads []ghCommentThread
-	var aiComments []claude.InlineReviewComment
 	var pendingComments []PendingInlineComment
 
 	if startLine > 0 {
@@ -326,12 +301,6 @@ func (m *DiffViewerModel) buildCommentOverlayMsg() *ShowCommentOverlayMsg {
 		for _, t := range m.ghCommentThreads[key] {
 			if t.Root.StartLine == startLine && t.Root.Line == endLine {
 				ghThreads = append(ghThreads, t)
-			}
-		}
-		// AI and pending comments with matching StartLine
-		for _, c := range m.aiCommentsByFileLine[key] {
-			if c.StartLine == startLine && c.Line == endLine {
-				aiComments = append(aiComments, c)
 			}
 		}
 		for _, c := range m.pendingCommentsByFileLine[key] {
@@ -342,7 +311,6 @@ func (m *DiffViewerModel) buildCommentOverlayMsg() *ShowCommentOverlayMsg {
 	} else {
 		// Single-line: match all threads at this line (existing behavior)
 		ghThreads = m.ghCommentThreads[key]
-		aiComments = m.aiCommentsByFileLine[key]
 		pendingComments = m.pendingCommentsByFileLine[key]
 	}
 
@@ -353,7 +321,6 @@ func (m *DiffViewerModel) buildCommentOverlayMsg() *ShowCommentOverlayMsg {
 		DiffLines:       diffLines,
 		TargetLineInCtx: targetIdx - ctxStart,
 		GHThreads:       ghThreads,
-		AIComments:      aiComments,
 		PendingComments: pendingComments,
 	}
 }
@@ -380,7 +347,7 @@ func (m DiffViewerModel) renderCommentBar() string {
 const commentBoxMaxPreviewLines = 3
 
 // renderCommentBox renders content inside a bordered box, split into viewport lines.
-// header is the first line inside the box (e.g. "💬 Claude AI").
+// header is the first line inside the box (e.g. "📝 Draft").
 // body is the pre-rendered content (already glamour-processed or plain text).
 // borderColor is the lipgloss color for the rounded border.
 // highlighted uses a thick border and brighter color to indicate cursor targeting.
@@ -496,23 +463,6 @@ func (m *DiffViewerModel) injectInlineComments(
 		commentGutter = diffFocusGutterStyle.Render("▎") + " "
 	}
 
-	// AI inline comments
-	if comments, ok := m.aiCommentsByFileLine[key]; ok {
-		for _, c := range comments {
-			header := commentBoxHeaderStyle.Render("💬 Claude AI")
-			body := m.renderMarkdown(c.Body, boxInnerWidth)
-			borderColor := commentBoxAIBorder
-			if isTargeted {
-				borderColor = commentBoxAIBorderHi
-			}
-			boxLines := m.renderCommentBox(header, body, borderColor, isTargeted, commentGutter)
-			for range boxLines {
-				infos = append(infos, lineInfo{hunkIdx: hunkIdx, filename: filename, comment: commentAI})
-			}
-			lines = append(lines, boxLines...)
-		}
-	}
-
 	// GitHub inline comments (threaded)
 	if threads, ok := m.ghCommentThreads[key]; ok {
 		for _, t := range threads {
@@ -524,14 +474,10 @@ func (m *DiffViewerModel) injectInlineComments(
 		}
 	}
 
-	// Pending inline comments (user + AI drafts)
+	// Pending inline comments (drafts for the next review)
 	if comments, ok := m.pendingCommentsByFileLine[key]; ok {
 		for _, c := range comments {
-			source := "Draft"
-			if c.Source == "ai" {
-				source = "Draft (AI)"
-			}
-			header := commentBoxHeaderStyle.Render("📝 " + source)
+			header := commentBoxHeaderStyle.Render("📝 Draft")
 			body := m.renderMarkdown(c.Body, boxInnerWidth)
 			borderColor := commentBoxPendingBorder
 			if isTargeted {
