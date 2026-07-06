@@ -125,7 +125,9 @@ func TestSubmitReviewWithComments_CaseInsensitive(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	var payload struct{ Event string `json:"event"` }
+	var payload struct {
+		Event string `json:"event"`
+	}
 	json.Unmarshal([]byte(capturedStdin), &payload)
 	if payload.Event != "APPROVE" {
 		t.Errorf("Event = %q, want APPROVE (uppercased)", payload.Event)
@@ -145,7 +147,9 @@ func TestReplyToComment_Success(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	var payload struct{ Body string `json:"body"` }
+	var payload struct {
+		Body string `json:"body"`
+	}
 	if err := json.Unmarshal([]byte(capturedStdin), &payload); err != nil {
 		t.Fatalf("failed to parse stdin: %v", err)
 	}

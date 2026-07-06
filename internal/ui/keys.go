@@ -128,24 +128,24 @@ var PRListKeys = PRListKeyMap{
 
 // DiffViewerKeyMap defines keys for the diff viewer panel.
 type DiffViewerKeyMap struct {
-	Up                    key.Binding
-	Down                  key.Binding
-	SelectDown            key.Binding
-	SelectUp              key.Binding
-	HalfDown              key.Binding
-	HalfUp                key.Binding
-	NextHunk              key.Binding
-	PrevHunk              key.Binding
-	Top                   key.Binding
-	Bottom                key.Binding
-	PrevTab               key.Binding
-	NextTab               key.Binding
-	SelectHunk            key.Binding
-	SelectHunkAndAdvance  key.Binding
-	SelectFileHunks       key.Binding
-	ClearSelection        key.Binding
-	Search                key.Binding
-	RerunCI               key.Binding
+	Up                   key.Binding
+	Down                 key.Binding
+	SelectDown           key.Binding
+	SelectUp             key.Binding
+	HalfDown             key.Binding
+	HalfUp               key.Binding
+	NextHunk             key.Binding
+	PrevHunk             key.Binding
+	Top                  key.Binding
+	Bottom               key.Binding
+	PrevTab              key.Binding
+	NextTab              key.Binding
+	SelectHunk           key.Binding
+	SelectHunkAndAdvance key.Binding
+	SelectFileHunks      key.Binding
+	ClearSelection       key.Binding
+	Search               key.Binding
+	RerunCI              key.Binding
 }
 
 var DiffViewerKeys = DiffViewerKeyMap{

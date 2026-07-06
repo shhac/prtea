@@ -11,12 +11,12 @@ import (
 
 // StatusBarModel renders the bottom status bar.
 type StatusBarModel struct {
-	width      int
-	focused    Panel
-	mode       AppMode
-	selectedPR int
-	filtering     bool // true when PR list filter input is active
-	diffSearching bool // true when diff viewer search input is active
+	width          int
+	focused        Panel
+	mode           AppMode
+	selectedPR     int
+	filtering      bool   // true when PR list filter input is active
+	diffSearching  bool   // true when diff viewer search input is active
 	diffSearchInfo string // e.g. "3/17" when search has matches
 
 	// Temporary flash message (e.g. "Refreshing PR #123...")

@@ -96,11 +96,11 @@ type ReviewRequest struct {
 
 // ReviewSummary categorizes reviews by state, deduplicated per user.
 type ReviewSummary struct {
-	Approved          []Review
-	ChangesRequested  []Review
-	Commented         []Review
-	ReviewDecision    string // "APPROVED", "CHANGES_REQUESTED", "REVIEW_REQUIRED", ""
-	PendingReviewers  []ReviewRequest
+	Approved         []Review
+	ChangesRequested []Review
+	Commented        []Review
+	ReviewDecision   string // "APPROVED", "CHANGES_REQUESTED", "REVIEW_REQUIRED", ""
+	PendingReviewers []ReviewRequest
 }
 
 // Comment represents an issue-level PR comment.

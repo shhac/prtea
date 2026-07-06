@@ -30,16 +30,16 @@ type ghSearchPR struct {
 
 // ghPRView is the JSON shape returned by gh pr view.
 type ghPRView struct {
-	Number         int    `json:"number"`
-	Title          string `json:"title"`
-	Body           string `json:"body"`
-	URL            string `json:"url"`
-	Mergeable      string `json:"mergeable"` // "MERGEABLE", "CONFLICTING", "UNKNOWN"
+	Number           int    `json:"number"`
+	Title            string `json:"title"`
+	Body             string `json:"body"`
+	URL              string `json:"url"`
+	Mergeable        string `json:"mergeable"` // "MERGEABLE", "CONFLICTING", "UNKNOWN"
 	MergeStateStatus string `json:"mergeStateStatus"`
-	BaseRefName    string `json:"baseRefName"`
-	HeadRefName    string `json:"headRefName"`
-	HeadRefOid     string `json:"headRefOid"`
-	Author         struct {
+	BaseRefName      string `json:"baseRefName"`
+	HeadRefName      string `json:"headRefName"`
+	HeadRefOid       string `json:"headRefOid"`
+	Author           struct {
 		Login string `json:"login"`
 	} `json:"author"`
 }

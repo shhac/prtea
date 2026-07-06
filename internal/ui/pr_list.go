@@ -46,7 +46,7 @@ type PRItem struct {
 func (i PRItem) FilterValue() string {
 	return i.title + " " + i.author + " " + i.repoFull + " " + i.owner + " " + i.repo
 }
-func (i PRItem) Title() string       { return fmt.Sprintf("#%d %s", i.number, i.title) }
+func (i PRItem) Title() string { return fmt.Sprintf("#%d %s", i.number, i.title) }
 func (i PRItem) Description() string {
 	return fmt.Sprintf("%s · %s", i.author, i.repo)
 }
@@ -185,9 +185,9 @@ type PRListModel struct {
 }
 
 func NewPRListModel(defaultTab PRListTab) PRListModel {
-	selected := new(int)       // heap-allocated, shared with delegate
-	ciStatus := new(string)    // heap-allocated, shared with delegate
-	reviewDec := new(string)   // heap-allocated, shared with delegate
+	selected := new(int)     // heap-allocated, shared with delegate
+	ciStatus := new(string)  // heap-allocated, shared with delegate
+	reviewDec := new(string) // heap-allocated, shared with delegate
 
 	delegate := prItemDelegate{
 		selectedPRNumber: selected,

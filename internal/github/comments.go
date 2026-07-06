@@ -25,20 +25,20 @@ type ghPRComments struct {
 
 // ghInlineComment is the JSON shape from the pulls comments API.
 type ghInlineComment struct {
-	ID     int64 `json:"id"`
-	User   struct {
+	ID   int64 `json:"id"`
+	User struct {
 		Login     string `json:"login"`
 		AvatarURL string `json:"avatar_url"`
 	} `json:"user"`
-	Body        string    `json:"body"`
-	CreatedAt   time.Time `json:"created_at"`
-	Path        string    `json:"path"`
-	Line        int       `json:"line"`
-	StartLine   *int      `json:"start_line"`
-	OriginalLine int      `json:"original_line"`
-	Side        string    `json:"side"`
-	InReplyToID *int64    `json:"in_reply_to_id"`
-	Position    *int      `json:"position"`
+	Body         string    `json:"body"`
+	CreatedAt    time.Time `json:"created_at"`
+	Path         string    `json:"path"`
+	Line         int       `json:"line"`
+	StartLine    *int      `json:"start_line"`
+	OriginalLine int       `json:"original_line"`
+	Side         string    `json:"side"`
+	InReplyToID  *int64    `json:"in_reply_to_id"`
+	Position     *int      `json:"position"`
 }
 
 // GetComments fetches issue-level comments on a PR (general conversation).

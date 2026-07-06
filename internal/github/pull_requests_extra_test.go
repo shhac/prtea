@@ -29,7 +29,7 @@ func TestGetPRDetail_Success(t *testing.T) {
 
 	client := NewTestClient("alice", fakeRunner(map[string]string{
 		"pr view 42": string(prData),
-		"api repos/":  string(cmpData),
+		"api repos/": string(cmpData),
 	}))
 
 	detail, err := client.GetPRDetail(context.Background(), "alice", "widget", 42)

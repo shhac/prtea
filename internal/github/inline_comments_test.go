@@ -14,11 +14,11 @@ func TestGetInlineComments_Basic(t *testing.T) {
 				Login     string `json:"login"`
 				AvatarURL string `json:"avatar_url"`
 			}{Login: "alice", AvatarURL: "https://example.com/alice.png"},
-			Body:      "Nice change!",
-			Path:      "main.go",
-			Line:      10,
-			Side:      "RIGHT",
-			Position:  intPtr(5),
+			Body:     "Nice change!",
+			Path:     "main.go",
+			Line:     10,
+			Side:     "RIGHT",
+			Position: intPtr(5),
 		},
 	}
 	data, _ := json.Marshal(raw)
@@ -53,14 +53,17 @@ func TestGetInlineComments_LineFallback(t *testing.T) {
 	// When Line is 0, should fall back to OriginalLine
 	raw := []ghInlineComment{
 		{
-			ID:            2001,
-			User:          struct{ Login string `json:"login"`; AvatarURL string `json:"avatar_url"` }{Login: "bob"},
-			Body:          "Outdated comment",
-			Path:          "old.go",
-			Line:          0,
-			OriginalLine:  25,
-			Side:          "RIGHT",
-			Position:      nil, // outdated
+			ID: 2001,
+			User: struct {
+				Login     string `json:"login"`
+				AvatarURL string `json:"avatar_url"`
+			}{Login: "bob"},
+			Body:         "Outdated comment",
+			Path:         "old.go",
+			Line:         0,
+			OriginalLine: 25,
+			Side:         "RIGHT",
+			Position:     nil, // outdated
 		},
 	}
 	data, _ := json.Marshal(raw)
@@ -85,13 +88,16 @@ func TestGetInlineComments_NilPointers(t *testing.T) {
 	// StartLine and InReplyToID are nil
 	raw := []ghInlineComment{
 		{
-			ID:         3001,
-			User:       struct{ Login string `json:"login"`; AvatarURL string `json:"avatar_url"` }{Login: "charlie"},
-			Body:       "test",
-			Path:       "test.go",
-			Line:       5,
-			Side:       "RIGHT",
-			Position:   intPtr(3),
+			ID: 3001,
+			User: struct {
+				Login     string `json:"login"`
+				AvatarURL string `json:"avatar_url"`
+			}{Login: "charlie"},
+			Body:     "test",
+			Path:     "test.go",
+			Line:     5,
+			Side:     "RIGHT",
+			Position: intPtr(3),
 			// StartLine and InReplyToID intentionally nil
 		},
 	}
@@ -119,8 +125,11 @@ func TestGetInlineComments_WithStartLineAndReply(t *testing.T) {
 	replyTo := int64(999)
 	raw := []ghInlineComment{
 		{
-			ID:          4001,
-			User:        struct{ Login string `json:"login"`; AvatarURL string `json:"avatar_url"` }{Login: "dave"},
+			ID: 4001,
+			User: struct {
+				Login     string `json:"login"`
+				AvatarURL string `json:"avatar_url"`
+			}{Login: "dave"},
 			Body:        "multi-line comment",
 			Path:        "lib.go",
 			Line:        10,
@@ -153,8 +162,11 @@ func TestGetInlineComments_OutdatedPositionZero(t *testing.T) {
 	pos := 0
 	raw := []ghInlineComment{
 		{
-			ID:       5001,
-			User:     struct{ Login string `json:"login"`; AvatarURL string `json:"avatar_url"` }{Login: "eve"},
+			ID: 5001,
+			User: struct {
+				Login     string `json:"login"`
+				AvatarURL string `json:"avatar_url"`
+			}{Login: "eve"},
 			Body:     "test",
 			Path:     "x.go",
 			Line:     1,
