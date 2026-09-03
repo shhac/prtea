@@ -8,7 +8,8 @@ if ! command -v go >/dev/null 2>&1; then
   exit 1
 fi
 
-version=$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//')
+# Latest release tag, not `git describe` — see scripts/release.sh.
+version=$(git tag --list 'v*' --sort=-v:refname | head -1 | sed 's/^v//')
 commit=$(git rev-parse --short HEAD 2>/dev/null || echo "none")
 date=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 

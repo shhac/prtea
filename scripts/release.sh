@@ -10,8 +10,12 @@ fi
 
 bump_type="$1"
 
-# Get current version from latest git tag
-current=$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//') || true
+# Current version from the latest release tag. Filtered to v* rather than
+# `git describe`, which returns whichever tag is nearest in history regardless
+# of series — a skill-v* or other non-release tag would come back here, and
+# `sed 's/^v//'` would not even strip its prefix, so the version split below
+# would produce nonsense and tag it.
+current=$(git tag --list 'v*' --sort=-v:refname | head -1 | sed 's/^v//') || true
 if [ -z "$current" ]; then
   current="0.0.0"
 fi
